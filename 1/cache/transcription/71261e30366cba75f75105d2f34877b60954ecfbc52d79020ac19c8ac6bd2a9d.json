@@ -1,0 +1,5 @@
+{
+  "status": "failed",
+  "attempt": 1,
+  "error": "Gemini HTTP 404: model không tồn tại hoặc key không được truy cập model này."
+}

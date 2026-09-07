@@ -1,0 +1,5 @@
+{
+  "status": "failed",
+  "attempt": 1,
+  "error": "Transcript JSON không hợp lệ: kiểm tra ID, text và timestamp. Chưa thay subtitle hiện tại."
+}

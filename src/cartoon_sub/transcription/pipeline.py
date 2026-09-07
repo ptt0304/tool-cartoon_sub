@@ -1,0 +1,99 @@
+"""Local extraction, resumable transcription and subtitle artifact persistence."""
+import json
+import os
+from dataclasses import asdict
+from pathlib import Path
+from uuid import uuid4
+from cartoon_sub.media.ffmpeg import FFmpeg
+from cartoon_sub.media.process import CancelledError
+from cartoon_sub.project.cache import atomic_json, file_hash, content_hash, check_cancel
+from cartoon_sub.project.project_manager import ProjectManager
+from cartoon_sub.subtitle.models import Project
+from cartoon_sub.subtitle.parser import export_srt
+from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
+
+
+def save_subtitle_artifacts(project, directory):
+    directory = Path(directory) / "subtitle"
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / f"zh-{uuid4().hex}.srt"
+    try:
+        export_srt(project.segments, temporary)
+        os.replace(temporary, directory / "zh.srt")
+    finally:
+        temporary.unlink(missing_ok=True)
+    atomic_json(directory / "segments.json", [asdict(s) for s in project.segments])
+
+
+class TranscriptionPipeline:
+    def __init__(self, settings_store, media=None, transcriber_factory=GeminiTranscriber):
+        self.settings_store = settings_store
+        self.media = media or FFmpeg()
+        self.transcriber_factory = transcriber_factory
+
+    def run(self, project, directory, *, cancel=None, progress=None):
+        if project.transcription_status == "imported":
+            raise ValueError("Project đã import SRT: không gọi Gemini transcription.")
+        project = Project.from_dict(project.to_dict())
+        directory = Path(directory)
+        settings = self.settings_store.load()
+        report = progress or (lambda text: None)
+        report("Kiểm tra hash video và audio cache…")
+        source_hash = file_hash(project.source_video_path, cancel)
+        audio_path = directory / "audio" / "source.wav"
+        manifest_path = directory / "audio" / "source.json"
+        profile = "pcm_s16le-mono-16000-v1"
+        reuse = False
+        if audio_path.exists() and manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                reuse = (manifest.get("source_hash") == source_hash and manifest.get("profile") == profile
+                         and manifest.get("audio_hash") == file_hash(audio_path, cancel))
+            except (ValueError, AttributeError):
+                pass
+        if not reuse:
+            report("FFmpeg: trích audio mono 16 kHz…")
+            temporary = audio_path.parent / f"source-{uuid4().hex}.wav"
+            try:
+                self.media.extract_audio(project.source_video_path, temporary, cancel=cancel, progress=report)
+                check_cancel(cancel)
+                os.replace(temporary, audio_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            atomic_json(manifest_path, {"source_hash": source_hash, "profile": profile,
+                                        "audio_hash": file_hash(audio_path, cancel)})
+        else:
+            report("Dùng audio local đã trích xuất")
+        check_cancel(cancel)
+        project.transcription_status = "running"
+        manager = ProjectManager()
+        manager.save(project, directory)
+        try:
+            transcriber = self.transcriber_factory(self.settings_store.get_key, settings.transcription_model,
+                                                   directory / "cache" / "transcription", settings.retry_count)
+            segments = transcriber.transcribe(audio_path, cancel=cancel, progress=report)
+            check_cancel(cancel)
+        except Exception as exc:
+            project.transcription_status = "cancelled" if isinstance(exc, CancelledError) else "failed"
+            manager.save(project, directory)
+            raise
+        same_text = [(s.id, s.zh) for s in project.segments] == [(s.id, s.zh) for s in segments]
+        if same_text:
+            # A repeated cached transcription must not erase a finished translation.
+            for source, target in zip(project.segments, segments):
+                target.vi = source.vi
+        elif project.translation_status != "not_started":
+            project.translation_status = "stale"
+            project.translation_notes = {}
+        project.segments = segments
+        project.transcription_status = "completed" if segments else "no_speech"
+        project.selected_models["transcription"] = settings.transcription_model
+        project.cache_hashes["transcription"] = content_hash({"source": source_hash,
+            "model": settings.transcription_model, "version": PROMPT_VERSION})
+        manager.save(project, directory)
+        save_subtitle_artifacts(project, directory)
+        if project.translation_status != "not_started":
+            from cartoon_sub.translation.artifacts import save_translation_artifacts
+            save_translation_artifacts(project, directory)
+        report(f"Hoàn tất {len(segments)} subtitle. Đã lưu subtitle/zh.srt và segments.json.")
+        return project, directory

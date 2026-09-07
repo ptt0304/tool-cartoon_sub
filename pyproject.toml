@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cartoon-sub"
+version = "0.3.0"
+description = "Local Chinese to Vietnamese subtitle desktop workspace"
+requires-python = ">=3.11"
+dependencies = ["PySide6>=6.7,<7", "pysubs2>=1.7,<2", "python-dotenv>=1,<2", "keyring>=25,<26", "google-genai>=1.30,<2"]
+
+[project.optional-dependencies]
+gemini = ["google-genai>=1,<2"]
+
+[project.scripts]
+cartoon-sub = "cartoon_sub.app.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
