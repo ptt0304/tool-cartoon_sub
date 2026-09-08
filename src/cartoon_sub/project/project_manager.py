@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import shutil
 from pathlib import Path
 from cartoon_sub.subtitle.models import Project
 
@@ -23,6 +24,15 @@ class ProjectManager:
         directory.mkdir(parents=True, exist_ok=True)
         for folder in self.folders:
             (directory / folder).mkdir(exist_ok=True)
+        existing=directory / "project.json"
+        if existing.exists():
+            old=json.loads(existing.read_text(encoding="utf-8"))
+            if old.get("schema_version")==1:
+                backup=directory / "project.v1.backup.json"
+                if backup.exists():
+                    from uuid import uuid4
+                    backup=directory / f"project.v1.{uuid4().hex}.backup.json"
+                shutil.copy2(existing,backup)
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:

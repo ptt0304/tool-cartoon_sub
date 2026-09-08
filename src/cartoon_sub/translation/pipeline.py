@@ -2,7 +2,8 @@ from pathlib import Path
 from .chunker import translation_batches, source_rows
 from .context_models import StoryContext
 from .context_service import source_fingerprint
-from .prompts import EDITORIAL_RULES, editorial, translation_prompt
+from .prompts import EDITORIAL_RULES, editorial, translation_prompt, PROMPT_VERSION
+from cartoon_sub.speaker.service import refresh_timeline, review_complete
 from .gemini_translator import TRANSLATION_SCHEMA, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
@@ -16,7 +17,8 @@ from cartoon_sub.media.process import CancelledError
 def translation_fingerprint(project, settings):
     return content_hash({"source": source_rows(project.segments), "editorial": editorial(project),
                         "system": EDITORIAL_RULES, "model": settings.translation_model,
-                        "chunk_size": settings.translation_chunk_size, "version": 1})
+                        "chunk_size": settings.translation_chunk_size, "version": PROMPT_VERSION,
+                        "dubbing_settings":project.dubbing_settings})
 
 
 def mark_stale(project, settings):
@@ -30,6 +32,9 @@ class TranslationPipeline:
         self.store, self.factory = store, client_factory
 
     def run(self, project, directory, *, cancel=None, progress=None):
+        refresh_timeline(project)
+        if not review_complete(project):
+            raise ValueError("Hãy gán và xác nhận speaker trong Transcript trước khi dịch")
         if not project.segments or any(not s.zh.strip() for s in project.segments):
             raise ValueError("Cần transcript tiếng Trung không rỗng để dịch")
         if project.context_source_hash != source_fingerprint(project):
@@ -56,6 +61,13 @@ class TranslationPipeline:
             settings.retry_count, cancel, progress, self.factory)
         translated = []
         by_id = {s.id: s for s in project.segments}
+        def apply_row(row):
+            segment = by_id[row['id']]
+            segment.vi = row['vi']
+            if not segment.dubbing_optimized:
+                segment.meaning_preservation = row['meaning_preservation']
+                segment.semantic_compression = row['compressed']
+            project.translation_notes[str(row['id'])] = row['review_note']
         current = None
         try:
             for index, (targets, before, after) in enumerate(all_batches, 1):
@@ -73,13 +85,11 @@ class TranslationPipeline:
                 # Changed editorial settings commit the entire replacement only after success.
                 if old_run in (None, fingerprint):
                     for row in rows:
-                        by_id[row["id"]].vi = row["vi"]
-                        project.translation_notes[str(row["id"])] = row["review_note"]
+                        apply_row(row)
                 manager.save(project, directory)
             check_cancel(cancel)
             for row in translated:
-                by_id[row["id"]].vi = row["vi"]
-                project.translation_notes[str(row["id"])] = row["review_note"]
+                apply_row(row)
             project.translation_status = "completed"
             project.cache_hashes["translation"] = fingerprint
             project.selected_models["translation"] = settings.translation_model

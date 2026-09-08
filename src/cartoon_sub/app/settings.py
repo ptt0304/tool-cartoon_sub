@@ -69,3 +69,11 @@ class SettingsStore:
             return "Đã có key (keyring hoặc GEMINI_API_KEY). Để trống ô key để giữ nguyên."
         except ValueError:
             return "Chưa cấu hình key. Nhập key lấy từ Google AI Studio."
+
+    def load_dubbing(self):
+        from cartoon_sub.syllable.target import DubbingSettings
+        path=self.folder/"dubbing.json"
+        return DubbingSettings(**json.loads(path.read_text(encoding="utf-8"))).validate() if path.exists() else DubbingSettings()
+
+    def save_dubbing(self, settings):
+        atomic_json(self.folder/"dubbing.json",settings.validate().to_dict())

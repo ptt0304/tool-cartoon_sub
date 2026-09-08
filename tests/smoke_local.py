@@ -4,8 +4,9 @@ import sys
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 import tempfile
 from pathlib import Path
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QTabWidget
 from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtGui import QFontDatabase, QFont
 from cartoon_sub.ui.main_window import MainWindow
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.media.ffmpeg import FFmpeg
@@ -19,8 +20,13 @@ from cartoon_sub.translation.pipeline import TranslationPipeline
 from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.ui.context_dialog import ContextDialog
 from unittest.mock import Mock
+from cartoon_sub.ui.speaker_dialog import SpeakerDialog
+from cartoon_sub.tts.export_service import export_speakers
 
 app = QApplication([])
+for font in ('C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/msyh.ttc'):
+    QFontDatabase.addApplicationFont(font)
+app.setFont(QFont('Segoe UI', 10))
 window = MainWindow()
 window.show()
 assert window.tabs.count() == 6
@@ -57,6 +63,15 @@ with tempfile.TemporaryDirectory() as directory:
     loop.exec()
     assert window.controller.project.transcription_status == "completed"
     assert window.pages[1].table.rowCount() == 2
+    speakers = SpeakerDialog(controller.project, directory, window)
+    speakers.add()
+    speakers.target.setCurrentIndex(speakers.target.findData('SPK_01'))
+    speakers.table.selectAll()
+    speakers.assign()
+    speakers.approve()
+    controller.project = speakers.project
+    controller.save()
+    window.refresh()
     window.analyze_context()
     window.worker.finished.connect(loop.quit)
     loop.exec()
@@ -75,6 +90,16 @@ with tempfile.TemporaryDirectory() as directory:
     assert "Tiểu Mỹ" in window.controller.project.segments[0].vi
     assert (Path(directory) / "subtitle" / "vi.srt").is_file()
     assert text_client.generate_json.call_count == 2
+    exported = export_speakers(controller.project, directory)
+    assert list(exported.rglob('speaker.srt'))
+    assert list(exported.rglob('000001.txt'))
+    window.resize(1280, 850)
+    window.tabs.setCurrentIndex(2)
+    app.processEvents()
+    window.grab().save(str(Path.cwd() / 'docs' / 'master_timeline_ui.png'))
+    window.pages[2].findChild(QTabWidget).setCurrentIndex(1)
+    app.processEvents()
+    window.grab().save(str(Path.cwd() / 'docs' / 'master_timeline_table.png'))
     assert window.save_project()
     loaded = controller.manager.load(directory)
     assert len(loaded.segments) == 2

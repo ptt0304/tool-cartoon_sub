@@ -1,0 +1,1 @@
+Use exactly target_syllables Vietnamese syllables. You may compress secondary detail or nuance, never reverse meaning, intent or negation. Mark compressed=true when compressed. Local counts override your own estimates.

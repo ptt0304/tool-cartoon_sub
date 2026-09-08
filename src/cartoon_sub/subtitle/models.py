@@ -1,28 +1,116 @@
 from dataclasses import dataclass, field, asdict
 from cartoon_sub.translation.context_models import StoryContext
 
-@dataclass
+@dataclass(init=False)
 class Segment:
     id: int
     start: float
     end: float
     zh: str = ""
-    vi: str = ""
+    vi_subtitle: str = ""
+    vi_dubbing: str = ""
+    speaker_id: str = "SPK_UNKNOWN"
+    speaker_name: str = "Unknown"
+    speaker_confidence: float | None = None
+    transcript_confidence: float | None = None
+    overlap: bool = False
+    overlap_group: str | None = None
+    translation_mode: str = "balanced_dubbing"
+    target_override: int | None = None
+    zh_syllables: int = 0
+    vi_syllables: int = 0
+    vi_subtitle_syllables: int = 0
+    target_syllables: int = 0
+    syllable_delta: int = 0
+    semantic_compression: bool = False
+    meaning_preservation: str = "unknown"
+    dubbing_optimized: bool = False
+    dubbing_status: str = "not_started"
+    dubbing_fingerprint: str = ""
+    syllable_warnings: list[str] = field(default_factory=list)
+    tts_audio_path: str | None = None
+    tts_duration: float | None = None
+    tts_speed_factor: float | None = None
+    tts_alignment_status: str = "not_imported"
 
-    def __post_init__(self):
+    def __init__(self, id, start, end, zh="", vi=None, vi_subtitle=None, vi_dubbing=None, **kwargs):
+        from dataclasses import fields, MISSING
+        self.id, self.start, self.end, self.zh = id, start, end, zh
+        self.vi_subtitle = vi if vi is not None else (vi_subtitle if vi_subtitle is not None else "")
+        self.vi_dubbing = self.vi_subtitle if vi_dubbing is None or (vi is not None and not kwargs.get("dubbing_optimized",False)) else vi_dubbing
+        for f in fields(self):
+            if f.name in ("id","start","end","zh","vi_subtitle","vi_dubbing"): continue
+            if f.name in kwargs: value=kwargs.pop(f.name)
+            elif f.default_factory is not MISSING: value=f.default_factory()
+            else: value=f.default
+            setattr(self,f.name,value)
+        if kwargs: raise TypeError(f"Unknown utterance fields: {', '.join(kwargs)}")
+        self.validate()
+        self.recalculate()
+
+    def validate(self):
         import math
-        if not isinstance(self.id, int) or self.id < 1:
-            raise ValueError("Subtitle ID must be a positive integer")
-        if not all(isinstance(t, (float, int)) and math.isfinite(t) for t in (self.start, self.end)):
-            raise ValueError("Invalid subtitle timestamp")
-        if self.start < 0 or self.end <= self.start:
-            raise ValueError("Subtitle requires 0 <= start < end")
-        if not isinstance(self.zh, str) or not isinstance(self.vi, str):
-            raise ValueError("Subtitle text must be a string")
+        from cartoon_sub.speaker.models import Speaker
+        from cartoon_sub.translation.modes import TranslationMode
+        if type(self.id) is not int or self.id < 1: raise ValueError("ID must be a positive integer")
+        if any(type(t) not in (float,int) or not math.isfinite(t) for t in (self.start,self.end)):
+            raise ValueError("Invalid timestamp")
+        if self.start < 0 or self.end <= self.start: raise ValueError("Requires 0 <= start < end")
+        if any(not isinstance(t,str) for t in (self.zh,self.vi_subtitle,self.vi_dubbing)):
+            raise ValueError("Text must be a string")
+        Speaker(self.speaker_id,self.speaker_name)
+        TranslationMode(self.translation_mode)
+        for confidence in (self.speaker_confidence,self.transcript_confidence):
+            if confidence is not None and (type(confidence) not in (int,float) or not math.isfinite(confidence) or not 0<=confidence<=1):
+                raise ValueError("Confidence must be null or in [0,1]")
+        if self.target_override is not None and (type(self.target_override) is not int or self.target_override<1):
+            raise ValueError("Target override must be a positive integer")
+        if self.tts_duration is not None and (type(self.tts_duration) not in (int,float) or not math.isfinite(self.tts_duration) or self.tts_duration<=0):
+            raise ValueError("TTS duration must be positive")
+        if self.tts_audio_path is not None and not isinstance(self.tts_audio_path,str): raise ValueError("TTS path must be a string")
 
     @property
-    def duration(self):
-        return self.end - self.start
+    def vi(self):
+        return self.vi_subtitle
+
+    @vi.setter
+    def vi(self,value):
+        self.vi_subtitle=value
+        if not self.dubbing_optimized: self.vi_dubbing=value
+        else: self.dubbing_status="stale"
+        self.recalculate()
+
+    @property
+    def duration(self): return self.end-self.start
+
+    def recalculate(self, settings=None):
+        from cartoon_sub.syllable.chinese import count as zh_count
+        from cartoon_sub.syllable.vietnamese import count as vi_count
+        from cartoon_sub.syllable.target import DubbingSettings, target_syllables
+        config=settings or DubbingSettings()
+        if self.translation_mode=="time_fit":
+            from dataclasses import replace
+            config=replace(config,target_strategy="time_based")
+        zh,vi,sub=zh_count(self.zh),vi_count(self.vi_dubbing),vi_count(self.vi_subtitle)
+        self.zh_syllables,self.vi_syllables,self.vi_subtitle_syllables=zh.count,vi.count,sub.count
+        self.target_syllables=self.target_override or target_syllables(zh.count,self.duration,config)
+        self.syllable_delta=vi.count-self.target_syllables
+        self.syllable_warnings=list(dict.fromkeys(zh.warnings+vi.warnings+sub.warnings))
+        if self.tts_duration is not None:
+            self.tts_speed_factor=self.tts_duration/self.duration
+            self.tts_alignment_status="warning" if self.tts_duration>self.duration else "fits"
+
+    def to_dict(self):
+        return {**asdict(self), "duration":self.duration}
+
+    @classmethod
+    def from_dict(cls,data):
+        data=dict(data)
+        data.pop("duration",None)
+        data.pop("slot_duration",None)
+        return cls(**data)
+
+SubtitleSegment = Segment
 
 @dataclass
 class Mask:
@@ -48,7 +136,7 @@ class SubtitleStyle:
 class Project:
     name: str
     source_video_path: str
-    schema_version: int = 1
+    schema_version: int = 2
     metadata: dict = field(default_factory=dict)
     segments: list[Segment] = field(default_factory=list)
     transcription_status: str = "not_started"
@@ -69,15 +157,27 @@ class Project:
     translation_status: str = "not_started"
     translation_notes: dict = field(default_factory=dict)
 
+    speakers: dict = field(default_factory=dict)
+    speaker_review_hash: str = ""
+    dubbing_settings: dict = field(default_factory=dict)
+
     def to_dict(self):
-        return asdict(self)
+        from cartoon_sub.speaker.service import refresh_timeline
+        refresh_timeline(self)
+        data=asdict(self)
+        data["schema_version"]=2
+        data["master_timeline"]=[s.to_dict() for s in self.segments]
+        data.pop("segments",None)
+        return data
 
     @classmethod
     def from_dict(cls, data):
         data = dict(data)
-        if data.get("schema_version") != 1:
+        if data.get("schema_version") not in (1,2):
             raise ValueError("Unsupported project schema")
-        data["segments"] = [Segment(**s) for s in data.get("segments", [])]
+        data["schema_version"]=2
+        rows=data.pop("master_timeline", data.pop("segments",[]))
+        data["segments"] = [Segment.from_dict(s) for s in rows]
         ids = [s.id for s in data["segments"]]
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate subtitle IDs")
@@ -89,4 +189,7 @@ class Project:
         from cartoon_sub.translation.presets import GENRES
         if not isinstance(data.get("translation_genres", []), list) or any(g not in GENRES for g in data.get("translation_genres", [])):
             raise ValueError("Thể loại dịch không hợp lệ")
-        return cls(**data)
+        project=cls(**data)
+        from cartoon_sub.speaker.service import refresh_timeline
+        refresh_timeline(project)
+        return project

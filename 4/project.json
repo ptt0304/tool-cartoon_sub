@@ -1,0 +1,1279 @@
+{
+  "name": "4",
+  "source_video_path": "D:\\Documents\\MMO\\Youtube\\Tools\\Cartoon_Sub\\1\\20260811_李世民：我不能浪，附近有魏征在游荡..._BV1aYuz6xEQL.mp4",
+  "schema_version": 2,
+  "metadata": {
+    "duration": 119.317333,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "video_codec": "av1",
+    "audio_codec": "aac",
+    "subtitle_tracks": []
+  },
+  "transcription_status": "completed",
+  "translation_prompt": "",
+  "translation_preset": "Natural Vietnamese",
+  "glossary": {},
+  "mask": {
+    "enabled": false,
+    "kind": "solid",
+    "x": 0,
+    "y": 0,
+    "width": 0,
+    "height": 0
+  },
+  "subtitle_style": {
+    "font": "Arial",
+    "font_size": 42,
+    "bold": false,
+    "outline": 2,
+    "shadow": 1,
+    "alignment": 2,
+    "margin_bottom": 30,
+    "max_lines": 2
+  },
+  "selected_models": {
+    "transcription": "gemini-3.5-flash",
+    "translation": "gemini-3.5-flash"
+  },
+  "cache_hashes": {
+    "transcription": "d44921f16b9eef3b75da5d79e063c6ca63a16237ce4b36bb729b991baafd2e4c",
+    "translation_run": "6e16e08f3a42e07fcac56c465955d895ce568f32b97057f6c885cc51d4763054",
+    "translation": "6e16e08f3a42e07fcac56c465955d895ce568f32b97057f6c885cc51d4763054"
+  },
+  "chunk_states": {
+    "translation": {
+      "1": {
+        "status": "completed",
+        "ids": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "cache_key": "59fdbc5d424ea4e80e2af3f35e2503b1790ccc726908899449f5400789ac2e75"
+      }
+    }
+  },
+  "translation_genres": [
+    "comedy",
+    "documentary",
+    "historical"
+  ],
+  "story_context": {
+    "setting": "Triều đình nhà Đường (Đại Đường), bối cảnh cung đình mang tính hài hước, châm biếm lịch sử giữa Đường Thái Tông và các đại thần, đặc biệt là Ngụy Trưng.",
+    "summary": "Đoạn trích là một tiểu phẩm hài hước tái hiện mối quan hệ triều chính giữa Đường Thái Tông (Lý Thế Dân) và gián quan Ngụy Trưng. Hoàng đế muốn tổ chức lễ phong thiện ở Thái Sơn và tu sửa cung điện để thể hiện thành tựu của mình, nhưng liên tục bị Ngụy Trưng can gián bằng cách tính toán chi phí chi tiết và so sánh ông với bạo chúa Tùy Dạng Đế. Dù tức giận đến mức muốn \"thịt\" Ngụy Trưng và mắng thầm sau lưng, Đường Thái Tông cuối cùng vẫn phải nhượng bộ, chấp nhận nghe lời can gián và thậm chí còn thăng chức cho Ngụy Trưng, thừa nhận ông có \"công thuần long\" (dạy dỗ hoàng đế). Ngôi kể là ngôi thứ nhất (hoàng đế tự xưng \"Trẫm\" hoặc \"ta\") xen kẽ đối thoại trực tiếp giữa hoàng đế và các quan đại thần.",
+    "narration": "Ngôi thứ nhất (Đường Thái Tông tự xưng \"Trẫm\" / \"ta\" trong các câu thoại và độc thoại) kết hợp đối thoại trực tiếp giữa các nhân vật.",
+    "characters": [
+      {
+        "source": "唐太宗 / 李世民",
+        "target": "Đường Thái Tông / Lý Thế Dân",
+        "notes": "Hoàng đế nhà Đường (SPK_01), lên ngôi sau sự biến Huyền Vũ Môn năm 28 tuổi. Tính cách có phần trẻ con, thích thể hiện nhưng sợ bị mang tiếng là bạo chúa, vừa ghét vừa nể Ngụy Trưng.",
+        "evidence_ids": [
+          1,
+          5,
+          8,
+          12,
+          13,
+          21,
+          22,
+          23
+        ]
+      },
+      {
+        "source": "魏徵",
+        "target": "Ngụy Trưng",
+        "notes": "Gián quan nổi tiếng thẳng thắn (SPK_03), chuyên can gián hoàng đế bằng những lý lẽ đanh thép, không nể nang, bị hoàng đế gọi đùa là \"tiểu yêu tinh hành hạ người\" hay \"chim gián tử\".",
+        "evidence_ids": [
+          3,
+          6,
+          9,
+          11,
+          14,
+          15,
+          17,
+          18,
+          19,
+          21,
+          23
+        ]
+      },
+      {
+        "source": "房玄齡",
+        "target": "Phòng Huyền Linh",
+        "notes": "Tể tướng nhà Đường, được nhắc đến khi hoàng đế đang tức giận muốn trút giận lên Ngụy Trưng.",
+        "evidence_ids": [
+          21
+        ]
+      },
+      {
+        "source": "朱元璋",
+        "target": "Chu Nguyên Chương",
+        "notes": "Hoàng đế khai quốc nhà Minh, được Đường Thái Tông nhắc đến để so sánh về mức độ tàn bạo với thần tử.",
+        "evidence_ids": [
+          22
+        ]
+      },
+      {
+        "source": "隋煬帝",
+        "target": "Tùy Dạng Đế",
+        "notes": "Hoàng đế cuối triều Tùy, nổi tiếng xa xỉ, bạo ngược, được Ngụy Trưng dùng làm gương xấu để răn đe Đường Thái Tông.",
+        "evidence_ids": [
+          9
+        ]
+      }
+    ],
+    "terms": [
+      {
+        "source": "大唐",
+        "target": "Đại Đường",
+        "notes": "Triều đại nhà Đường do Lý Thế Dân làm hoàng đế.",
+        "evidence_ids": [
+          1
+        ]
+      },
+      {
+        "source": "封禪泰山",
+        "target": "Phong thiện Thái Sơn",
+        "notes": "Nghi lễ tế trời đất tế cáo thành tựu của các hoàng đế Trung Hoa cổ đại tại núi Thái Sơn.",
+        "evidence_ids": [
+          1,
+          3,
+          8
+        ]
+      },
+      {
+        "source": "貫",
+        "target": "quán",
+        "notes": "Đơn vị tiền tệ cổ (quán tiền).",
+        "evidence_ids": [
+          3,
+          4
+        ]
+      },
+      {
+        "source": "高句麗",
+        "target": "Cao Câu Ly",
+        "notes": "Quốc gia cổ đại ở bán đảo Triều Tiên và Đông Bắc Trung Quốc, triều Tùy từng ba lần chinh phạt hao người tốn của.",
+        "evidence_ids": [
+          11
+        ]
+      },
+      {
+        "source": "三皇五帝",
+        "target": "Tam Hoàng Ngũ Đế",
+        "notes": "Các vị vua huyền thoại thời kỳ đầu của lịch sử Trung Quốc.",
+        "evidence_ids": [
+          18
+        ]
+      },
+      {
+        "source": "從龍之功",
+        "target": "công tòng long",
+        "notes": "Công lao phò tá hoàng đế lên ngôi từ thuở hàn vi.",
+        "evidence_ids": [
+          23
+        ]
+      },
+      {
+        "source": "馴龍之功",
+        "target": "công thuần long",
+        "notes": "Cách nói hài hước chỉ công lao \"dạy dỗ, uốn nắn\" hoàng đế của Ngụy Trưng.",
+        "evidence_ids": [
+          23
+        ]
+      },
+      {
+        "source": "死諫鳥",
+        "target": "chim gián tử",
+        "notes": "Cách gọi đùa của Đường Thái Tông dành cho Ngụy Trưng, liên quan đến điển tích giấu chim trong tay áo.",
+        "evidence_ids": [
+          23
+        ]
+      }
+    ],
+    "address_rules": [
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "朕",
+        "address_term": "眾位愛卿",
+        "condition": "Hoàng đế nói với các đại thần ở triều đình",
+        "evidence_ids": [
+          1
+        ]
+      },
+      {
+        "speaker": "SPK_03",
+        "listener": "SPK_01",
+        "self_term": "臣",
+        "address_term": "陛下",
+        "condition": "Ngụy Trưng tâu trình với hoàng đế",
+        "evidence_ids": [
+          3,
+          6,
+          11,
+          15,
+          17,
+          19
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "SPK_03",
+        "self_term": "朕",
+        "address_term": "魏徵",
+        "condition": "Hoàng đế gọi Ngụy Trưng trực tiếp",
+        "evidence_ids": [
+          14
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "我 / 朕",
+        "address_term": "魏徵這個磨人的小妖精 / 那個鄉巴佬",
+        "condition": "Hoàng đế tức giận mắng thầm Ngụy Trưng sau lưng",
+        "evidence_ids": [
+          21
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "我",
+        "address_term": "你",
+        "condition": "Hoàng đế bảo Phòng Huyền Linh đừng cản mình",
+        "evidence_ids": [
+          21
+        ]
+      }
+    ],
+    "uncertainties": [
+      "Từ '花生' (lạc/đậu phộng) ở câu 14 có thể là một chi tiết gây cười cố ý hoặc là lỗi nhận diện âm thanh (ASR) của một từ cổ phong khác như '放肆' (phóng tứ/gỗ nghịch).",
+      "Cụm từ '是才，想洗耳' ở câu 7 có thể là lỗi nhận diện âm thanh của '洗耳恭聽' (rửa tai lắng nghe) hoặc một cách diễn đạt khẩu ngữ hài hước."
+    ]
+  },
+  "context_proposal": {
+    "setting": "Triều đình nhà Đường (Đại Đường), bối cảnh cung đình mang tính hài hước, châm biếm lịch sử giữa Đường Thái Tông và các đại thần, đặc biệt là Ngụy Trưng.",
+    "summary": "Đoạn trích là một tiểu phẩm hài hước tái hiện mối quan hệ triều chính giữa Đường Thái Tông (Lý Thế Dân) và gián quan Ngụy Trưng. Hoàng đế muốn tổ chức lễ phong thiện ở Thái Sơn và tu sửa cung điện để thể hiện thành tựu của mình, nhưng liên tục bị Ngụy Trưng can gián bằng cách tính toán chi phí chi tiết và so sánh ông với bạo chúa Tùy Dạng Đế. Dù tức giận đến mức muốn \"thịt\" Ngụy Trưng và mắng thầm sau lưng, Đường Thái Tông cuối cùng vẫn phải nhượng bộ, chấp nhận nghe lời can gián và thậm chí còn thăng chức cho Ngụy Trưng, thừa nhận ông có \"công thuần long\" (dạy dỗ hoàng đế). Ngôi kể là ngôi thứ nhất (hoàng đế tự xưng \"Trẫm\" hoặc \"ta\") xen kẽ đối thoại trực tiếp giữa hoàng đế và các quan đại thần.",
+    "narration": "Ngôi thứ nhất (Đường Thái Tông tự xưng \"Trẫm\" / \"ta\" trong các câu thoại và độc thoại) kết hợp đối thoại trực tiếp giữa các nhân vật.",
+    "characters": [
+      {
+        "source": "唐太宗 / 李世民",
+        "target": "Đường Thái Tông / Lý Thế Dân",
+        "notes": "Hoàng đế nhà Đường (SPK_01), lên ngôi sau sự biến Huyền Vũ Môn năm 28 tuổi. Tính cách có phần trẻ con, thích thể hiện nhưng sợ bị mang tiếng là bạo chúa, vừa ghét vừa nể Ngụy Trưng.",
+        "evidence_ids": [
+          1,
+          5,
+          8,
+          12,
+          13,
+          21,
+          22,
+          23
+        ]
+      },
+      {
+        "source": "魏徵",
+        "target": "Ngụy Trưng",
+        "notes": "Gián quan nổi tiếng thẳng thắn (SPK_03), chuyên can gián hoàng đế bằng những lý lẽ đanh thép, không nể nang, bị hoàng đế gọi đùa là \"tiểu yêu tinh hành hạ người\" hay \"chim gián tử\".",
+        "evidence_ids": [
+          3,
+          6,
+          9,
+          11,
+          14,
+          15,
+          17,
+          18,
+          19,
+          21,
+          23
+        ]
+      },
+      {
+        "source": "房玄齡",
+        "target": "Phòng Huyền Linh",
+        "notes": "Tể tướng nhà Đường, được nhắc đến khi hoàng đế đang tức giận muốn trút giận lên Ngụy Trưng.",
+        "evidence_ids": [
+          21
+        ]
+      },
+      {
+        "source": "朱元璋",
+        "target": "Chu Nguyên Chương",
+        "notes": "Hoàng đế khai quốc nhà Minh, được Đường Thái Tông nhắc đến để so sánh về mức độ tàn bạo với thần tử.",
+        "evidence_ids": [
+          22
+        ]
+      },
+      {
+        "source": "隋煬帝",
+        "target": "Tùy Dạng Đế",
+        "notes": "Hoàng đế cuối triều Tùy, nổi tiếng xa xỉ, bạo ngược, được Ngụy Trưng dùng làm gương xấu để răn đe Đường Thái Tông.",
+        "evidence_ids": [
+          9
+        ]
+      }
+    ],
+    "terms": [
+      {
+        "source": "大唐",
+        "target": "Đại Đường",
+        "notes": "Triều đại nhà Đường do Lý Thế Dân làm hoàng đế.",
+        "evidence_ids": [
+          1
+        ]
+      },
+      {
+        "source": "封禪泰山",
+        "target": "Phong thiện Thái Sơn",
+        "notes": "Nghi lễ tế trời đất tế cáo thành tựu của các hoàng đế Trung Hoa cổ đại tại núi Thái Sơn.",
+        "evidence_ids": [
+          1,
+          3,
+          8
+        ]
+      },
+      {
+        "source": "貫",
+        "target": "quán",
+        "notes": "Đơn vị tiền tệ cổ (quán tiền).",
+        "evidence_ids": [
+          3,
+          4
+        ]
+      },
+      {
+        "source": "高句麗",
+        "target": "Cao Câu Ly",
+        "notes": "Quốc gia cổ đại ở bán đảo Triều Tiên và Đông Bắc Trung Quốc, triều Tùy từng ba lần chinh phạt hao người tốn của.",
+        "evidence_ids": [
+          11
+        ]
+      },
+      {
+        "source": "三皇五帝",
+        "target": "Tam Hoàng Ngũ Đế",
+        "notes": "Các vị vua huyền thoại thời kỳ đầu của lịch sử Trung Quốc.",
+        "evidence_ids": [
+          18
+        ]
+      },
+      {
+        "source": "從龍之功",
+        "target": "công tòng long",
+        "notes": "Công lao phò tá hoàng đế lên ngôi từ thuở hàn vi.",
+        "evidence_ids": [
+          23
+        ]
+      },
+      {
+        "source": "馴龍之功",
+        "target": "công thuần long",
+        "notes": "Cách nói hài hước chỉ công lao \"dạy dỗ, uốn nắn\" hoàng đế của Ngụy Trưng.",
+        "evidence_ids": [
+          23
+        ]
+      },
+      {
+        "source": "死諫鳥",
+        "target": "chim gián tử",
+        "notes": "Cách gọi đùa của Đường Thái Tông dành cho Ngụy Trưng, liên quan đến điển tích giấu chim trong tay áo.",
+        "evidence_ids": [
+          23
+        ]
+      }
+    ],
+    "address_rules": [
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "朕",
+        "address_term": "眾位愛卿",
+        "condition": "Hoàng đế nói với các đại thần ở triều đình",
+        "evidence_ids": [
+          1
+        ]
+      },
+      {
+        "speaker": "SPK_03",
+        "listener": "SPK_01",
+        "self_term": "臣",
+        "address_term": "陛下",
+        "condition": "Ngụy Trưng tâu trình với hoàng đế",
+        "evidence_ids": [
+          3,
+          6,
+          11,
+          15,
+          17,
+          19
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "SPK_03",
+        "self_term": "朕",
+        "address_term": "魏徵",
+        "condition": "Hoàng đế gọi Ngụy Trưng trực tiếp",
+        "evidence_ids": [
+          14
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "我 / 朕",
+        "address_term": "魏徵這個磨人的小妖精 / 那個鄉巴佬",
+        "condition": "Hoàng đế tức giận mắng thầm Ngụy Trưng sau lưng",
+        "evidence_ids": [
+          21
+        ]
+      },
+      {
+        "speaker": "SPK_01",
+        "listener": "Unknown",
+        "self_term": "我",
+        "address_term": "你",
+        "condition": "Hoàng đế bảo Phòng Huyền Linh đừng cản mình",
+        "evidence_ids": [
+          21
+        ]
+      }
+    ],
+    "uncertainties": [
+      "Từ '花生' (lạc/đậu phộng) ở câu 14 có thể là một chi tiết gây cười cố ý hoặc là lỗi nhận diện âm thanh (ASR) của một từ cổ phong khác như '放肆' (phóng tứ/gỗ nghịch).",
+      "Cụm từ '是才，想洗耳' ở câu 7 có thể là lỗi nhận diện âm thanh của '洗耳恭聽' (rửa tai lắng nghe) hoặc một cách diễn đạt khẩu ngữ hài hước."
+    ]
+  },
+  "context_source_hash": "4d541a77fae71fc720c2f51463314043cfa3f5ecf3b1bbbb66dd66aecd70bb45",
+  "context_proposal_hash": "4d541a77fae71fc720c2f51463314043cfa3f5ecf3b1bbbb66dd66aecd70bb45",
+  "context_status": "applied",
+  "translation_status": "completed",
+  "translation_notes": {
+    "1": "",
+    "2": "",
+    "3": "",
+    "4": "",
+    "5": "",
+    "6": "",
+    "7": "\"是才，想洗耳\" có thể là lỗi ASR của \"洗耳恭聽\" (rửa tai lắng nghe) hoặc \"thị tài\" (vừa rồi). Dịch sát nghĩa phỏng đoán là \"vừa rồi Trẫm muốn rửa tai lắng nghe\".",
+    "8": "",
+    "9": "",
+    "10": "",
+    "11": "",
+    "12": "",
+    "13": "",
+    "14": "\"花生\" (lạc/đậu phộng) có thể là lỗi ASR của \"放肆\" (phóng tứ/to gan) trong bối cảnh hoàng đế đang tức giận, dịch là \"to gan\".",
+    "15": "",
+    "16": "",
+    "17": "",
+    "18": "",
+    "19": "",
+    "20": "",
+    "21": "",
+    "22": "",
+    "23": ""
+  },
+  "speakers": {
+    "SPK_01": {
+      "id": "SPK_01",
+      "name": "Unknown",
+      "voice_notes": ""
+    },
+    "SPK_02": {
+      "id": "SPK_02",
+      "name": "Unknown",
+      "voice_notes": ""
+    },
+    "SPK_03": {
+      "id": "SPK_03",
+      "name": "Unknown",
+      "voice_notes": ""
+    },
+    "SPK_04": {
+      "id": "SPK_04",
+      "name": "Unknown",
+      "voice_notes": ""
+    }
+  },
+  "speaker_review_hash": "1a3201bd0423bf2ed06f5d318d075a2d26aae6947392e2b1f4923af212fda07c",
+  "dubbing_settings": {
+    "mode": "balanced_dubbing",
+    "target_strategy": "time_based",
+    "speech_rate": 3.5,
+    "tolerance_percent": 15,
+    "tolerance_syllables": 1,
+    "tolerance_kind": "percent",
+    "strict_retry": 3,
+    "separate_texts": true,
+    "hybrid_time_weight": 0.5
+  },
+  "master_timeline": [
+    {
+      "id": 1,
+      "start": 0.0,
+      "end": 15.2,
+      "zh": "眾位愛卿，朕28歲時，兄弟被殺，父親被軟禁，朕獨自撐起大唐一片天。一路走來，也算取得一點微小的成績。朕決定，封禪泰山，大家說好不好啊？",
+      "vi_subtitle": "Các khanh, năm Trẫm 28 tuổi, huynh đệ bị sát hại, phụ hoàng bị giam lỏng, một mình Trẫm chống đỡ cả bầu trời Đại Đường. Đi đến ngày hôm nay, cũng coi như đạt được chút thành tựu nho nhỏ. Trẫm quyết định phong thiện Thái Sơn, mọi người thấy có được không?",
+      "vi_dubbing": "Các khanh, năm Trẫm 28 tuổi, huynh đệ bị sát hại, phụ hoàng bị giam lỏng, một mình Trẫm chống đỡ cả bầu trời Đại Đường. Đi đến ngày hôm nay, cũng coi như đạt được chút thành tựu nho nhỏ. Trẫm quyết định phong thiện Thái Sơn, mọi người thấy có được không?",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 58,
+      "vi_syllables": 56,
+      "vi_subtitle_syllables": 56,
+      "target_syllables": 53,
+      "syllable_delta": 3,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [
+        "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế",
+        "Số được chuẩn hóa local; kiểm tra số điện thoại, năm, đơn vị và dấu thập phân"
+      ],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 15.2
+    },
+    {
+      "id": 2,
+      "start": 15.2,
+      "end": 17.2,
+      "zh": "不好。",
+      "vi_subtitle": "Không được.",
+      "vi_dubbing": "Không được.",
+      "speaker_id": "SPK_02",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 2,
+      "vi_syllables": 2,
+      "vi_subtitle_syllables": 2,
+      "target_syllables": 7,
+      "syllable_delta": -5,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.0
+    },
+    {
+      "id": 3,
+      "start": 17.2,
+      "end": 22.5,
+      "zh": "想封禪，臣先給陛下算筆賬。修道路開支20萬貫，生豬祭品15萬貫。",
+      "vi_subtitle": "Muốn phong thiện, thần xin tính cho Bệ hạ một bài toán trước. Chi phí sửa đường là hai mươi vạn quán, heo sống làm tế phẩm là mười lăm vạn quán.",
+      "vi_dubbing": "Muốn phong thiện, thần xin tính cho Bệ hạ một bài toán trước. Chi phí sửa đường là hai mươi vạn quán, heo sống làm tế phẩm là mười lăm vạn quán.",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 28,
+      "vi_syllables": 32,
+      "vi_subtitle_syllables": 32,
+      "target_syllables": 19,
+      "syllable_delta": 13,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [
+        "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
+      ],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 5.300000000000001
+    },
+    {
+      "id": 4,
+      "start": 22.5,
+      "end": 24.8,
+      "zh": "加加加加20萬，50萬。",
+      "vi_subtitle": "Cộng cộng cộng cộng thêm hai mươi vạn, là năm mươi vạn.",
+      "vi_dubbing": "Cộng cộng cộng cộng thêm hai mươi vạn, là năm mươi vạn.",
+      "speaker_id": "SPK_04",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 10,
+      "vi_syllables": 12,
+      "vi_subtitle_syllables": 12,
+      "target_syllables": 8,
+      "syllable_delta": 4,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [
+        "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
+      ],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.3000000000000007
+    },
+    {
+      "id": 5,
+      "start": 24.8,
+      "end": 27.0,
+      "zh": "好好好，不封了不封了不封了不封了。",
+      "vi_subtitle": "Được được được, không phong nữa, không phong nữa, không phong nữa, không phong nữa.",
+      "vi_dubbing": "Được được được, không phong nữa, không phong nữa, không phong nữa, không phong nữa.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 15,
+      "vi_syllables": 15,
+      "vi_subtitle_syllables": 15,
+      "target_syllables": 8,
+      "syllable_delta": 7,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.1999999999999993
+    },
+    {
+      "id": 6,
+      "start": 27.0,
+      "end": 33.0,
+      "zh": "想陛下這種千年難遇的聖主明君，定會把這筆錢用在民生上，對不對？",
+      "vi_subtitle": "Một bậc thánh chủ minh quân ngàn năm có một như Bệ hạ, chắc chắn sẽ dùng số tiền này vào việc dân sinh, đúng không ạ?",
+      "vi_dubbing": "Một bậc thánh chủ minh quân ngàn năm có một như Bệ hạ, chắc chắn sẽ dùng số tiền này vào việc dân sinh, đúng không ạ?",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 28,
+      "vi_syllables": 27,
+      "vi_subtitle_syllables": 27,
+      "target_syllables": 21,
+      "syllable_delta": 6,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 6.0
+    },
+    {
+      "id": 7,
+      "start": 33.0,
+      "end": 37.0,
+      "zh": "哦，對，對，對，是才，想洗耳。",
+      "vi_subtitle": "Ồ, đúng, đúng, đúng, vừa rồi Trẫm muốn rửa tai lắng nghe.",
+      "vi_dubbing": "Ồ, đúng, đúng, đúng, vừa rồi Trẫm muốn rửa tai lắng nghe.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 9,
+      "vi_syllables": 12,
+      "vi_subtitle_syllables": 12,
+      "target_syllables": 14,
+      "syllable_delta": -2,
+      "semantic_compression": false,
+      "meaning_preservation": "medium",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 4.0
+    },
+    {
+      "id": 8,
+      "start": 37.0,
+      "end": 43.0,
+      "zh": "既然封禪勞民傷財，那就算了。朕把宮殿修繕一番，總可以了吧？",
+      "vi_subtitle": "Đã phong thiện hao tài tốn của thì thôi vậy. Trẫm tu sửa cung điện một chút, thế là được rồi chứ?",
+      "vi_dubbing": "Đã phong thiện hao tài tốn của thì thôi vậy. Trẫm tu sửa cung điện một chút, thế là được rồi chứ?",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 25,
+      "vi_syllables": 22,
+      "vi_subtitle_syllables": 22,
+      "target_syllables": 21,
+      "syllable_delta": 1,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 6.0
+    },
+    {
+      "id": 9,
+      "start": 43.0,
+      "end": 46.5,
+      "zh": "隋煬帝當年，就是這麼墮落的。",
+      "vi_subtitle": "Tùy Dạng Đế năm xưa chính là sa đọa như thế đấy.",
+      "vi_dubbing": "Tùy Dạng Đế năm xưa chính là sa đọa như thế đấy.",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 12,
+      "vi_syllables": 12,
+      "vi_subtitle_syllables": 12,
+      "target_syllables": 12,
+      "syllable_delta": 0,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 3.5
+    },
+    {
+      "id": 10,
+      "start": 46.5,
+      "end": 47.5,
+      "zh": "啊？",
+      "vi_subtitle": "Hả?",
+      "vi_dubbing": "Hả?",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 1,
+      "vi_syllables": 1,
+      "vi_subtitle_syllables": 1,
+      "target_syllables": 4,
+      "syllable_delta": -3,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 1.0
+    },
+    {
+      "id": 11,
+      "start": 47.5,
+      "end": 52.0,
+      "zh": "陛下今天敢修宮殿，明天就敢挖運河，後天就敢三征高句麗，大後天就...",
+      "vi_subtitle": "Hôm nay Bệ hạ dám sửa cung điện, ngày mai sẽ dám đào kênh đào, ngày mốt sẽ dám ba lần chinh phạt Cao Câu Ly, ngày kia sẽ...",
+      "vi_dubbing": "Hôm nay Bệ hạ dám sửa cung điện, ngày mai sẽ dám đào kênh đào, ngày mốt sẽ dám ba lần chinh phạt Cao Câu Ly, ngày kia sẽ...",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 28,
+      "vi_syllables": 29,
+      "vi_subtitle_syllables": 29,
+      "target_syllables": 16,
+      "syllable_delta": 13,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 4.5
+    },
+    {
+      "id": 12,
+      "start": 52.0,
+      "end": 54.5,
+      "zh": "好好好，不修了不修了不修了不修了。你看，又急。",
+      "vi_subtitle": "Được được được, không sửa nữa, không sửa nữa, không sửa nữa, không sửa nữa. Ngươi xem, lại vội rồi.",
+      "vi_dubbing": "Được được được, không sửa nữa, không sửa nữa, không sửa nữa, không sửa nữa. Ngươi xem, lại vội rồi.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 19,
+      "vi_syllables": 20,
+      "vi_subtitle_syllables": 20,
+      "target_syllables": 9,
+      "syllable_delta": 11,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.5
+    },
+    {
+      "id": 13,
+      "start": 55.5,
+      "end": 59.5,
+      "zh": "莫生氣，人生就像一場戲，要當明君好皇帝。",
+      "vi_subtitle": "Đừng tức giận, cuộc đời như một vở kịch, phải làm một minh quân hoàng đế tốt.",
+      "vi_dubbing": "Đừng tức giận, cuộc đời như một vở kịch, phải làm một minh quân hoàng đế tốt.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 17,
+      "vi_syllables": 17,
+      "vi_subtitle_syllables": 17,
+      "target_syllables": 14,
+      "syllable_delta": 3,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 4.0
+    },
+    {
+      "id": 14,
+      "start": 59.5,
+      "end": 61.5,
+      "zh": "魏徵，花生。",
+      "vi_subtitle": "Ngụy Trưng, to gan!",
+      "vi_dubbing": "Ngụy Trưng, to gan!",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 4,
+      "vi_syllables": 4,
+      "vi_subtitle_syllables": 4,
+      "target_syllables": 7,
+      "syllable_delta": -3,
+      "semantic_compression": false,
+      "meaning_preservation": "medium",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.0
+    },
+    {
+      "id": 15,
+      "start": 64.5,
+      "end": 67.5,
+      "zh": "陛下，臣有一事商討。",
+      "vi_subtitle": "Bệ hạ, thần có một việc muốn thương thảo.",
+      "vi_dubbing": "Bệ hạ, thần có một việc muốn thương thảo.",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 8,
+      "vi_syllables": 9,
+      "vi_subtitle_syllables": 9,
+      "target_syllables": 11,
+      "syllable_delta": -2,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 3.0
+    },
+    {
+      "id": 16,
+      "start": 67.5,
+      "end": 69.0,
+      "zh": "別吵，朕正在思考。",
+      "vi_subtitle": "Đừng ồn, Trẫm đang suy nghĩ.",
+      "vi_dubbing": "Đừng ồn, Trẫm đang suy nghĩ.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 7,
+      "vi_syllables": 6,
+      "vi_subtitle_syllables": 6,
+      "target_syllables": 5,
+      "syllable_delta": 1,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 1.5
+    },
+    {
+      "id": 17,
+      "start": 69.0,
+      "end": 71.5,
+      "zh": "那臣便長話短說吧。",
+      "vi_subtitle": "Vậy thần xin nói ngắn gọn vậy.",
+      "vi_dubbing": "Vậy thần xin nói ngắn gọn vậy.",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 8,
+      "vi_syllables": 7,
+      "vi_subtitle_syllables": 7,
+      "target_syllables": 9,
+      "syllable_delta": -2,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.5
+    },
+    {
+      "id": 18,
+      "start": 71.5,
+      "end": 73.0,
+      "zh": "話說，三皇五帝時期...",
+      "vi_subtitle": "Chuyện là, thời Tam Hoàng Ngũ Đế...",
+      "vi_dubbing": "Chuyện là, thời Tam Hoàng Ngũ Đế...",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 8,
+      "vi_syllables": 7,
+      "vi_subtitle_syllables": 7,
+      "target_syllables": 5,
+      "syllable_delta": 2,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 1.5
+    },
+    {
+      "id": 19,
+      "start": 77.5,
+      "end": 80.5,
+      "zh": "臣話說完，臣告退。",
+      "vi_subtitle": "Thần đã nói xong, thần xin cáo lui.",
+      "vi_dubbing": "Thần đã nói xong, thần xin cáo lui.",
+      "speaker_id": "SPK_03",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 7,
+      "vi_syllables": 8,
+      "vi_subtitle_syllables": 8,
+      "target_syllables": 11,
+      "syllable_delta": -3,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 3.0
+    },
+    {
+      "id": 20,
+      "start": 80.5,
+      "end": 82.5,
+      "zh": "氣死我了！",
+      "vi_subtitle": "Tức chết ta rồi!",
+      "vi_dubbing": "Tức chết ta rồi!",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 4,
+      "vi_syllables": 4,
+      "vi_subtitle_syllables": 4,
+      "target_syllables": 7,
+      "syllable_delta": -3,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 2.0
+    },
+    {
+      "id": 21,
+      "start": 82.5,
+      "end": 91.0,
+      "zh": "魏徵這個磨人的小妖精，房玄齡，你別拉我，朕今日非要宰了那個鄉巴佬！",
+      "vi_subtitle": "Ngụy Trưng cái đồ tiểu yêu tinh hành hạ người này, Phòng Huyền Linh, ngươi đừng cản ta, hôm nay Trẫm nhất định phải thịt tên nhà quê đó!",
+      "vi_dubbing": "Ngụy Trưng cái đồ tiểu yêu tinh hành hạ người này, Phòng Huyền Linh, ngươi đừng cản ta, hôm nay Trẫm nhất định phải thịt tên nhà quê đó!",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 29,
+      "vi_syllables": 29,
+      "vi_subtitle_syllables": 29,
+      "target_syllables": 30,
+      "syllable_delta": -1,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 8.5
+    },
+    {
+      "id": 22,
+      "start": 91.0,
+      "end": 97.5,
+      "zh": "哼，也就是朕脾氣好，換作朱元璋，他現在已經散碎了。這要狠狠處罰他，一個月不准吃菠菜！",
+      "vi_subtitle": "Hừ, cũng là do Trẫm tính khí tốt, chứ đổi lại là Chu Nguyên Chương, hắn ta giờ đã tan xương nát thịt rồi. Phải phạt hắn thật nặng, một tháng không được ăn rau chân vịt!",
+      "vi_dubbing": "Hừ, cũng là do Trẫm tính khí tốt, chứ đổi lại là Chu Nguyên Chương, hắn ta giờ đã tan xương nát thịt rồi. Phải phạt hắn thật nặng, một tháng không được ăn rau chân vịt!",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 36,
+      "vi_syllables": 37,
+      "vi_subtitle_syllables": 37,
+      "target_syllables": 23,
+      "syllable_delta": 14,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 6.5
+    },
+    {
+      "id": 23,
+      "start": 97.5,
+      "end": 105.5,
+      "zh": "唉，算了，死諫鳥就死諫鳥吧。魏徵這也是，真清流一股，既有從龍之功，也有馴龍之功。隨便給他升個官吧。",
+      "vi_subtitle": "Ai, bỏ đi, chim gián tử thì chim gián tử vậy. Ngụy Trưng này cũng thật là một dòng nước trong, vừa có công tòng long, lại vừa có công thuần long. Tùy tiện thăng chức cho hắn đi.",
+      "vi_dubbing": "Ai, bỏ đi, chim gián tử thì chim gián tử vậy. Ngụy Trưng này cũng thật là một dòng nước trong, vừa có công tòng long, lại vừa có công thuần long. Tùy tiện thăng chức cho hắn đi.",
+      "speaker_id": "SPK_01",
+      "speaker_name": "Unknown",
+      "speaker_confidence": null,
+      "transcript_confidence": null,
+      "overlap": false,
+      "overlap_group": null,
+      "translation_mode": "balanced_dubbing",
+      "target_override": null,
+      "zh_syllables": 41,
+      "vi_syllables": 39,
+      "vi_subtitle_syllables": 39,
+      "target_syllables": 28,
+      "syllable_delta": 11,
+      "semantic_compression": false,
+      "meaning_preservation": "high",
+      "dubbing_optimized": false,
+      "dubbing_status": "not_started",
+      "dubbing_fingerprint": "",
+      "syllable_warnings": [],
+      "tts_audio_path": null,
+      "tts_duration": null,
+      "tts_speed_factor": null,
+      "tts_alignment_status": "not_imported",
+      "duration": 8.0
+    }
+  ]
+}

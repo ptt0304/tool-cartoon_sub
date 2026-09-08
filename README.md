@@ -1,4 +1,8 @@
-# Cartoon Sub — Phase 3
+# Cartoon Sub — Master Timeline / Dubbing
+
+Phase 5 đã có **Mask & Style → kéo rectangle solid/blur → preview 10 giây → render MP4** chạy local. Xem [hướng dẫn Phase 5 và đánh giá mức đáp ứng](docs/PHASE5_MASK_STYLE.md).
+
+Bản nâng cấp thêm speaker review, master timeline, hai bản Việt riêng và export theo speaker. **Bắt đầu với [hướng dẫn Master Timeline](docs/MASTER_TIMELINE.md)**; các thể loại, văn phong và hồ sơ ngữ cảnh Phase 3 được giữ nguyên. Project cũ cần gán/xác nhận speaker trước khi dịch.
 
 Desktop Python/PySide6, xử lý media local. Gemini dùng cho Chinese audio transcription và dịch Trung–Việt có hồ sơ ngữ cảnh. Translation đã nối API thật ở Phase 3.
 

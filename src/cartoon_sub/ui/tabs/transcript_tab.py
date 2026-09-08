@@ -7,7 +7,8 @@ def build():
                           "Project đã import SRT sẽ tắt transcription. Editor sẽ triển khai ở phase sau.")
     widget.import_button = QPushButton("Import Chinese SRT")
     widget.transcribe_button = QPushButton("Gemini: tạo / tiếp tục Chinese transcript")
-    widget.table = table(["ID", "Start (s)", "End (s)", "Chinese"])
-    for control in (widget.import_button, widget.transcribe_button, widget.table):
+    widget.speaker_button = QPushButton("Speaker review / gán, đổi tên, gộp, tách và nghe")
+    widget.table = table(["ID", "Start (s)", "End (s)", "Duration", "Speaker", "Overlap", "Chinese"])
+    for control in (widget.import_button, widget.transcribe_button, widget.speaker_button, widget.table):
         layout.addWidget(control)
     return widget

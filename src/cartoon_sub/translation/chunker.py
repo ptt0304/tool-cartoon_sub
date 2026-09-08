@@ -1,5 +1,7 @@
 def source_rows(segments):
-    return [{"id": s.id, "zh": s.zh} for s in segments]
+    return [{"id": s.id, "zh": s.zh, "speaker_id":s.speaker_id,"speaker_name":s.speaker_name,
+             "start":s.start,"end":s.end,"duration":s.duration,"zh_syllables":s.zh_syllables,
+             "target_syllables":s.target_syllables,"translation_mode":s.translation_mode} for s in segments]
 
 
 def batches(rows, max_rows, max_chars=16000):

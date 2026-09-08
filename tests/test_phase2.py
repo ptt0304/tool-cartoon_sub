@@ -215,6 +215,30 @@ class Phase2Tests(unittest.TestCase):
         pipeline.media.extract_audio.assert_not_called()
         pipeline.transcriber_factory.assert_not_called()
 
+    def test_transcript_token_limit_retry_and_block_diagnostics(self):
+        from types import SimpleNamespace
+        def reply(reason, text='partial'):
+            return SimpleNamespace(candidates=[SimpleNamespace(finish_reason=reason)], text=text)
+        sdk = Mock()
+        with patch('google.genai.Client', return_value=sdk):
+            gateway = GeminiClient('fake-key')
+            sdk.models.generate_content.side_effect = [reply('MAX_TOKENS'), reply('STOP', '{"segments": []}')]
+            self.assertEqual(gateway.transcribe_json(b'audio', 'prompt', {}, 'model'), '{"segments": []}')
+            self.assertEqual([c.kwargs['config'].max_output_tokens for c in sdk.models.generate_content.call_args_list], [16384, 32768])
+            sdk.models.generate_content.reset_mock()
+            sdk.models.generate_content.side_effect = [reply('MAX_TOKENS'), reply('MAX_TOKENS')]
+            with self.assertRaisesRegex(GeminiError, 'MAX_TOKENS'):
+                gateway.transcribe_json(b'audio', 'prompt', {}, 'model')
+            self.assertEqual(sdk.models.generate_content.call_count, 2)
+            sdk.models.generate_content.reset_mock()
+            sdk.models.generate_content.side_effect = [reply('SAFETY')]
+            with self.assertRaisesRegex(GeminiError, 'SAFETY'):
+                gateway.transcribe_json(b'audio', 'prompt', {}, 'model')
+            self.assertEqual(sdk.models.generate_content.call_count, 1)
+            sdk.models.generate_content.side_effect = [SimpleNamespace(candidates=[], prompt_feedback=SimpleNamespace(block_reason='PROHIBITED_CONTENT'))]
+            with self.assertRaisesRegex(GeminiError, 'PROHIBITED_CONTENT'):
+                gateway.transcribe_json(b'audio', 'prompt', {}, 'model')
+
     def test_sdk_mapping_uses_audio_structured_output_no_raw_errors(self):
         from google.genai import types
         from types import SimpleNamespace

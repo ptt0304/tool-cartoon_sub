@@ -5,6 +5,7 @@ from threading import Event
 from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
 from cartoon_sub.project.cache import atomic_json, content_hash, check_cancel
 from .gemini_translator import TranslationValidationError
+from .prompts import PROMPT_VERSION
 
 
 class CachedRequests:
@@ -20,7 +21,7 @@ class CachedRequests:
 
     def request(self, system, prompt, schema, validate, label):
         check_cancel(self.cancel)
-        key = content_hash({"version": "translation-v1", "model": self.model, "system": system,
+        key = content_hash({"version": PROMPT_VERSION, "model": self.model, "system": system,
                             "prompt": prompt, "schema": schema})
         path = self.directory / f"{key}.json"
         if path.exists():

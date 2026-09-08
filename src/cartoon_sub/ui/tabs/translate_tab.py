@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QComboBox, QPlainTextEdit, QPushButton, QLabel, QCheckBox,
-    QGridLayout, QHBoxLayout, QVBoxLayout, QGroupBox, QScrollArea, QWidget)
+    QGridLayout, QHBoxLayout, QVBoxLayout, QGroupBox, QScrollArea, QWidget, QTabWidget)
 from PySide6.QtCore import Qt
 from cartoon_sub.translation.presets import GENRES, STYLES
 
@@ -9,7 +9,9 @@ def build():
     outer = QVBoxLayout(widget)
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
-    outer.addWidget(scroll)
+    inner_tabs=QTabWidget()
+    outer.addWidget(inner_tabs)
+    inner_tabs.addTab(scroll,"Ngữ cảnh & văn phong")
     body = QWidget()
     layout = QVBoxLayout(body)
     scroll.setWidget(body)
@@ -62,4 +64,17 @@ def build():
     note.setWordWrap(True)
     layout.addWidget(note)
     layout.addStretch()
+    from cartoon_sub.ui.timeline_table import create_table
+    timeline=QWidget(); timeline_layout=QVBoxLayout(timeline)
+    toolbar=QHBoxLayout()
+    widget.view=QComboBox()
+    for label,key in [("Both","both"),("Subtitle","subtitle"),("Dubbing","dubbing")]: widget.view.addItem(label,key)
+    widget.edit_button=QPushButton("Sửa câu chọn / mode / target")
+    widget.optimize_button=QPushButton("Optimize selected for dubbing")
+    for control in (widget.view,widget.edit_button,widget.optimize_button): toolbar.addWidget(control)
+    timeline_layout.addLayout(toolbar)
+    widget.table=create_table(); timeline_layout.addWidget(widget.table)
+    hint=QLabel("Chọn nhiều dòng để tối ưu. Xanh: đúng target; vàng: lệch nhỏ; đỏ: lệch lớn/strict sai. Các mode khớp/ngắn có thể nén nghĩa; bản subtitle được giữ riêng theo Settings.")
+    hint.setWordWrap(True);timeline_layout.addWidget(hint)
+    inner_tabs.addTab(timeline,"Master dialogue timeline")
     return widget

@@ -19,11 +19,13 @@ def read_json(payload):
 
 def validate_translation(payload, ids):
     data = read_json(payload)
+    if isinstance(data,dict) and "translations" in data:
+        data={"segments":data["translations"]}
     if not isinstance(data, dict) or not isinstance(data.get("segments"), list):
         raise TranslationValidationError("Thiếu segments trong bản dịch")
     result = {}
     for row in data["segments"]:
-        if not isinstance(row, dict) or set(row) - {"id", "vi", "review_note"}:
+        if not isinstance(row, dict) or set(row) - {"id", "vi", "review_note", "meaning_preservation", "compressed"}:
             raise TranslationValidationError("Bản dịch có trường không cho phép; chỉ trả id, vi, review_note")
         sid = row.get("id")
         if type(sid) is not int or sid not in ids or sid in result:
@@ -31,7 +33,12 @@ def validate_translation(payload, ids):
         text, note = row.get("vi"), row.get("review_note", "")
         if not isinstance(text, str) or not text.strip() or not isinstance(note, str):
             raise TranslationValidationError(f"ID {sid}: bản dịch rỗng/sai kiểu")
-        result[sid] = {"id": sid, "vi": text.strip(), "review_note": note.strip()}
+        meaning=row.get("meaning_preservation","unknown")
+        compressed=row.get("compressed",False)
+        if meaning not in ("high","medium","low","unknown") or type(compressed) is not bool:
+            raise TranslationValidationError(f"ID {sid}: metadata meaning/compressed không hợp lệ")
+        result[sid] = {"id": sid, "vi": text.strip(), "review_note": note.strip(),
+                       "meaning_preservation":meaning,"compressed":compressed}
     if set(result) != set(ids):
         missing = sorted(set(ids) - set(result))
         raise TranslationValidationError(f"Thiếu bản dịch cho ID {missing[:10]}")
@@ -48,6 +55,7 @@ def validate_context(payload, ids):
         raise TranslationValidationError("Hồ sơ không đúng cấu trúc hoặc viện dẫn ID ngoài transcript đã đọc") from None
 
 
-TRANSLATION_SCHEMA = {"type": "OBJECT", "properties": {"segments": {"type": "ARRAY", "items": {
+TRANSLATION_SCHEMA = {"type": "OBJECT", "properties": {"translations": {"type": "ARRAY", "items": {
     "type": "OBJECT", "properties": {"id": {"type": "INTEGER"}, "vi": {"type": "STRING"},
-    "review_note": {"type": "STRING"}}, "required": ["id", "vi", "review_note"]}}}, "required": ["segments"]}
+    "review_note": {"type": "STRING"},"meaning_preservation":{"type":"STRING","enum":["high","medium","low","unknown"]},
+    "compressed":{"type":"BOOLEAN"}}, "required": ["id", "vi", "review_note","meaning_preservation","compressed"]}}}, "required": ["translations"]}

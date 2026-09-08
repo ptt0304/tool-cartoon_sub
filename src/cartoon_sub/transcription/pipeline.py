@@ -11,6 +11,7 @@ from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.subtitle.parser import export_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
+from cartoon_sub.speaker.service import refresh_timeline
 
 
 def save_subtitle_artifacts(project, directory):
@@ -81,11 +82,23 @@ class TranscriptionPipeline:
         if same_text:
             # A repeated cached transcription must not erase a finished translation.
             for source, target in zip(project.segments, segments):
-                target.vi = source.vi
+                target.vi_subtitle,target.vi_dubbing=source.vi_subtitle,source.vi_dubbing
+                target.dubbing_optimized=source.dubbing_optimized
+                target.translation_mode=source.translation_mode
+                target.target_override=source.target_override
+                target.semantic_compression=source.semantic_compression
+                target.meaning_preservation=source.meaning_preservation
+                target.dubbing_status="stale" if source.dubbing_optimized else source.dubbing_status
         elif project.translation_status != "not_started":
             project.translation_status = "stale"
             project.translation_notes = {}
         project.segments = segments
+        # A fresh diarization proposal must always be reviewed, even if the words match.
+        project.speaker_review_hash=""
+        if not same_text:
+            project.speakers={}
+            for segment in segments: segment.translation_mode=project.dubbing_settings.get("mode","balanced_dubbing")
+        refresh_timeline(project)
         project.transcription_status = "completed" if segments else "no_speech"
         project.selected_models["transcription"] = settings.transcription_model
         project.cache_hashes["transcription"] = content_hash({"source": source_hash,

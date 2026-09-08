@@ -7,7 +7,7 @@ def import_srt(path):
     return [Segment(i, event.start / 1000, event.end / 1000, event.plaintext) for i, event in enumerate(subtitles, 1)]
 
 def export_srt(segments, path, language="zh"):
-    if language not in ("zh", "vi"):
+    if language not in ("zh", "vi", "vi_subtitle", "vi_dubbing"):
         raise ValueError("Expected zh or vi")
     subtitles = pysubs2.SSAFile()
     for segment in segments:

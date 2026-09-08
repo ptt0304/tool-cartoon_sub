@@ -10,6 +10,10 @@ from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
 from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
+from cartoon_sub.translation.dubbing_service import DubbingService
+from cartoon_sub.speaker.service import refresh_timeline, approve_review, review_complete
+from cartoon_sub.speaker import editor_service as speaker_editor
+from cartoon_sub.tts.export_service import export_speakers
 
 class Controller:
     def __init__(self, settings_store=None):
@@ -20,10 +24,14 @@ class Controller:
         self.pipeline = TranscriptionPipeline(self.settings_store)
         self.context_service = ContextService(self.settings_store)
         self.translation_pipeline = TranslationPipeline(self.settings_store)
+        self.dubbing_service=DubbingService(self.settings_store)
 
     def create(self, video, directory, **job):
         metadata = probe(video, **job)
-        return self.manager.create(directory, video, metadata), Path(directory)
+        project=self.manager.create(directory, video, metadata)
+        project.dubbing_settings=self.settings_store.load_dubbing().to_dict()
+        self.manager.save(project,directory)
+        return project,Path(directory)
 
     def load(self, path):
         return self.manager.load(path), Path(path).parent
@@ -34,6 +42,7 @@ class Controller:
 
     def save(self):
         if self.project:
+            refresh_timeline(self.project)
             mark_stale(self.project, self.settings_store.load())
             self.manager.save(self.project, self.directory)
             if self.project.transcription_status != "not_started":
@@ -44,6 +53,9 @@ class Controller:
     def import_subtitles(self, path):
         segments = import_srt(path)
         self.project.segments = segments
+        self.project.speakers={}
+        self.project.speaker_review_hash=""
+        for s in segments: s.translation_mode=self.project.dubbing_settings.get("mode","balanced_dubbing")
         self.project.transcription_status = "imported"
         self.project.translation_status = "not_started"
         self.project.translation_notes = {}
@@ -63,6 +75,7 @@ class Controller:
         mark_stale(self.project, self.settings_store.load())
 
     def analyze_context(self, **job):
+        if not review_complete(self.project): raise ValueError("Cần duyệt speaker trong Transcript trước khi phân tích ngữ cảnh dịch")
         return self.context_service.analyze(self.project, self.directory, **job)
 
     def apply_context(self, context):
@@ -84,4 +97,30 @@ class Controller:
             return client.test_connection(settings.transcription_model, **job)
         finally:
             client.close()
+
+    def speaker_action(self, action, *args):
+        getattr(speaker_editor,action)(self.project,*args)
+        self.save()
+
+    def approve_speakers(self):
+        approve_review(self.project)
+        self.save()
+
+    def optimize_dubbing(self, ids, **job):
+        return self.dubbing_service.optimize(self.project,self.directory,ids,**job)
+
+    def export_speaker_files(self, text_type, **job):
+        return export_speakers(self.project,self.directory,text_type,**job)
+
+    def edit_utterance(self, sid, subtitle, dubbing, mode, target):
+        from cartoon_sub.translation.modes import TranslationMode
+        TranslationMode(mode)
+        s=next(s for s in self.project.segments if s.id==sid)
+        s.vi_subtitle,s.vi_dubbing=subtitle,dubbing
+        s.translation_mode=mode
+        s.target_override=target or None
+        s.dubbing_optimized=dubbing!=subtitle
+        s.dubbing_status="manual"
+        s.dubbing_fingerprint=""
+        self.save()
 

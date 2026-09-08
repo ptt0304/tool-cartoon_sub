@@ -1,8 +1,11 @@
+from PySide6.QtWidgets import QComboBox,QPushButton,QLabel
 from .common import page
 
 def build():
-    widget, layout = page("Phase 3 tự lưu subtitle/zh.srt, subtitle/vi.srt, subtitle/segments.json và translation_review.json trong project. "
-                          "Bản dịch chưa hoàn tất/cần cập nhật được ghi trạng thái trong project và review JSON. "
-                          "Các phase sau bổ sung TXT/JSON cho TTS thủ công và render final.mp4. Không có TTS tự động.")
+    widget,layout=page("Export từ master timeline. Timestamp giữa speaker có thể chồng nhau và được giữ nguyên. Mỗi lần export tạo một snapshot mới để không lẫn file cũ.")
+    widget.text_type=QComboBox(); widget.text_type.addItem("Vietnamese Dubbing","vi_dubbing");widget.text_type.addItem("Vietnamese Subtitle","vi_subtitle")
+    widget.export_button=QPushButton("Export SRT + TXT/manifest theo speaker")
+    widget.path_label=QLabel(); widget.path_label.setWordWrap(True)
+    layout.addWidget(widget.text_type);layout.addWidget(widget.export_button);layout.addWidget(widget.path_label)
     layout.addStretch()
     return widget

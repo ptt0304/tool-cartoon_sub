@@ -1,0 +1,1 @@
+Preserve meaning first, natural spoken Vietnamese second, target syllables and duration third. Prefer close to target within tolerance; do not sacrifice essential meaning to force a count.

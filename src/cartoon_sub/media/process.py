@@ -7,7 +7,7 @@ log = logging.getLogger(__name__)
 class CancelledError(RuntimeError):
     pass
 
-def run_process(args, cancel=None, progress=None):
+def run_process(args, cancel=None, progress=None, cwd=None):
     cancel = cancel or Event()
     if cancel.is_set():
         raise CancelledError("Job cancelled")
@@ -15,7 +15,7 @@ def run_process(args, cancel=None, progress=None):
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         process = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, creationflags=flags)
+                                   stderr=subprocess.PIPE, creationflags=flags, cwd=cwd)
     except OSError as exc:
         log.exception("Unable to start media tool")
         raise RuntimeError(f"Cannot start {args[0]}: {exc}") from exc

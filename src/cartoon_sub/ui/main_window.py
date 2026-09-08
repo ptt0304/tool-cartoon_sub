@@ -6,6 +6,12 @@ from cartoon_sub.ui.settings_dialog import SettingsDialog
 from cartoon_sub.ui.context_dialog import ContextDialog
 from cartoon_sub.translation.context_service import source_fingerprint
 from cartoon_sub.translation.qc import review_translation
+from cartoon_sub.speaker.service import review_complete, refresh_timeline
+from cartoon_sub.ui.speaker_dialog import SpeakerDialog
+from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
+from cartoon_sub.ui.utterance_dialog import UtteranceDialog
+from cartoon_sub.ui.timeline_table import populate, selected_ids
+from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.ui.tabs import video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, export_tab
 
 class MainWindow(QMainWindow):
@@ -13,7 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = Controller()
         self.worker = None
-        self.setWindowTitle("Cartoon Sub — Phase 3 / Biên dịch Trung–Việt")
+        self.setWindowTitle("Cartoon Sub — Master Timeline / Speaker & Dubbing")
         self.resize(1100, 750)
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -25,6 +31,7 @@ class MainWindow(QMainWindow):
         self.save_action = menu.addAction("Save project", self.save_project)
         self.save_action.setShortcut("Ctrl+S")
         self.menuBar().addMenu("Settings").addAction("AI…", self.open_settings)
+        self.menuBar().actions()[-1].menu().addAction("Translation / Dubbing…", self.open_dubbing_settings)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
@@ -36,11 +43,98 @@ class MainWindow(QMainWindow):
         self.pages[0].open_button.clicked.connect(self.open_video)
         self.pages[1].import_button.clicked.connect(self.import_srt)
         self.pages[1].transcribe_button.clicked.connect(self.transcribe)
+        self.pages[1].speaker_button.clicked.connect(self.edit_speakers)
         self.pages[2].translate_button.clicked.connect(self.translate)
         self.pages[2].analyze_button.clicked.connect(self.analyze_context)
         self.pages[2].context_button.clicked.connect(lambda: self.edit_context(False))
         self.pages[2].proposal_button.clicked.connect(lambda: self.edit_context(True))
+        self.pages[2].view.currentIndexChanged.connect(self.refresh_timeline_table)
+        self.pages[2].edit_button.clicked.connect(self.edit_utterance)
+        self.pages[2].optimize_button.clicked.connect(self.optimize_dubbing)
+        self.pages[5].export_button.clicked.connect(self.export_speakers)
+        self.pages[4].frame_button.clicked.connect(self.load_mask_frame)
+        self.pages[4].preview_button.clicked.connect(lambda:self.render_video(True))
+        self.pages[4].render_button.clicked.connect(lambda:self.render_video(False))
+        self.pages[4].save_button.clicked.connect(self.save_project)
         self.refresh()
+
+    def load_mask_frame(self):
+        from cartoon_sub.media.preview import VideoRenderer
+        try:
+            page=self.pages[4];page.player.stop()
+            project=self.controller.project
+            start=page.time.value()
+            self.start_job(lambda **job:VideoRenderer().frame(project,self.controller.directory,start,**job),page.show_frame)
+        except Exception as exc:self.error(exc)
+
+    def render_video(self,preview):
+        from cartoon_sub.media.preview import VideoRenderer
+        from cartoon_sub.subtitle.models import Project
+        try:
+            if not self.save_project():return
+            page=self.pages[4];page.player.stop()
+            project=Project.from_dict(self.controller.project.to_dict())
+            start=page.time.value()
+            self.start_job(lambda **job:VideoRenderer().render(project,self.controller.directory,start,preview,**job),
+                page.show_preview if preview else lambda path:page.output.setText('Render hoàn tất: '+str(path)))
+        except Exception as exc:self.error(exc)
+
+    def open_dubbing_settings(self):
+        try:
+            settings=DubbingSettings(**self.controller.project.dubbing_settings) if self.controller.project else self.controller.settings_store.load_dubbing()
+            dialog=DubbingSettingsDialog(settings,self)
+            if dialog.exec()==dialog.DialogCode.Accepted:
+                values=dialog.values()
+                self.controller.settings_store.save_dubbing(values)
+                if self.controller.project:
+                    self.sync_options()
+                    self.controller.project.dubbing_settings=values.to_dict()
+                    for segment in self.controller.project.segments:
+                        segment.translation_mode=values.mode
+                        if segment.dubbing_optimized: segment.dubbing_status="stale"
+                    self.controller.save();self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def edit_speakers(self):
+        try:
+            self.sync_options()
+            dialog=SpeakerDialog(self.controller.project,self.controller.directory,self)
+            if dialog.exec()==dialog.DialogCode.Accepted:
+                self.controller.project=dialog.project
+                self.controller.save();self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def refresh_timeline_table(self):
+        if self.controller.project:
+            populate(self.pages[2].table,self.controller.project,self.pages[2].view.currentData())
+
+    def edit_utterance(self):
+        try:
+            ids=selected_ids(self.pages[2].table)
+            if not ids:raise ValueError("Chọn một câu trong bảng")
+            segment=next(s for s in self.controller.project.segments if s.id==ids[0])
+            dialog=UtteranceDialog(segment,self)
+            if dialog.exec()==dialog.DialogCode.Accepted:
+                self.sync_options()
+                self.controller.edit_utterance(segment.id,dialog.subtitle.toPlainText(),dialog.dubbing.toPlainText(),dialog.mode.currentData(),dialog.target.value())
+                self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def optimize_dubbing(self):
+        try:
+            ids=selected_ids(self.pages[2].table)
+            if not ids:raise ValueError("Chọn một hoặc nhiều câu trong bảng")
+            self.sync_options();self.controller.save()
+            self.start_job(lambda **job:self.controller.optimize_dubbing(ids,**job),self.accept_project)
+        except Exception as exc:self.error(exc)
+
+    def export_speakers(self):
+        try:
+            self.sync_options();self.controller.save()
+            text_type=self.pages[5].text_type.currentData()
+            self.start_job(lambda **job:self.controller.export_speaker_files(text_type,**job),
+                           lambda path:self.pages[5].path_label.setText(str(path)))
+        except Exception as exc:self.error(exc)
 
     def open_settings(self):
         try:
@@ -94,6 +188,7 @@ class MainWindow(QMainWindow):
         page = self.pages[2]
         self.controller.update_translation_options(page.preset.currentData(), page.prompt.toPlainText(),
             page.glossary.toPlainText(), [key for key, check in page.genres.items() if check.isChecked()])
+        self.controller.project.mask,self.controller.project.subtitle_style=self.pages[4].values()
 
     def save_project(self):
         try:
@@ -126,6 +221,7 @@ class MainWindow(QMainWindow):
                 self.error(exc)
 
     def accept_project(self, result):
+        if self.controller.directory != result[1]:self.pages[4].reset_media()
         self.controller.accept(result)
         self.refresh()
         from pathlib import Path
@@ -187,6 +283,8 @@ class MainWindow(QMainWindow):
         self.save_action.setEnabled(project is not None)
         if project is None:
             return
+        refresh_timeline(project)
+        self.pages[4].load_project(project)
         self.pages[0].metadata.setPlainText(project.source_video_path + "\n\n" + json.dumps(project.metadata, ensure_ascii=False, indent=2))
         page = self.pages[2]
         page.preset.setCurrentIndex(max(0, page.preset.findData(project.translation_preset)))
@@ -194,13 +292,15 @@ class MainWindow(QMainWindow):
         page.glossary.setPlainText("\n".join(f"{k} -> {v}" for k, v in project.glossary.items()))
         for key, check in page.genres.items():
             check.setChecked(key in project.translation_genres)
-        ready = bool(project.segments) and project.context_source_hash == source_fingerprint(project)
+        context_ready = bool(project.segments) and project.context_source_hash == source_fingerprint(project)
+        ready = context_ready and review_complete(project)
         page.translate_button.setEnabled(ready)
-        page.analyze_button.setEnabled(bool(project.segments))
+        page.analyze_button.setEnabled(bool(project.segments) and review_complete(project))
         page.context_button.setEnabled(bool(project.segments))
         page.proposal_button.setEnabled(bool(project.context_proposal))
         context = project.story_context
         status = "Hồ sơ đã áp dụng cho transcript này" if ready else "Cần duyệt đề xuất hoặc tự nhập và áp dụng hồ sơ"
+        if not review_complete(project):status="Cần duyệt/gán speaker trong Transcript trước khi dịch. " + status
         if project.context_status == "proposal_ready":
             status += " • Có đề xuất AI mới đang chờ duyệt"
         states = {"completed": "Hoàn tất", "not_started": "Chưa dịch", "stale": "Cần dịch cập nhật — cấu hình/nguồn đã đổi",
@@ -212,15 +312,17 @@ class MainWindow(QMainWindow):
         page.summary.setText(page.summary.text() + f"\nModel dịch/ngữ cảnh: {model}" +
             (" — model 2.5 có thể bị hạn chế; đổi trong Settings > AI." if "gemini-2.5-" in model else ""))
         self.pages[1].transcribe_button.setEnabled(project.transcription_status != "imported")
+        self.pages[1].speaker_button.setEnabled(bool(project.segments))
         warnings = review_translation(project)
         for table, bilingual in ((self.pages[1].table, False), (self.pages[3].table, True)):
             table.setRowCount(len(project.segments))
             for row, s in enumerate(project.segments):
-                values = [s.id, s.zh, s.vi, f"{s.duration:.3f}", " | ".join(warnings[str(s.id)]) or "Không có cảnh báo tự động"] if bilingual else [s.id, f"{s.start:.3f}", f"{s.end:.3f}", s.zh]
+                values = [s.id, s.zh, s.vi, f"{s.duration:.3f}", " | ".join(warnings[str(s.id)]) or "Không có cảnh báo tự động"] if bilingual else [s.id, f"{s.start:.3f}", f"{s.end:.3f}",f"{s.duration:.3f}",f"{s.speaker_id} · {s.speaker_name}",s.overlap_group or "No",s.zh]
                 for col, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     item.setToolTip(str(value))
                     table.setItem(row, col, item)
+        self.refresh_timeline_table()
         self.statusBar().showMessage(f"{project.name}: {len(project.segments)} subtitles — {project.transcription_status}")
 
     def closeEvent(self, event):

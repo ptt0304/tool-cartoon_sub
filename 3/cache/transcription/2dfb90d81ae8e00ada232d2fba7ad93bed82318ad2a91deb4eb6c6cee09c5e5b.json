@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "attempt": 3,
+  "error": "Gemini HTTP 503: dịch vụ tạm thời gặp lỗi.",
+  "duration": 119.3173125,
+  "chunk": 1
+}

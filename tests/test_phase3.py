@@ -19,7 +19,9 @@ from cartoon_sub.translation.qc import review_translation
 
 def make_project(count=65):
     project = Project("test", "not-needed.mp4", segments=[
-        Segment(i, i * 2, i * 2 + 1.5, f"第{i}句") for i in range(1, count + 1)], transcription_status="completed")
+        Segment(i, i * 2, i * 2 + 1.5, f"第{i}句", speaker_id="SPK_01") for i in range(1, count + 1)], transcription_status="completed")
+    from cartoon_sub.speaker.service import approve_review
+    approve_review(project)
     project.context_source_hash = source_fingerprint(project)
     project.context_status = "applied"
     return project

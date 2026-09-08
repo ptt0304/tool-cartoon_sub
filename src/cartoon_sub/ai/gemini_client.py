@@ -59,22 +59,43 @@ class GeminiClient:
             message += " Model 2.5 có thể trả 404 với project mới; nên chọn gemini-3.5-flash rồi Save."
         return message
 
-    def transcribe_json(self, audio_bytes, prompt, schema, model, cancel=None):
+    def transcribe_json(self, audio_bytes, prompt, schema, model, cancel=None, references=None):
         from google.genai import types
         check_cancel(cancel)
-        try:
-            response = self.client.models.generate_content(
-                model=model,
-                contents=[prompt, types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")],
-                config=types.GenerateContentConfig(response_mime_type="application/json",
-                    response_schema=schema, temperature=0, max_output_tokens=16384),
-            )
-        except Exception as exc:
-            raise safe_error(exc) from None
-        check_cancel(cancel)
-        candidates = response.candidates or []
-        if not candidates or getattr(candidates[0].finish_reason, "value", candidates[0].finish_reason) != "STOP":
-            raise GeminiError("Gemini trả kết quả bị chặn hoặc chưa hoàn tất; không lưu transcript dở dang.")
+        contents=[prompt]
+        for speaker_id, audio in (references or {}).items():
+            contents.extend([f"VOICE REFERENCE ONLY: {speaker_id}", types.Part.from_bytes(data=audio,mime_type="audio/wav")])
+        # Keep the old two-part request when no reference is present.
+        if references: contents.append("TARGET AUDIO TO TRANSCRIBE:")
+        contents.append(types.Part.from_bytes(data=audio_bytes,mime_type="audio/wav"))
+        for token_limit in (16384, 32768):
+            check_cancel(cancel)
+            try:
+                response = self.client.models.generate_content(
+                    model=model, contents=contents,
+                    config=types.GenerateContentConfig(response_mime_type="application/json",
+                        response_schema=schema, temperature=0, max_output_tokens=token_limit),
+                )
+            except Exception as exc:
+                raise safe_error(exc) from None
+            check_cancel(cancel)
+            candidates = response.candidates or []
+            if not candidates:
+                feedback = getattr(response, 'prompt_feedback', None)
+                blocked = getattr(feedback, 'block_reason', None)
+                code = getattr(blocked, 'value', blocked)
+                # Only expose known enum values, never response text or server messages.
+                code = code if code in ('SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'OTHER') else 'NO_CANDIDATES'
+                raise GeminiError(f"Gemini không trả transcript ({code}). Không phải bằng chứng key sai. Transcript cũ được giữ nguyên.")
+            reason = getattr(candidates[0].finish_reason, 'value', candidates[0].finish_reason)
+            if reason == 'STOP':
+                break
+            if reason == 'MAX_TOKENS':
+                if token_limit == 16384:
+                    continue
+                raise GeminiError("Gemini MAX_TOKENS: transcript bị cắt vì hết giới hạn đầu ra, kể cả sau khi thử lại với 32768 token. Transcript cũ được giữ nguyên.")
+            code = reason if reason in ('SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'OTHER', 'MALFORMED_FUNCTION_CALL') else 'UNKNOWN_FINISH_REASON'
+            raise GeminiError(f"Gemini dừng transcription ({code}); không lưu kết quả dở dang. Transcript cũ được giữ nguyên.")
         if not response.text:
             raise GeminiError("Gemini không trả nội dung JSON.")
         return response.text

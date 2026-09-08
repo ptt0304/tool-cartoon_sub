@@ -11,7 +11,8 @@ from cartoon_sub.subtitle.models import Project
 
 
 def source_fingerprint(project):
-    return content_hash(source_rows(project.segments))
+    # Keep existing editorial profiles attached to their original text during schema migration.
+    return content_hash([{"id":s.id,"zh":s.zh} for s in project.segments])
 
 
 class ContextService:

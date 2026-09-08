@@ -1,66 +1,182 @@
 {
-  "status": "completed",
+  "status": "stale",
   "warnings": {
     "1": [
-      "Biên tập: Dịch sát nghĩa lịch sử sự biến Huyền Vũ Môn."
+      "Biên tập: Dịch sát nghĩa lịch sử sự biến Huyền Vũ Môn.",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +4 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế",
+      "Số được chuẩn hóa local; kiểm tra số điện thoại, năm, đơn vị và dấu thập phân"
     ],
-    "2": [],
-    "3": [],
+    "2": [
+      "Chưa gán speaker",
+      "Dubbing vượt target"
+    ],
+    "3": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing +2 âm tiết",
+      "Dubbing vượt target"
+    ],
     "4": [
-      "Biên tập: Dùng từ \"mọi người\" để dịch \"大家\" theo đúng chỉ dẫn xưng hô hài hước."
+      "Biên tập: Dùng từ \"mọi người\" để dịch \"大家\" theo đúng chỉ dẫn xưng hô hài hước.",
+      "Chưa gán speaker",
+      "Dubbing vượt target"
     ],
-    "5": [],
+    "5": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -2 âm tiết"
+    ],
     "6": [
-      "Tốc độ đọc >22 ký tự/giây"
+      "Tốc độ đọc >22 ký tự/giây",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +6 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "7": [],
-    "8": [],
-    "9": [],
-    "10": [],
-    "11": [],
-    "12": [],
+    "7": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing +2 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế",
+      "Số được chuẩn hóa local; kiểm tra số điện thoại, năm, đơn vị và dấu thập phân"
+    ],
+    "8": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing +2 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế",
+      "Số được chuẩn hóa local; kiểm tra số điện thoại, năm, đơn vị và dấu thập phân"
+    ],
+    "9": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -3 âm tiết",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế",
+      "Số được chuẩn hóa local; kiểm tra số điện thoại, năm, đơn vị và dấu thập phân"
+    ],
+    "10": [
+      "Chưa gán speaker",
+      "Dubbing vượt target"
+    ],
+    "11": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing +3 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "12": [
+      "Chưa gán speaker"
+    ],
     "13": [
-      "Biên tập: \"是才相惜\" có thể là cách nói trại hài hước của \"是财相惜\" (tiếc tiền/tiếc của) trong ngữ cảnh này, dịch thoát ý để giữ tính châm biếm."
+      "Biên tập: \"是才相惜\" có thể là cách nói trại hài hước của \"是财相惜\" (tiếc tiền/tiếc của) trong ngữ cảnh này, dịch thoát ý để giữ tính châm biếm.",
+      "Chưa gán speaker"
     ],
-    "14": [],
-    "15": [],
-    "16": [],
+    "14": [
+      "Chưa gán speaker"
+    ],
+    "15": [
+      "Chưa gán speaker"
+    ],
+    "16": [
+      "Chưa gán speaker"
+    ],
     "17": [
-      "Tốc độ đọc >22 ký tự/giây"
+      "Tốc độ đọc >22 ký tự/giây",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +7 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "18": [],
+    "18": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing +2 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
     "19": [
-      "Tốc độ đọc >22 ký tự/giây"
+      "Tốc độ đọc >22 ký tự/giây",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +10 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "20": [],
+    "20": [
+      "Chưa gán speaker"
+    ],
     "21": [
-      "Biên tập: Nhại lại câu thơ trong Mộc Lan Từ kết hợp tiếng chim kêu hài hước."
+      "Biên tập: Nhại lại câu thơ trong Mộc Lan Từ kết hợp tiếng chim kêu hài hước.",
+      "Chưa gán speaker",
+      "Lệch budget dubbing -3 âm tiết"
     ],
-    "22": [],
-    "23": [],
-    "24": [],
-    "25": [],
-    "26": [],
-    "27": [],
+    "22": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -2 âm tiết"
+    ],
+    "23": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -5 âm tiết"
+    ],
+    "24": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -4 âm tiết"
+    ],
+    "25": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -6 âm tiết"
+    ],
+    "26": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -3 âm tiết"
+    ],
+    "27": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -3 âm tiết"
+    ],
     "28": [
       "Dòng dài >100 ký tự",
       "Tốc độ đọc >22 ký tự/giây",
-      "Biên tập: \"你别拉我\" (ngươi đừng cản ta) ám chỉ có người đang can ngăn Hoàng đế (theo lịch sử là Trưởng Tôn hoàng hậu)."
+      "Biên tập: \"你别拉我\" (ngươi đừng cản ta) ám chỉ có người đang can ngăn Hoàng đế (theo lịch sử là Trưởng Tôn hoàng hậu).",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +10 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "29": [],
+    "29": [
+      "Chưa gán speaker"
+    ],
     "30": [
-      "Tốc độ đọc >22 ký tự/giây"
+      "Tốc độ đọc >22 ký tự/giây",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +8 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
     "31": [
-      "Tốc độ đọc >22 ký tự/giây"
+      "Tốc độ đọc >22 ký tự/giây",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +7 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "32": [],
+    "32": [
+      "Chưa gán speaker"
+    ],
     "33": [
       "Dòng dài >100 ký tự",
       "Tốc độ đọc >22 ký tự/giây",
-      "Biên tập: Giữ nguyên thuật ngữ \"tòng long chi công\" và \"huấn long chi công\" theo glossary."
+      "Biên tập: Giữ nguyên thuật ngữ \"tòng long chi công\" và \"huấn long chi công\" theo glossary.",
+      "Chưa gán speaker",
+      "Lệch budget dubbing +8 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
     ],
-    "34": []
+    "34": [
+      "Chưa gán speaker",
+      "Lệch budget dubbing -4 âm tiết"
+    ]
   },
   "context_uncertainties": [
     "Câu thoại '问女何所思，啾啾啾' (Dòng 21) nhại lại Mộc Lan Từ nhưng có phần giả tiếng chim kêu 'chiu chiu chiu', cần xem hình ảnh video để dịch thoát ý hài hước phù hợp.",
