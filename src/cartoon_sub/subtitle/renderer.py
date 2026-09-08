@@ -3,6 +3,7 @@ import math
 import re
 import textwrap
 import pysubs2
+from cartoon_sub.subtitle.segmentation_service import presentation_segments
 
 
 def validate_visuals(project):
@@ -22,6 +23,8 @@ def validate_visuals(project):
         raise ValueError('Font 8–300; alignment 1–9; số dòng 1–4')
     if any(not math.isfinite(v) or not 0 <= v <= 20 for v in (s.outline,s.shadow)) or not 0 <= s.margin_bottom < height:
         raise ValueError('Outline/shadow 0–20; margin phải nhỏ hơn chiều cao video')
+    if s.center_in_mask and not m.enabled:
+        raise ValueError('Bật vùng mask trước khi căn phụ đề vào giữa vùng đó')
 
 
 def save_ass(project, path, start=0, duration=None):
@@ -34,17 +37,22 @@ def save_ass(project, path, start=0, duration=None):
         bold=style.bold, outline=style.outline, shadow=style.shadow, alignment=pysubs2.Alignment(style.alignment),
         marginv=style.margin_bottom, marginl=20, marginr=20)
     end = start + duration if duration is not None else float('inf')
-    for row in project.segments:
-        if row.end <= start or row.start >= end or not row.vi_subtitle.strip():
-            continue
-        # Neutralize ASS control syntax; wrapping changes display only, never drops words.
-        text = re.sub(r'\s+', ' ', row.vi_subtitle).strip().replace('\\','／').replace('{','(').replace('}',')')
-        columns = max(8, int((width-40)/(style.font_size*.55)))
-        lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
-        while len(lines) > style.max_lines:
-            columns += 1
+    position_tag = ''
+    if style.center_in_mask:
+        position_tag = r'{\an5\pos(%d,%d)}' % (project.mask.x + project.mask.width // 2,
+                                                project.mask.y + project.mask.height // 2)
+    for utterance in project.utterances:
+        for row in presentation_segments(utterance):
+            if row.end <= start or row.start >= end:
+                continue
+            # Neutralize ASS control syntax; wrapping changes display only, never drops words.
+            text = re.sub(r'\s+', ' ', row.vi_text).strip().replace('\\','／').replace('{','(').replace('}',')')
+            columns = max(8, int((width-40)/(style.font_size*.55)))
             lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
-        subs.events.append(pysubs2.SSAEvent(start=round((max(row.start,start)-start)*1000),
-            end=round((min(row.end,end)-start)*1000), text=r'\N'.join(lines)))
+            while len(lines) > style.max_lines:
+                columns += 1
+                lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
+            subs.events.append(pysubs2.SSAEvent(start=round((max(row.start,start)-start)*1000),
+                end=round((min(row.end,end)-start)*1000), text=position_tag + r'\N'.join(lines)))
     subs.save(str(path), encoding='utf-8')
     return path

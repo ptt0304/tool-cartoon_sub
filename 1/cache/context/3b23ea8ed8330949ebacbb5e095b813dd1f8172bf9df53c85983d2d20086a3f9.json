@@ -1,0 +1,5 @@
+{
+  "status": "failed",
+  "attempt": 3,
+  "error": "Gemini HTTP 429: hết quota hoặc vượt giới hạn tốc độ. Kiểm tra quota trong AI Studio."
+}

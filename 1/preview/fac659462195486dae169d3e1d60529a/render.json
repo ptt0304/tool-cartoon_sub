@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "start": 5.0,
+  "duration": 10.0,
+  "mask": {
+    "enabled": true,
+    "kind": "solid",
+    "x": 216,
+    "y": 901,
+    "width": 1469,
+    "height": 93
+  },
+  "subtitle_style": {
+    "font": "Arial",
+    "font_size": 42,
+    "bold": false,
+    "outline": 2.0,
+    "shadow": 1.0,
+    "alignment": 2,
+    "margin_bottom": 30,
+    "max_lines": 2
+  },
+  "output": "D:\\Documents\\MMO\\Youtube\\Tools\\Cartoon_Sub\\1\\preview\\fac659462195486dae169d3e1d60529a\\preview.mp4"
+}

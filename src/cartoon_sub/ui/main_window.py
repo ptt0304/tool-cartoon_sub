@@ -1,11 +1,10 @@
 import json
-from PySide6.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem, QProgressBar, QPushButton
+from PySide6.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem, QProgressBar, QPushButton, QInputDialog
 from cartoon_sub.app.controller import Controller
 from cartoon_sub.ui.worker import Worker
 from cartoon_sub.ui.settings_dialog import SettingsDialog
 from cartoon_sub.ui.context_dialog import ContextDialog
 from cartoon_sub.translation.context_service import source_fingerprint
-from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.speaker.service import review_complete, refresh_timeline
 from cartoon_sub.ui.speaker_dialog import SpeakerDialog
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
@@ -51,6 +50,14 @@ class MainWindow(QMainWindow):
         self.pages[2].view.currentIndexChanged.connect(self.refresh_timeline_table)
         self.pages[2].edit_button.clicked.connect(self.edit_utterance)
         self.pages[2].optimize_button.clicked.connect(self.optimize_dubbing)
+        subtitle = self.pages[3]
+        subtitle.apply_settings.clicked.connect(self.apply_segmentation_settings)
+        subtitle.warning_filter.currentIndexChanged.connect(self.refresh_segmentation_page)
+        subtitle.auto_all.clicked.connect(lambda: self.auto_segment(False))
+        subtitle.auto_selected.clicked.connect(lambda: self.auto_segment(True))
+        subtitle.split_manual.clicked.connect(self.split_display_segment)
+        subtitle.merge.clicked.connect(self.merge_display_segments)
+        subtitle.reset.clicked.connect(self.reset_segmentation)
         self.pages[5].export_button.clicked.connect(self.export_speakers)
         self.pages[4].frame_button.clicked.connect(self.load_mask_frame)
         self.pages[4].preview_button.clicked.connect(lambda:self.render_video(True))
@@ -108,6 +115,10 @@ class MainWindow(QMainWindow):
         if self.controller.project:
             populate(self.pages[2].table,self.controller.project,self.pages[2].view.currentData())
 
+    def refresh_segmentation_page(self):
+        if self.controller.project:
+            self.pages[3].populate(self.controller.project)
+
     def edit_utterance(self):
         try:
             ids=selected_ids(self.pages[2].table)
@@ -126,6 +137,56 @@ class MainWindow(QMainWindow):
             if not ids:raise ValueError("Chọn một hoặc nhiều câu trong bảng")
             self.sync_options();self.controller.save()
             self.start_job(lambda **job:self.controller.optimize_dubbing(ids,**job),self.accept_project)
+        except Exception as exc:self.error(exc)
+
+    def apply_segmentation_settings(self):
+        try:
+            profile, settings = self.pages[3].values()
+            self.controller.update_segmentation_settings(profile, settings)
+            self.controller.save()
+            self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def auto_segment(self, selected):
+        try:
+            profile, settings = self.pages[3].values()
+            self.controller.update_segmentation_settings(profile, settings)
+            ids = self.pages[3].selected_utterance_ids() if selected else None
+            if selected and not ids:
+                raise ValueError("Chọn ít nhất một Utterance hoặc DisplaySegment")
+            self.start_job(lambda **job: self.controller.auto_segment(ids, **job), self.accept_project)
+        except Exception as exc:self.error(exc)
+
+    def split_display_segment(self):
+        try:
+            selected = self.pages[3].selected_display_refs()
+            if len(selected) != 1:
+                raise ValueError("Chọn đúng một DisplaySegment để tách")
+            word_index, accepted = QInputDialog.getInt(self, "Split Manually", "Tách sau từ thứ:", 1, 1, 1000)
+            if accepted:
+                self.controller.split_display_segment(*selected[0], word_index)
+                self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def merge_display_segments(self):
+        try:
+            selected = self.pages[3].selected_display_refs()
+            if len(selected) < 2:
+                raise ValueError("Chọn ít nhất hai DisplaySegment liền nhau để gộp")
+            utterance_ids = {utterance_id for utterance_id, _ in selected}
+            if len(utterance_ids) != 1:
+                raise ValueError("Chỉ gộp các DisplaySegment thuộc cùng một Utterance")
+            self.controller.merge_display_segments(utterance_ids.pop(), [display_id for _, display_id in selected])
+            self.refresh()
+        except Exception as exc:self.error(exc)
+
+    def reset_segmentation(self):
+        try:
+            ids = self.pages[3].selected_utterance_ids()
+            if not ids:
+                raise ValueError("Chọn ít nhất một Utterance hoặc DisplaySegment để reset")
+            self.controller.reset_segmentation(ids)
+            self.refresh()
         except Exception as exc:self.error(exc)
 
     def export_speakers(self):
@@ -313,15 +374,16 @@ class MainWindow(QMainWindow):
             (" — model 2.5 có thể bị hạn chế; đổi trong Settings > AI." if "gemini-2.5-" in model else ""))
         self.pages[1].transcribe_button.setEnabled(project.transcription_status != "imported")
         self.pages[1].speaker_button.setEnabled(bool(project.segments))
-        warnings = review_translation(project)
-        for table, bilingual in ((self.pages[1].table, False), (self.pages[3].table, True)):
-            table.setRowCount(len(project.segments))
-            for row, s in enumerate(project.segments):
-                values = [s.id, s.zh, s.vi, f"{s.duration:.3f}", " | ".join(warnings[str(s.id)]) or "Không có cảnh báo tự động"] if bilingual else [s.id, f"{s.start:.3f}", f"{s.end:.3f}",f"{s.duration:.3f}",f"{s.speaker_id} · {s.speaker_name}",s.overlap_group or "No",s.zh]
-                for col, value in enumerate(values):
-                    item = QTableWidgetItem(str(value))
-                    item.setToolTip(str(value))
-                    table.setItem(row, col, item)
+        table = self.pages[1].table
+        table.setRowCount(len(project.segments))
+        for row, s in enumerate(project.segments):
+            values = [s.id, f"{s.start:.3f}", f"{s.end:.3f}", f"{s.duration:.3f}",
+                f"{s.speaker_id} · {s.speaker_name}", s.overlap_group or "No", s.zh]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                table.setItem(row, col, item)
+        self.pages[3].load_project(project)
         self.refresh_timeline_table()
         self.statusBar().showMessage(f"{project.name}: {len(project.segments)} subtitles — {project.transcription_status}")
 

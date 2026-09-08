@@ -1,17 +1,29 @@
 from PySide6.QtCore import Qt, QRectF, Signal, QUrl
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QFont
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,
-    QSpinBox,QDoubleSpinBox,QCheckBox,QComboBox,QFontComboBox,QTabWidget,QScrollArea)
+    QSpinBox,QDoubleSpinBox,QCheckBox,QComboBox,QTabWidget,QScrollArea)
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from cartoon_sub.subtitle.models import Mask,SubtitleStyle
+
+
+TEST_SUBTITLE = 'Tool được phát triển bởi PHẠM THANH TÙNG - 0866891380'
+# These families include Vietnamese glyphs. The OS/FFmpeg resolves the installed
+# one, so the list deliberately avoids fonts bundled only with this project.
+VIETNAMESE_FONTS = (
+    'Arial', 'Arial Unicode MS', 'Aptos', 'Bahnschrift', 'Calibri', 'Cambria',
+    'Candara', 'Comic Sans MS', 'Consolas', 'Constantia', 'Corbel', 'Courier New',
+    'Georgia', 'Noto Sans', 'Noto Serif', 'Open Sans', 'Palatino Linotype',
+    'Roboto', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana',
+    'Be Vietnam Pro', 'Montserrat',
+)
 
 
 class MaskCanvas(QWidget):
     selected = Signal(int,int,int,int)
     def __init__(self):
         super().__init__();self.setMinimumSize(320,200)
-        self.pixmap=QPixmap();self.mask=Mask();self.origin=None;self.drag=None
+        self.pixmap=QPixmap();self.mask=Mask();self.style=SubtitleStyle();self.origin=None;self.drag=None
     def image_rect(self):
         if self.pixmap.isNull():return QRectF()
         size=self.pixmap.size().scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatio)
@@ -42,6 +54,13 @@ class MaskCanvas(QWidget):
             x,y,w,h=box;sx=r.width()/self.pixmap.width();sy=r.height()/self.pixmap.height()
             rect=QRectF(r.x()+x*sx,r.y()+y*sy,w*sx,h*sy)
             p.fillRect(rect,QColor(0,160,255,55));p.setPen(QPen(QColor('#00baff'),2));p.drawRect(rect)
+            if m.enabled and w and h:
+                font=QFont(self.style.font);font.setBold(self.style.bold)
+                font.setPixelSize(max(8,round(self.style.font_size*min(sx,sy))))
+                p.setFont(font)
+                flags=Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap
+                p.setPen(QColor(0,0,0,210));p.drawText(rect.translated(1,1),flags,TEST_SUBTITLE)
+                p.setPen(QColor('white'));p.drawText(rect,flags,TEST_SUBTITLE)
 
 
 class MaskStylePage(QWidget):
@@ -65,7 +84,7 @@ class MaskStylePage(QWidget):
         self.coords=[]
         for label in ('X','Y','Width','Height'):
             spin=QSpinBox();spin.setRange(0,32768);form.addRow(label,spin);self.coords.append(spin);spin.valueChanged.connect(self.update_mask)
-        self.font=QFontComboBox();form.addRow('Font',self.font)
+        self.font=QComboBox();self.font.addItems(VIETNAMESE_FONTS);form.addRow('Font',self.font)
         self.size=QSpinBox();self.size.setRange(8,300);form.addRow('Cỡ chữ (pixel)',self.size)
         self.bold=QCheckBox();form.addRow('Đậm',self.bold)
         self.outline=QDoubleSpinBox();self.outline.setRange(0,20);form.addRow('Viền',self.outline)
@@ -75,25 +94,33 @@ class MaskStylePage(QWidget):
         form.addRow('Vị trí chữ',self.alignment)
         self.margin=QSpinBox();self.margin.setRange(0,32768);form.addRow('Lề dọc',self.margin)
         self.lines=QSpinBox();self.lines.setRange(1,4);form.addRow('Số dòng tối đa',self.lines)
-        info=QLabel('Tọa độ theo video gốc. Chữ trắng, solid màu đen. Câu dài có thể tràn ngang: xem preview và chỉnh cỡ chữ/nội dung.');info.setWordWrap(True);form.addRow(info)
+        self.center_mask=QCheckBox('Căn phụ đề giữa vùng mask');form.addRow(self.center_mask)
+        info=QLabel('Khi bật, phụ đề nằm chính giữa vùng solid/blur đã chọn. Tọa độ theo video gốc.');info.setWordWrap(True);form.addRow(info)
         self.output=QLabel('Chưa tạo preview.');self.output.setWordWrap(True);self.output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse);outer.addWidget(self.output)
         self.canvas.selected.connect(self.set_rectangle);self.enabled.toggled.connect(self.update_mask);self.kind.currentTextChanged.connect(self.update_mask)
+        for signal in (self.font.currentTextChanged,self.size.valueChanged,self.bold.toggled,self.outline.valueChanged,
+                       self.shadow.valueChanged,self.alignment.currentIndexChanged,self.margin.valueChanged,
+                       self.lines.valueChanged,self.center_mask.toggled): signal.connect(self.update_mask)
         self.player.errorOccurred.connect(lambda *args:self.output.setText('Không phát được preview: '+self.player.errorString()))
     def set_rectangle(self,x,y,w,h):
         for spin,value in zip(self.coords,(x,y,w,h)):spin.setValue(value)
         self.enabled.setChecked(True);self.update_mask()
     def values(self):
         return (Mask(self.enabled.isChecked(),self.kind.currentText(),*(s.value() for s in self.coords)),
-            SubtitleStyle(self.font.currentText(),self.size.value(),self.bold.isChecked(),self.outline.value(),self.shadow.value(),self.alignment.currentData(),self.margin.value(),self.lines.value()))
+            SubtitleStyle(self.font.currentText(),self.size.value(),self.bold.isChecked(),self.outline.value(),self.shadow.value(),self.alignment.currentData(),self.margin.value(),self.lines.value(),self.center_mask.isChecked()))
     def update_mask(self,*args):
-        if not self.loading:self.canvas.mask=self.values()[0];self.canvas.update()
+        if not self.loading:
+            self.canvas.mask,self.canvas.style=self.values();self.canvas.update()
+            self.center_mask.setEnabled(self.enabled.isChecked())
+            if not self.enabled.isChecked() and self.center_mask.isChecked(): self.center_mask.setChecked(False)
     def load_project(self,project):
         self.loading=True;m,s=project.mask,project.subtitle_style
         self.time.setMaximum(max(0,float(project.metadata.get('duration',0))-.05))
         self.enabled.setChecked(m.enabled);self.kind.setCurrentText(m.kind)
         for spin,value in zip(self.coords,(m.x,m.y,m.width,m.height)):spin.setValue(value)
-        self.font.setCurrentFont(QFont(s.font));self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold)
-        self.outline.setValue(s.outline);self.shadow.setValue(s.shadow);self.alignment.setCurrentIndex(s.alignment-1);self.margin.setValue(s.margin_bottom);self.lines.setValue(s.max_lines)
+        if self.font.findText(s.font) < 0:self.font.insertItem(0,s.font)
+        self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold)
+        self.outline.setValue(s.outline);self.shadow.setValue(s.shadow);self.alignment.setCurrentIndex(s.alignment-1);self.margin.setValue(s.margin_bottom);self.lines.setValue(s.max_lines);self.center_mask.setChecked(s.center_in_mask);self.center_mask.setEnabled(m.enabled)
         self.loading=False;self.update_mask()
     def reset_media(self):
         self.player.stop();self.player.setSource(QUrl());self.canvas.pixmap=QPixmap();self.canvas.update();self.output.setText('Lấy khung hình cho project đang mở.')

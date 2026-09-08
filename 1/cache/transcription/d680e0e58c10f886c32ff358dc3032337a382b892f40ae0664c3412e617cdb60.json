@@ -1,5 +1,0 @@
-{
-  "status": "failed",
-  "attempt": 1,
-  "error": "Gemini HTTP 404: model không có sẵn cho request này. Nếu đang dùng gemini-2.5-flash, Google có thể hạn chế model này với project mới. Mở Settings > AI, chọn gemini-3.5-flash rồi Save và thử lại. Không cần tạo lại project video. Nếu dùng model khác, kiểm tra tên model và quyền truy cập."
-}

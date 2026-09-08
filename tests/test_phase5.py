@@ -8,13 +8,13 @@ import pysubs2
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
-from cartoon_sub.subtitle.models import Project,Segment,Mask,SubtitleStyle
+from cartoon_sub.subtitle.models import DisplaySegment,Project,Segment,Mask,SubtitleStyle
 from cartoon_sub.subtitle.renderer import save_ass,validate_visuals
 from cartoon_sub.media.preview import VideoRenderer
 from cartoon_sub.media.process import run_process,CancelledError
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.project.project_manager import ProjectManager
-from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage
+from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage, TEST_SUBTITLE, VIETNAMESE_FONTS
 
 
 class Phase5Tests(unittest.TestCase):
@@ -37,17 +37,44 @@ class Phase5Tests(unittest.TestCase):
             self.assertEqual(p.to_dict(),before)
             self.assertEqual(sub.info['PlayResX'],'320')
 
+    def test_ass_uses_display_segments_when_they_exist(self):
+        p = self.project()
+        p.segments[0].set_display_segments([
+            DisplaySegment("1.1", 1, 1, 2.5, "Chào", segmentation_reason="local"),
+            DisplaySegment("1.2", 1, 2.5, 4, "bạn", segmentation_reason="local"),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = pysubs2.load(str(save_ass(p, Path(tmp) / "display.ass")))
+        self.assertEqual([(event.start, event.end, event.plaintext) for event in sub],
+            [(1000, 2500, "Chào"), (2500, 4000, "bạn"), (3000, 6000, "Xin chào")])
+
+    def test_ass_centers_subtitles_in_enabled_mask(self):
+        p = self.project()
+        p.mask = Mask(True, "blur", 20, 100, 280, 50)
+        p.subtitle_style.center_in_mask = True
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = pysubs2.load(str(save_ass(p, Path(tmp) / "centered.ass")))
+        self.assertTrue(all(event.text.startswith(r"{\an5\pos(160,125)}") for event in sub))
+        p.mask.enabled = False
+        with self.assertRaises(ValueError):
+            validate_visuals(p)
+
     def test_controls_save_load_and_coordinate_mapping(self):
         p=self.project();page=MaskStylePage();page.load_project(p)
         self.assertEqual(page.values()[1].font,p.subtitle_style.font)
+        self.assertGreaterEqual(page.font.count(),20)
+        self.assertIn('PHẠM THANH TÙNG',TEST_SUBTITLE)
         page.canvas.resize(800,600);page.canvas.pixmap=QPixmap(1920,1080)
         self.assertEqual(page.canvas.point(QPointF(400,300)),(960,540))
         page.set_rectangle(10,120,280,40)
+        self.assertEqual(page.canvas.style.font,page.font.currentText())
+        page.center_mask.setChecked(True)
         p.mask,p.subtitle_style=page.values()
         with tempfile.TemporaryDirectory() as tmp:
             ProjectManager().save(p,tmp);loaded=ProjectManager().load(tmp)
             self.assertEqual(loaded.mask,Mask(True,'solid',10,120,280,40))
             self.assertEqual(loaded.subtitle_style,p.subtitle_style)
+            self.assertTrue(loaded.subtitle_style.center_in_mask)
         page.close()
 
     def test_invalid_mask_rejected(self):

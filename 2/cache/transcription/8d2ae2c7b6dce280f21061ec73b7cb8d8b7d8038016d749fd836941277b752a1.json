@@ -1,7 +1,0 @@
-{
-  "status": "failed",
-  "attempt": 1,
-  "error": "Gemini trả kết quả bị chặn hoặc chưa hoàn tất; không lưu transcript dở dang.",
-  "duration": 119.3173125,
-  "chunk": 1
-}

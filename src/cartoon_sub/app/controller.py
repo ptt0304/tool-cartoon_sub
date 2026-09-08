@@ -14,6 +14,8 @@ from cartoon_sub.translation.dubbing_service import DubbingService
 from cartoon_sub.speaker.service import refresh_timeline, approve_review, review_complete
 from cartoon_sub.speaker import editor_service as speaker_editor
 from cartoon_sub.tts.export_service import export_speakers
+from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+from cartoon_sub.subtitle.semantic_segmentation import SemanticSegmentationService
 
 class Controller:
     def __init__(self, settings_store=None):
@@ -25,6 +27,7 @@ class Controller:
         self.context_service = ContextService(self.settings_store)
         self.translation_pipeline = TranslationPipeline(self.settings_store)
         self.dubbing_service=DubbingService(self.settings_store)
+        self.segmentation_service=SubtitleSegmentationService(SemanticSegmentationService(self.settings_store))
 
     def create(self, video, directory, **job):
         metadata = probe(video, **job)
@@ -59,6 +62,7 @@ class Controller:
         self.project.transcription_status = "imported"
         self.project.translation_status = "not_started"
         self.project.translation_notes = {}
+        self.project.segmentation_cache = {}
         self.project.cache_hashes.pop("translation", None)
         self.project.chunk_states.pop("translation", None)
         self.save()
@@ -122,5 +126,30 @@ class Controller:
         s.dubbing_optimized=dubbing!=subtitle
         s.dubbing_status="manual"
         s.dubbing_fingerprint=""
+        s.display_segments=[]
+        self.segmentation_service.invalidate(self.project,[sid])
+        self.save()
+
+    def update_segmentation_settings(self, profile, settings):
+        self.segmentation_service.update_settings(self.project, profile, settings)
+
+    def auto_segment(self, utterance_ids=None, **job):
+        changed, skipped=self.segmentation_service.auto_segment(self.project,utterance_ids,
+            cancel=job.get("cancel"), progress=job.get("progress"))
+        self.save()
+        if job.get("progress"):
+            job["progress"](f"Đã segment {len(changed)} utterance; giữ {len(skipped)} bản chỉnh tay")
+        return self.project,self.directory
+
+    def reset_segmentation(self, utterance_ids):
+        self.segmentation_service.reset(self.project,utterance_ids)
+        self.save()
+
+    def split_display_segment(self, utterance_id, display_id, word_index):
+        self.segmentation_service.split_manual(self.project,utterance_id,display_id,word_index)
+        self.save()
+
+    def merge_display_segments(self, utterance_id, display_ids):
+        self.segmentation_service.merge_manual(self.project,utterance_id,display_ids)
         self.save()
 
