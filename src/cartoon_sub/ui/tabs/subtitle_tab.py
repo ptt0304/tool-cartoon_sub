@@ -20,7 +20,8 @@ class SubtitlePage(QWidget):
         super().__init__(); self.loading = False
         layout = QVBoxLayout(self)
         note = QLabel("Utterance là lời thoại nguồn; DisplaySegment là cách hiển thị. Auto Segment không gọi Gemini, "
-                      "không sửa transcript/dịch và giữ timestamp overlap giữa speaker.")
+                      "không sửa transcript/dịch và giữ timestamp overlap giữa speaker. Chọn câu dài rồi bấm "
+                      "‘Căn timing audio’ để Gemini nghe audio và đặt mốc hiển thị chi tiết.")
         note.setWordWrap(True); layout.addWidget(note)
         controls = QHBoxLayout(); self.profile = QComboBox()
         for profile, label in PROFILE_LABELS.items(): self.profile.addItem(label, profile.value)
@@ -44,8 +45,9 @@ class SubtitlePage(QWidget):
         settings.addStretch(); layout.addLayout(settings)
         buttons = QHBoxLayout()
         self.auto_all = QPushButton("Auto Segment All"); self.auto_selected = QPushButton("Auto Segment Selected")
+        self.refine_audio = QPushButton("Căn timing audio (chọn)")
         self.split_manual = QPushButton("Split Manually"); self.merge = QPushButton("Merge Selected"); self.reset = QPushButton("Reset To Utterance")
-        for button in (self.auto_all,self.auto_selected,self.split_manual,self.merge,self.reset): buttons.addWidget(button)
+        for button in (self.auto_all,self.auto_selected,self.refine_audio,self.split_manual,self.merge,self.reset): buttons.addWidget(button)
         layout.addLayout(buttons)
         self.tree = QTreeWidget(); self.tree.setHeaderLabels(["Utterance / DisplaySegment", "Speaker", "Start", "End", "Vietnamese", "QC"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.tree.setColumnWidth(0,170); self.tree.setColumnWidth(4,390)

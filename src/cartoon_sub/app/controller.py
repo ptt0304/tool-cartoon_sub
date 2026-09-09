@@ -16,6 +16,7 @@ from cartoon_sub.speaker import editor_service as speaker_editor
 from cartoon_sub.tts.export_service import export_speakers
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
 from cartoon_sub.subtitle.semantic_segmentation import SemanticSegmentationService
+from cartoon_sub.subtitle.audio_timing import AudioTimingRefiner
 
 class Controller:
     def __init__(self, settings_store=None):
@@ -28,6 +29,7 @@ class Controller:
         self.translation_pipeline = TranslationPipeline(self.settings_store)
         self.dubbing_service=DubbingService(self.settings_store)
         self.segmentation_service=SubtitleSegmentationService(SemanticSegmentationService(self.settings_store))
+        self.audio_timing_refiner=AudioTimingRefiner(self.settings_store)
 
     def create(self, video, directory, **job):
         metadata = probe(video, **job)
@@ -152,4 +154,21 @@ class Controller:
     def merge_display_segments(self, utterance_id, display_ids):
         self.segmentation_service.merge_manual(self.project,utterance_id,display_ids)
         self.save()
+
+    def refine_display_timing(self, utterance_ids, **job):
+        chosen = set(utterance_ids)
+        if not chosen:
+            raise ValueError("Chọn ít nhất một Utterance để căn thời gian audio")
+        audio = self.directory / "audio" / "source.wav"
+        if not audio.is_file():
+            raise ValueError("Chưa có audio nguồn; hãy chạy Gemini transcript trước")
+        for utterance in self.project.utterances:
+            if utterance.id not in chosen:
+                continue
+            segments = self.audio_timing_refiner.refine(utterance, audio, self.directory / "cache" / "audio_timing",
+                cancel=job.get("cancel"), progress=job.get("progress"))
+            utterance.set_display_segments(segments)
+            self.project.segmentation_cache[str(utterance.id)] = {"manual": True, "timing_source": "audio_alignment"}
+        self.save()
+        return self.project, self.directory
 

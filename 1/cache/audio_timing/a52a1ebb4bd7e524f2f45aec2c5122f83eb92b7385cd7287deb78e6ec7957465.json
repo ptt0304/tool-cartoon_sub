@@ -1,0 +1,4 @@
+{
+  "status": "completed",
+  "response": "{\n  \"segments\": [\n    {\n      \"start\": 0.0,\n      \"end\": 1.4,\n      \"vi\": \"Cộng cộng cộng cộng thêm hai mươi vạn, \"\n    },\n    {\n      \"start\": 1.4,\n      \"end\": 2.3000000000000007,\n      \"vi\": \"là năm mươi vạn.\"\n    }\n  ]\n}"
+}

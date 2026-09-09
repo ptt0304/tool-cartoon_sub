@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         subtitle.warning_filter.currentIndexChanged.connect(self.refresh_segmentation_page)
         subtitle.auto_all.clicked.connect(lambda: self.auto_segment(False))
         subtitle.auto_selected.clicked.connect(lambda: self.auto_segment(True))
+        subtitle.refine_audio.clicked.connect(self.refine_display_timing)
         subtitle.split_manual.clicked.connect(self.split_display_segment)
         subtitle.merge.clicked.connect(self.merge_display_segments)
         subtitle.reset.clicked.connect(self.reset_segmentation)
@@ -155,6 +156,14 @@ class MainWindow(QMainWindow):
             if selected and not ids:
                 raise ValueError("Chọn ít nhất một Utterance hoặc DisplaySegment")
             self.start_job(lambda **job: self.controller.auto_segment(ids, **job), self.accept_project)
+        except Exception as exc:self.error(exc)
+
+    def refine_display_timing(self):
+        try:
+            ids = self.pages[3].selected_utterance_ids()
+            if not ids:
+                raise ValueError("Chọn Utterance dài hoặc DisplaySegment cần căn theo audio")
+            self.start_job(lambda **job: self.controller.refine_display_timing(ids, **job), self.accept_project)
         except Exception as exc:self.error(exc)
 
     def split_display_segment(self):
