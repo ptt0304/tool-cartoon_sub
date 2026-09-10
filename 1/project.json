@@ -17,22 +17,48 @@
   "glossary": {},
   "mask": {
     "enabled": true,
-    "kind": "blur",
-    "x": 216,
-    "y": 901,
-    "width": 1469,
-    "height": 93
+    "kind": "gaussian",
+    "x": 274,
+    "y": 894,
+    "width": 1334,
+    "height": 111,
+    "strength": 20
   },
   "subtitle_style": {
     "font": "Arial",
-    "font_size": 60,
+    "font_size": 49,
     "bold": true,
-    "outline": 3.0,
-    "shadow": 3.0,
-    "alignment": 1,
-    "margin_bottom": 30,
-    "max_lines": 2,
+    "outline": 2.0,
+    "shadow": 7.0,
+    "alignment": 2,
+    "margin_bottom": 12,
+    "max_lines": 1,
     "center_in_mask": true
+  },
+  "logos": [
+    {
+      "id": "1",
+      "path": "D:/Pictures/winxp.jpg",
+      "x": 534,
+      "y": 236,
+      "width": 320,
+      "height": 215,
+      "rotation": 0,
+      "transparency": 0,
+      "base_width": 160,
+      "base_height": 108,
+      "scale": 100
+    }
+  ],
+  "watermark": {
+    "text": "",
+    "font": "Arial",
+    "font_size": 32,
+    "bold": true,
+    "outline": 0.0,
+    "shadow": 0.0,
+    "transparency": 0,
+    "speed": 118
   },
   "selected_models": {
     "transcription": "gemini-3.5-flash",
@@ -551,8 +577,9 @@
       "timing_source": "syllable_proportion"
     },
     "4": {
-      "manual": true,
-      "timing_source": "audio_alignment"
+      "fingerprint": "071ea6d1df8e59383f520ea3fb85c74c69ccbef2a527c71cf05ff088647c823f",
+      "manual": false,
+      "timing_source": "syllable_proportion"
     },
     "5": {
       "fingerprint": "7895465936dd3dba3626db5b5a397e0ced4c7f584d992a30a8e99017ea8f14e5",
@@ -906,29 +933,17 @@
           "id": "4.1",
           "utterance_id": 4,
           "start": 22.5,
-          "end": 23.9,
-          "vi_text": "Cộng cộng cộng cộng thêm hai mươi vạn, ",
-          "zh_text": null,
-          "vi_syllables": 8,
-          "line_count": 1,
-          "segmentation_reason": "audio_timing",
-          "qc_flags": [],
-          "manual": false,
-          "duration": 1.3999999999999986
-        },
-        {
-          "id": "4.2",
-          "utterance_id": 4,
-          "start": 23.9,
           "end": 24.8,
-          "vi_text": "là năm mươi vạn.",
+          "vi_text": "Cộng cộng cộng cộng thêm hai mươi vạn, là năm mươi vạn.",
           "zh_text": null,
-          "vi_syllables": 4,
+          "vi_syllables": 12,
           "line_count": 1,
-          "segmentation_reason": "audio_timing",
-          "qc_flags": [],
+          "segmentation_reason": "utterance_end",
+          "qc_flags": [
+            "HIGH_READING_SPEED"
+          ],
           "manual": false,
-          "duration": 0.9000000000000021
+          "duration": 2.3000000000000007
         }
       ],
       "duration": 2.3000000000000007

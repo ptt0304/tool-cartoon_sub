@@ -5,16 +5,20 @@ import unittest
 from pathlib import Path
 from threading import Event
 import pysubs2
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication
-from cartoon_sub.subtitle.models import DisplaySegment,Project,Segment,Mask,SubtitleStyle
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QHeaderView, QTableWidgetItem
+from cartoon_sub.subtitle.models import DisplaySegment,Project,Segment,Mask,SubtitleStyle,LogoOverlay,WatermarkStyle
 from cartoon_sub.subtitle.renderer import save_ass,validate_visuals
 from cartoon_sub.media.preview import VideoRenderer
 from cartoon_sub.media.process import run_process,CancelledError
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage, TEST_SUBTITLE, VIETNAMESE_FONTS
+from cartoon_sub.ui.tabs.transcript_tab import build as build_transcript
+from cartoon_sub.ui.tabs.subtitle_tab import SubtitlePage
+from cartoon_sub.ui.timeline_table import create_table
 
 
 class Phase5Tests(unittest.TestCase):
@@ -59,6 +63,22 @@ class Phase5Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_visuals(p)
 
+    def test_moving_watermark_and_overlay_settings_roundtrip(self):
+        p = self.project()
+        p.watermark = WatermarkStyle(text="Kênh thử nghiệm", font_size=24, transparency=35, speed=90)
+        with tempfile.TemporaryDirectory() as tmp:
+            logo = Path(tmp) / "logo.png"
+            image = QPixmap(32, 24); image.fill(); image.save(str(logo))
+            p.logos = [LogoOverlay("logo-1", str(logo), 10, 20, 32, 24, 15, 25, 24, 18, 50)]
+            ProjectManager().save(p, tmp)
+            loaded = ProjectManager().load(tmp)
+            self.assertEqual(loaded.logos, p.logos)
+            self.assertEqual(loaded.watermark, p.watermark)
+            ass = pysubs2.load(str(save_ass(loaded, Path(tmp) / "watermark.ass")))
+        watermark_events = [event for event in ass if event.style == "Watermark"]
+        self.assertTrue(watermark_events)
+        self.assertIn(r"\move", watermark_events[0].text)
+
     def test_controls_save_load_and_coordinate_mapping(self):
         p=self.project();page=MaskStylePage();page.load_project(p)
         self.assertEqual(page.values()[1].font,p.subtitle_style.font)
@@ -67,18 +87,84 @@ class Phase5Tests(unittest.TestCase):
         page.canvas.resize(800,600);page.canvas.pixmap=QPixmap(1920,1080)
         self.assertEqual(page.canvas.point(QPointF(400,300)),(960,540))
         page.set_rectangle(10,120,280,40)
+        page.strength.setValue(14)
         self.assertEqual(page.canvas.style.font,page.font.currentText())
         page.center_mask.setChecked(True)
         p.mask,p.subtitle_style=page.values()
         with tempfile.TemporaryDirectory() as tmp:
             ProjectManager().save(p,tmp);loaded=ProjectManager().load(tmp)
-            self.assertEqual(loaded.mask,Mask(True,'solid',10,120,280,40))
+            self.assertEqual(loaded.mask,Mask(True,'solid',10,120,280,40,14))
             self.assertEqual(loaded.subtitle_style,p.subtitle_style)
             self.assertTrue(loaded.subtitle_style.center_in_mask)
         page.close()
 
+    def test_dragging_logo_moves_it_and_updates_controls(self):
+        page=MaskStylePage();page.canvas.resize(320,200);page.canvas.pixmap=QPixmap(320,180)
+        page.canvas.logos=[LogoOverlay('drag','unused.png',10,15,40,30)]
+        page.logo.addItem('Logo drag','drag');page.logo.setCurrentIndex(0)
+        page.canvas.show();self.app.processEvents()
+        rect=page.canvas.image_rect()
+        start=QPoint(round(rect.x()+20),round(rect.y()+25))
+        target=QPoint(round(rect.x()+100),round(rect.y()+75))
+        QTest.mousePress(page.canvas,Qt.MouseButton.LeftButton,pos=start)
+        QTest.mouseMove(page.canvas,target);QTest.mouseRelease(page.canvas,Qt.MouseButton.LeftButton,pos=target)
+        logo=page.canvas.logos[0]
+        self.assertEqual((logo.x,logo.y),(90,65))
+        self.assertEqual((page.logo_controls[0].value(),page.logo_controls[1].value()),(90,65))
+        page.close()
+
+    def test_canvas_shows_selected_mask_effect(self):
+        page=MaskStylePage();page.canvas.resize(320,200)
+        source=QPixmap(320,180);source.fill(Qt.GlobalColor.red)
+        page.canvas.pixmap=source;page.canvas.mask=Mask(True,'solid',40,40,120,60)
+        page.canvas.show();self.app.processEvents()
+        rect=page.canvas.image_rect();image=page.canvas.grab().toImage()
+        center=image.pixelColor(round(rect.x()+100),round(rect.y()+70))
+        self.assertLess(center.red(),80)
+        for kind in ('blur','gaussian','pixelate','frosted'):
+            page.canvas.mask=Mask(True,kind,40,40,120,60)
+            self.assertFalse(page.canvas.grab().isNull())
+        page.canvas.mask=Mask(True,'solid',40,40,220,80)
+        page.canvas.style=SubtitleStyle(font_size=18,outline=0,shadow=0)
+        without_effects=page.canvas.grab().toImage()
+        page.canvas.style=SubtitleStyle(font_size=18,outline=4,shadow=4)
+        self.assertNotEqual(page.canvas.grab().toImage(),without_effects)
+        page.close()
+
+    def test_long_text_views_scroll_and_allow_resizing(self):
+        mask_page=MaskStylePage();transcript=build_transcript();subtitle=SubtitlePage();timeline=create_table()
+        for view in (transcript.table,subtitle.tree,timeline):
+            self.assertEqual(view.horizontalScrollBarPolicy(),Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            self.assertEqual(view.verticalScrollBarPolicy(),Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.assertEqual(transcript.table.horizontalHeader().sectionResizeMode(0),QHeaderView.ResizeMode.Interactive)
+        self.assertEqual(mask_page.options_scroll.verticalScrollBarPolicy(),Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        mask_page.close();transcript.close();subtitle.close();timeline.close()
+
+    def test_long_text_wraps_and_reflows_after_column_resize(self):
+        transcript=build_transcript();transcript.table.setRowCount(1)
+        transcript.table.setItem(0,6,QTableWidgetItem('Nội dung rất dài ' * 20));transcript.table.setColumnWidth(6,100)
+        transcript.table.resizeRowsToContents()
+        self.assertTrue(transcript.table.wordWrap())
+        self.assertGreater(transcript.table.rowHeight(0),transcript.table.verticalHeader().minimumSectionSize())
+        subtitle=SubtitlePage();self.assertTrue(subtitle.tree.wordWrap());self.assertFalse(subtitle.tree.uniformRowHeights())
+        transcript.close();subtitle.close()
+
+    def test_canvas_previews_watermark_and_selected_logo_scale(self):
+        page=MaskStylePage();page.canvas.resize(320,200);page.canvas.pixmap=QPixmap(320,180);page.canvas.pixmap.fill(Qt.GlobalColor.red)
+        without_watermark=page.canvas.grab().toImage();page.watermark_text.setText('Watermark thử');page.watermark_size.setValue(24);page.update_mask()
+        self.assertNotEqual(page.canvas.grab().toImage(),without_watermark)
+        first=LogoOverlay('one','unused.png',10,10,40,30,base_width=40,base_height=30)
+        second=LogoOverlay('two','unused.png',10,10,20,20,base_width=20,base_height=20)
+        page.canvas.logos=[first,second];page.logo.addItem('Logo one','one');page.logo.addItem('Logo two','two')
+        page.logo.setCurrentIndex(0);page.logo_scale.setValue(100)
+        self.assertEqual((first.width,first.height,first.scale),(80,60,100))
+        self.assertEqual((second.width,second.height,second.scale),(20,20,0))
+        page.close()
+
     def test_invalid_mask_rejected(self):
         p=self.project();p.mask=Mask(True,'blur',300,150,40,40)
+        with self.assertRaises(ValueError):validate_visuals(p)
+        p.mask=Mask(True,'blur',10,100,40,40,21)
         with self.assertRaises(ValueError):validate_visuals(p)
 
     def test_style_does_not_invalidate_translation(self):
@@ -97,12 +183,18 @@ class Phase5Tests(unittest.TestCase):
             renderer=VideoRenderer()
             self.assertTrue(renderer.frame(p,root,2).is_file())
             for kind in ('solid','blur'):
-                p.mask=Mask(True,kind,11,131,280,36)
+                p.mask=Mask(True,kind,11,131,280,36,14)
                 output=renderer.render(p,root,2,True)
                 info=probe(output)
                 self.assertAlmostEqual(info['duration'],10,delta=.25)
                 self.assertEqual((info['width'],info['height']),(320,180))
                 self.assertIsNotNone(info['audio_codec'])
+            logo = root / 'logo.png'
+            image = QPixmap(24, 24); image.fill(); image.save(str(logo))
+            p.logos = [LogoOverlay('logo', str(logo), 12, 15, 24, 24, 10, 20)]
+            output = renderer.render(p,root,2,True)
+            self.assertTrue(output.is_file())
+            p.logos = []
             p.mask.enabled=False
             output=renderer.render(p,root,preview=False)
             self.assertAlmostEqual(probe(output)['duration'],12,delta=.25)

@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,
-    QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView)
+    QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView)
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
@@ -51,6 +51,11 @@ class SubtitlePage(QWidget):
         layout.addLayout(buttons)
         self.tree = QTreeWidget(); self.tree.setHeaderLabels(["Utterance / DisplaySegment", "Speaker", "Start", "End", "Vietnamese", "QC"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.tree.setColumnWidth(0,170); self.tree.setColumnWidth(4,390)
+        self.tree.setWordWrap(True);self.tree.setUniformRowHeights(False);self.tree.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tree.header().sectionResized.connect(lambda *_:self.tree.doItemsLayout())
         layout.addWidget(self.tree,1)
         self.summary = QLabel(); self.summary.setWordWrap(True); layout.addWidget(self.summary)
         self.profile.currentIndexChanged.connect(self.load_profile_defaults)
@@ -91,6 +96,7 @@ class SubtitlePage(QWidget):
                 parent.addChild(child); warning_count += flags != ["OK"]
             parent.setExpanded(True)
         self.summary.setText(f"{len(rows)} utterance hiển thị • {warning_count} DisplaySegment có QC warning")
+        self.tree.doItemsLayout()
 
     def selected_utterance_ids(self):
         return sorted({item.data(1,Qt.ItemDataRole.UserRole) for item in self.tree.selectedItems() if item.data(0,Qt.ItemDataRole.UserRole) in ("utterance","display")})

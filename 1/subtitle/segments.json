@@ -254,29 +254,17 @@
         "id": "4.1",
         "utterance_id": 4,
         "start": 22.5,
-        "end": 23.9,
-        "vi_text": "Cộng cộng cộng cộng thêm hai mươi vạn, ",
-        "zh_text": null,
-        "vi_syllables": 8,
-        "line_count": 1,
-        "segmentation_reason": "audio_timing",
-        "qc_flags": [],
-        "manual": false,
-        "duration": 1.3999999999999986
-      },
-      {
-        "id": "4.2",
-        "utterance_id": 4,
-        "start": 23.9,
         "end": 24.8,
-        "vi_text": "là năm mươi vạn.",
+        "vi_text": "Cộng cộng cộng cộng thêm hai mươi vạn, là năm mươi vạn.",
         "zh_text": null,
-        "vi_syllables": 4,
+        "vi_syllables": 12,
         "line_count": 1,
-        "segmentation_reason": "audio_timing",
-        "qc_flags": [],
+        "segmentation_reason": "utterance_end",
+        "qc_flags": [
+          "HIGH_READING_SPEED"
+        ],
         "manual": false,
-        "duration": 0.9000000000000021
+        "duration": 2.3000000000000007
       }
     ],
     "duration": 2.3000000000000007

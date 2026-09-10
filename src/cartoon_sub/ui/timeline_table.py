@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QTableWidget,QAbstractItemView,QTableWidgetItem
+from PySide6.QtWidgets import QTableWidget,QAbstractItemView,QTableWidgetItem,QHeaderView
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from cartoon_sub.translation.qc import review_translation
@@ -10,7 +10,12 @@ def create_table():
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setWordWrap(False)
+    table.setWordWrap(True);table.setTextElideMode(Qt.TextElideMode.ElideNone)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    table.horizontalHeader().sectionResized.connect(lambda *_:table.resizeRowsToContents())
     table.setColumnWidth(5,220); table.setColumnWidth(7,240); table.setColumnWidth(8,240); table.setColumnWidth(13,300)
     return table
 
@@ -32,3 +37,4 @@ def populate(table,project,view="both"):
                 item.setBackground(QColor(color)); item.setForeground(QColor("#171717"))
             table.setItem(row,col,item)
     table.setColumnHidden(7,view=="dubbing"); table.setColumnHidden(8,view=="subtitle")
+    table.resizeRowsToContents()

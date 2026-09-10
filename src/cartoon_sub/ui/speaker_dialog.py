@@ -1,5 +1,5 @@
 from pathlib import Path
-from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QPushButton,QLabel,QInputDialog,QMessageBox,QTableWidget,QTableWidgetItem,QAbstractItemView)
+from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QPushButton,QLabel,QInputDialog,QMessageBox,QTableWidget,QTableWidgetItem,QAbstractItemView,QHeaderView)
 from PySide6.QtCore import Qt,QUrl,QTimer
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
 from cartoon_sub.subtitle.models import Project
@@ -16,7 +16,9 @@ class SpeakerDialog(QDialog):
         note=QLabel("Speaker là giọng nói, không tự đồng nhất với nhân vật. Chọn nhiều dòng để gán/tách speaker. SPK_UNKNOWN phải được gán trước khi xác nhận. Hai dòng chồng nhau được giữ nguyên timestamp."); note.setWordWrap(True); box.addWidget(note)
         row=QHBoxLayout(); self.filter=QComboBox(); self.target=QComboBox(); row.addWidget(QLabel("Lọc"));row.addWidget(self.filter);row.addWidget(QLabel("Speaker thao tác"));row.addWidget(self.target);box.addLayout(row)
         self.table=QTableWidget(0,8);self.table.setHorizontalHeaderLabels(["ID","Start","End","Duration","Speaker","Overlap","Chinese","AI confidence"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection);self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers);self.table.setColumnWidth(6,350);box.addWidget(self.table)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection);self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers);self.table.setColumnWidth(6,350)
+        self.table.setWordWrap(True);self.table.setTextElideMode(Qt.TextElideMode.ElideNone);self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn);self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive);self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive);self.table.horizontalHeader().sectionResized.connect(lambda *_:self.table.resizeRowsToContents());box.addWidget(self.table)
         row=QHBoxLayout()
         for label,action in [("Chọn tất cả",self.table.selectAll),("Speaker mới",self.add),("Đổi tên",self.rename),("Gán dòng chọn",self.assign),("Tách dòng chọn",self.split),("Gộp vào…",self.merge),("Nghe dòng chọn",self.play)]:
             button=QPushButton(label);button.clicked.connect(action);row.addWidget(button)
@@ -48,6 +50,7 @@ class SpeakerDialog(QDialog):
         self.table.setRowCount(len(rows))
         for r,s in enumerate(rows):
             for c,value in enumerate([s.id,f"{s.start:.3f}",f"{s.end:.3f}",f"{s.duration:.3f}",s.speaker_id,s.overlap_group or "No",s.zh,s.speaker_confidence if s.speaker_confidence is not None else "Unknown"]):self.table.setItem(r,c,QTableWidgetItem(str(value)))
+        self.table.resizeRowsToContents()
     def run_edit(self,fn,*args):
         try:fn(self.project,*args);self.refresh()
         except ValueError as e:QMessageBox.warning(self,"Speaker",str(e))

@@ -225,6 +225,7 @@ class Mask:
     y: int = 0
     width: int = 0
     height: int = 0
+    strength: int = 12
 
 @dataclass
 class SubtitleStyle:
@@ -239,6 +240,31 @@ class SubtitleStyle:
     center_in_mask: bool = False
 
 @dataclass
+class LogoOverlay:
+    id: str
+    path: str
+    x: int = 40
+    y: int = 40
+    width: int = 160
+    height: int = 160
+    rotation: float = 0.0
+    transparency: int = 0
+    base_width: int | None = None
+    base_height: int | None = None
+    scale: int = 0
+
+@dataclass
+class WatermarkStyle:
+    text: str = ""
+    font: str = "Arial"
+    font_size: int = 32
+    bold: bool = False
+    outline: float = 2.0
+    shadow: float = 1.0
+    transparency: int = 0
+    speed: int = 120
+
+@dataclass
 class Project:
     name: str
     source_video_path: str
@@ -251,6 +277,8 @@ class Project:
     glossary: dict[str, str] = field(default_factory=dict)
     mask: Mask = field(default_factory=Mask)
     subtitle_style: SubtitleStyle = field(default_factory=SubtitleStyle)
+    logos: list[LogoOverlay] = field(default_factory=list)
+    watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
     selected_models: dict = field(default_factory=lambda: {"transcription": "mock", "translation": "mock"})
     cache_hashes: dict = field(default_factory=dict)
     chunk_states: dict = field(default_factory=dict)
@@ -301,6 +329,8 @@ class Project:
             raise ValueError("Duplicate subtitle IDs")
         data["mask"] = Mask(**data.get("mask", {}))
         data["subtitle_style"] = SubtitleStyle(**data.get("subtitle_style", {}))
+        data["logos"] = [LogoOverlay(**row) for row in data.get("logos", [])]
+        data["watermark"] = WatermarkStyle(**data.get("watermark", {}))
         data["story_context"] = StoryContext.from_dict(data.get("story_context", {})).to_dict()
         if data.get("context_proposal"):
             data["context_proposal"] = StoryContext.from_dict(data["context_proposal"]).to_dict()

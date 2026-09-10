@@ -259,6 +259,7 @@ class MainWindow(QMainWindow):
         self.controller.update_translation_options(page.preset.currentData(), page.prompt.toPlainText(),
             page.glossary.toPlainText(), [key for key, check in page.genres.items() if check.isChecked()])
         self.controller.project.mask,self.controller.project.subtitle_style=self.pages[4].values()
+        self.controller.project.logos,self.controller.project.watermark=self.pages[4].overlay_values()
 
     def save_project(self):
         try:
@@ -392,6 +393,7 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
                 table.setItem(row, col, item)
+        table.resizeRowsToContents()
         self.pages[3].load_project(project)
         self.refresh_timeline_table()
         self.statusBar().showMessage(f"{project.name}: {len(project.segments)} subtitles — {project.transcription_status}")

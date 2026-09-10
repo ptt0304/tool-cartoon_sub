@@ -48,18 +48,36 @@ class VideoRenderer:
                 chain = f'[0:v]drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}:color=black:t=fill[masked];'
             else:
                 # RGB avoids chroma rounding changing the user's selected rectangle.
-                radius = max(1,min(12,(min(m.width,m.height)-1)//2))
+                radius = max(1,min((min(m.width,m.height)-1)//2,m.strength*2))
+                effects = {
+                    'blur': f'boxblur=luma_radius={radius}:luma_power=2:chroma_radius=0',
+                    'gaussian': f'gblur=sigma={m.strength * 2.4:.1f}:steps=2',
+                    'pixelate': f'scale={max(2,m.width//(4+m.strength*2))}:{max(2,m.height//(4+m.strength*2))}:flags=neighbor,scale={m.width}:{m.height}:flags=neighbor',
+                    'frosted': f'gblur=sigma={m.strength * 2}:steps=2,eq=brightness=.04:saturation=.7',
+                }
+                effect = effects.get(m.kind)
+                if effect is None: raise ValueError('Kiểu mask không hợp lệ')
                 chain = (f'[0:v]format=yuv444p,split[base][region];[region]crop={m.width}:{m.height}:{m.x}:{m.y}:exact=1,'
-                         f'boxblur=luma_radius={radius}:luma_power=2:chroma_radius=0[blur];'
-                         f'[base][blur]overlay={m.x}:{m.y}:format=auto[masked];')
-            chain += "[masked]ass=filename=subtitle.ass,pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1[v]"
+                         f'{effect}[blur];[base][blur]overlay={m.x}:{m.y}:format=auto[masked];')
+            source = '[masked]'
+            extra_inputs = []
+            for index, logo in enumerate(project.logos, 1):
+                opacity = 1 - logo.transparency / 100
+                label = f'logo{index}'
+                chain += (f'[{index}:v]scale={logo.width}:{logo.height},format=rgba,colorchannelmixer=aa={opacity:.4f},'
+                    f'rotate={logo.rotation}*PI/180:ow=rotw(iw):oh=roth(ih):c=none[{label}];'
+                    f'{source}[{label}]overlay={logo.x}:{logo.y}:format=auto[base{index}];')
+                source = f'[base{index}]'; extra_inputs += ['-loop','1','-i',str(Path(logo.path).resolve())]
+            chain += f"{source}ass=filename=subtitle.ass,pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1[v]"
             args = ['ffmpeg','-nostdin','-n']
             if preview: args += ['-ss',str(start)]
-            args += ['-i',str(Path(project.source_video_path).resolve())]
+            args += ['-i',str(Path(project.source_video_path).resolve())] + extra_inputs
             if preview: args += ['-t',str(duration)]
             args += ['-filter_complex',chain,'-map','[v]','-map','0:a:0?',
                      '-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p',
-                     '-c:a','aac','-b:a','192k','-movflags','+faststart',str(temporary)]
+                     '-c:a','aac','-b:a','192k','-movflags','+faststart']
+            if project.logos: args += ['-shortest']
+            args += [str(temporary)]
             if progress: progress('FFmpeg đang render preview 10 giây…' if preview else 'FFmpeg đang render toàn bộ video…')
             run_process(args,cancel,progress,cwd=folder)
             check_cancel(cancel)
