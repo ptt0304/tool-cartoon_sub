@@ -1,0 +1,9 @@
+===== REPOSITORY =====
+/d/Documents/MMO/Youtube/Tools/Cartoon_Sub
+
+origin	https://github.com/ptt0304/tool-cartoon_sub.git (fetch)
+origin	https://github.com/ptt0304/tool-cartoon_sub.git (push)
+
+master
+
+?? _inventory/

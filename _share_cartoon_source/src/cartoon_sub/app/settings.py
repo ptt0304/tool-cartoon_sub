@@ -1,0 +1,89 @@
+"""Global AI preferences. Secrets are only stored in the OS credential vault."""
+import json
+import os
+from dataclasses import dataclass, asdict
+from pathlib import Path
+import keyring
+from dotenv import dotenv_values
+from cartoon_sub.project.cache import atomic_json
+
+
+@dataclass
+class AISettings:
+    transcription_model: str = "gemini-3.5-flash"
+    translation_model: str = "gemini-3.5-flash"
+    translation_chunk_size: int = 40
+    retry_count: int = 2
+    translation_provider: str = "gemini"
+
+    def validate(self):
+        for model in (self.transcription_model, self.translation_model):
+            if not isinstance(model, str) or not model.strip() or any(c.isspace() for c in model):
+                raise ValueError("Model không được rỗng hoặc chứa khoảng trắng")
+        if type(self.translation_chunk_size) is not int or not 30 <= self.translation_chunk_size <= 50:
+            raise ValueError("Translation chunk size phải từ 30 đến 50")
+        if type(self.retry_count) is not int or not 0 <= self.retry_count <= 5:
+            raise ValueError("Retry count phải từ 0 đến 5")
+        from cartoon_sub.ai.text_client import PROVIDERS
+        if self.translation_provider not in {"gemini", *PROVIDERS}:
+            raise ValueError("Provider dịch không hợp lệ")
+        return self
+
+
+class SettingsStore:
+    service = "CartoonSub.Gemini"
+    account = "api-key"
+
+    def __init__(self, folder=None, vault=None, env_path=None):
+        self.folder = Path(folder) if folder else Path.home() / ".cartoon_sub"
+        self.vault = vault if vault is not None else keyring
+        self.env_path = Path(env_path) if env_path else Path.cwd() / ".env"
+
+    def load(self):
+        path = self.folder / "settings.json"
+        if not path.exists():
+            return AISettings()
+        try:
+            return AISettings(**json.loads(path.read_text(encoding="utf-8"))).validate()
+        except (ValueError, TypeError) as exc:
+            raise ValueError("settings.json không hợp lệ; sửa hoặc đổi tên file rồi mở lại Settings") from exc
+
+    def save(self, settings, new_key="", translation_key=""):
+        settings.validate()
+        if new_key.strip():
+            try:
+                self.vault.set_password(self.service, self.account, new_key.strip())
+            except Exception:
+                raise RuntimeError("Không lưu được key vào OS keyring. Có thể cấu hình GEMINI_API_KEY trong .env cho môi trường dev.") from None
+        if translation_key.strip() and settings.translation_provider != "gemini":
+            try:
+                self.vault.set_password(f"CartoonSub.{settings.translation_provider}", self.account, translation_key.strip())
+            except Exception:
+                raise RuntimeError("Không lưu được translation API key vào OS keyring.") from None
+        atomic_json(self.folder / "settings.json", asdict(settings))
+
+    def get_key(self, provider="gemini"):
+        try:
+            key = self.vault.get_password(self.service if provider == "gemini" else f"CartoonSub.{provider}", self.account)
+        except Exception:
+            key = None
+        env_name = f"{provider.upper()}_API_KEY" if provider != "gemini" else "GEMINI_API_KEY"
+        key = key or os.environ.get(env_name) or dotenv_values(self.env_path).get(env_name)
+        if not key or not key.strip():
+            raise ValueError(f"Chưa có {provider} API key. Mở Settings > AI, nhập key và bấm Lưu.")
+        return key.strip()
+
+    def key_status(self, provider="gemini"):
+        try:
+            self.get_key(provider)
+            return f"Đã có {provider} key trong keyring hoặc biến môi trường. Để trống ô key để giữ nguyên."
+        except ValueError:
+            return f"Chưa cấu hình {provider} key."
+
+    def load_dubbing(self):
+        from cartoon_sub.syllable.target import DubbingSettings
+        path=self.folder/"dubbing.json"
+        return DubbingSettings(**json.loads(path.read_text(encoding="utf-8"))).validate() if path.exists() else DubbingSettings()
+
+    def save_dubbing(self, settings):
+        atomic_json(self.folder/"dubbing.json",settings.validate().to_dict())

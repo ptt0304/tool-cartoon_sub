@@ -1,0 +1,116 @@
+{
+  "status": "stale",
+  "warnings": {
+    "1": [
+      "Dòng dài >100 ký tự",
+      "Dubbing vượt target",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
+    ],
+    "2": [
+      "Lệch budget dubbing -5 âm tiết"
+    ],
+    "3": [
+      "Dòng dài >100 ký tự",
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +9 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
+    ],
+    "4": [
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +4 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh",
+      "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
+    ],
+    "5": [
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +5 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "6": [
+      "Dòng dài >100 ký tự",
+      "Lệch budget dubbing +5 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "7": [],
+    "8": [
+      "Dòng dài >100 ký tự",
+      "Dubbing vượt target"
+    ],
+    "9": [],
+    "10": [
+      "Lệch budget dubbing -3 âm tiết"
+    ],
+    "11": [
+      "Dòng dài >100 ký tự",
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +13 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "12": [
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +10 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "13": [
+      "Dubbing vượt target"
+    ],
+    "14": [
+      "Biên tập: Dịch sát nghĩa '花生' là lạc/đậu phộng, mang tính hài hước trong ngữ cảnh.",
+      "Lệch budget dubbing -2 âm tiết"
+    ],
+    "15": [
+      "Lệch budget dubbing -2 âm tiết"
+    ],
+    "16": [
+      "Lệch budget dubbing +1 âm tiết",
+      "Dubbing vượt target"
+    ],
+    "17": [
+      "Lệch budget dubbing -2 âm tiết"
+    ],
+    "18": [
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +3 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "19": [
+      "Lệch budget dubbing -3 âm tiết"
+    ],
+    "20": [
+      "Lệch budget dubbing -3 âm tiết"
+    ],
+    "21": [
+      "Dòng dài >100 ký tự",
+      "Biên tập: Dịch thoát ý '磨人的小妖精' thành 'tiểu yêu tinh hành hạ người ta' và '鄉巴佬' thành 'tên nhà quê' để giữ tính hài hước.",
+      "Meaning may be compressed — bản dubbing đã nén",
+      "Biên tập dubbing: Optimized syllable count to 29 (target 30) for better dubbing flow. Kept the humorous tone of '磨人的小妖精' as 'yêu tinh hành hạ người ta' and '鄉巴佬' as 'tên nhà quê'."
+    ],
+    "22": [
+      "Dòng dài >100 ký tự",
+      "Tốc độ đọc >22 ký tự/giây",
+      "Lệch budget dubbing +14 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ],
+    "23": [
+      "Dòng dài >100 ký tự",
+      "Tốc độ đọc >22 ký tự/giây",
+      "Biên tập: Áp dụng các thuật ngữ 'chim gián tử', 'công tòng long', 'công huấn long' theo glossary.",
+      "Lệch budget dubbing +14 âm tiết",
+      "Dubbing vượt target",
+      "Ước lượng tốc độ dubbing quá nhanh"
+    ]
+  },
+  "context_uncertainties": [
+    "Danh tính chính xác của SPK_02 và SPK_04 chưa được xác định rõ ngoài vai trò đại thần trong triều.",
+    "Cụm từ '死諫鳥' (chim gián tử) là cách dùng từ mang tính châm biếm hài hước của tác giả, cần dịch thoát ý để giữ tính hài hước."
+  ]
+}

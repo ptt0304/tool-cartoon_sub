@@ -27,11 +27,12 @@ class ProjectManager:
         existing=directory / "project.json"
         if existing.exists():
             old=json.loads(existing.read_text(encoding="utf-8"))
-            if old.get("schema_version")==1:
-                backup=directory / "project.v1.backup.json"
+            old_schema=old.get("schema_version")
+            if old_schema in (1, 2):
+                backup=directory / f"project.v{old_schema}.backup.json"
                 if backup.exists():
                     from uuid import uuid4
-                    backup=directory / f"project.v1.{uuid4().hex}.backup.json"
+                    backup=directory / f"project.v{old_schema}.{uuid4().hex}.backup.json"
                 shutil.copy2(existing,backup)
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
         try:

@@ -13,19 +13,20 @@ from cartoon_sub.ui.utterance_dialog import UtteranceDialog
 from cartoon_sub.ui.docs_dialog import DocsWindow
 from cartoon_sub.ui.timeline_table import populate, selected_ids
 from cartoon_sub.syllable.target import DubbingSettings
-from cartoon_sub.ui.tabs import video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, export_tab
+from cartoon_sub.ui.tabs import video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, audio_tab, export_tab
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.controller = Controller()
         self.worker = None
+        self.local_tts_voices = None
         self.setWindowTitle("Cartoon Sub — Master Timeline / Speaker & Dubbing")
         self.resize(1100, 750)
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
-        self.pages = [module.build() for module in (video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, export_tab)]
-        for name, widget in zip(("Video", "Transcript", "Translate", "Subtitle", "Mask & Style", "Export"), self.pages):
+        self.pages = [module.build() for module in (video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, audio_tab, export_tab)]
+        for name, widget in zip(("Video", "Transcript", "Translate", "Subtitle", "Mask & Style", "Audio", "Export"), self.pages):
             self.tabs.addTab(widget, name)
         menu = self.menuBar().addMenu("Project")
         self.open_action = menu.addAction("Open project", self.load_project)
@@ -66,12 +67,29 @@ class MainWindow(QMainWindow):
         subtitle.split_manual.clicked.connect(self.split_display_segment)
         subtitle.merge.clicked.connect(self.merge_display_segments)
         subtitle.reset.clicked.connect(self.reset_segmentation)
-        self.pages[5].export_button.clicked.connect(self.export_speakers)
         self.pages[4].frame_button.clicked.connect(self.load_mask_frame)
         self.pages[4].preview_button.clicked.connect(lambda:self.render_video(True))
         self.pages[4].render_button.clicked.connect(lambda:self.render_video(False))
         self.pages[4].save_button.clicked.connect(self.save_project)
+
+        audio = self.pages[5]
+        audio.connection_requested.connect(self.test_local_tts_connection)
+        audio.retry_start_requested.connect(self.auto_start_local_tts)
+        audio.select_exe_requested.connect(self.select_local_tts_executable)
+        audio.preview_requested.connect(self.preview_local_tts_voice)
+        audio.generate_requested.connect(self.generate_tts)
+        audio.mix_dubbed_requested.connect(self.mix_tts)
+        audio.mapping_changed.connect(self.update_speaker_tts_voice)
+        audio.audio_settings_changed.connect(self.update_audio_settings)
+        audio.clear_additional_requested.connect(self.clear_additional_audio)
+        audio.mix_final_requested.connect(self.mix_final_audio)
+
+        export = self.pages[6]
+        export.export_button.clicked.connect(self.export_speakers)
+        export.render_requested.connect(self.render_export_video)
         self.refresh()
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(150, self.auto_start_local_tts)
 
     def show_docs(self):
         if not hasattr(self, "docs_window") or self.docs_window is None:
@@ -216,10 +234,140 @@ class MainWindow(QMainWindow):
     def export_speakers(self):
         try:
             self.sync_options();self.controller.save()
-            text_type=self.pages[5].text_type.currentData()
+            text_type=self.pages[6].text_type.currentData()
             self.start_job(lambda **job:self.controller.export_speaker_files(text_type,**job),
-                           lambda path:self.pages[5].path_label.setText(str(path)))
+                           lambda path:self.pages[6].path_label.setText(str(path)))
         except Exception as exc:self.error(exc)
+
+    def test_local_tts_connection(self, url):
+        try:
+            self.start_job(
+                lambda **job: self.controller.test_local_tts_connection(url, **job),
+                self.accept_local_tts_connection,
+            )
+        except Exception as exc:
+            self.error(exc)
+
+    def auto_start_local_tts(self):
+        page = self.pages[5]
+        page.tts_connection_status.setText("Starting Local_TTS...")
+        self.start_job(
+            lambda **job: self.controller.ensure_local_tts_running(**job),
+            self.accept_local_tts_connection,
+        )
+
+    def select_local_tts_executable(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn file Local_TTS",
+            "",
+            "Executable (*.exe);;All Files (*)",
+        )
+        if path:
+            self.controller.set_local_tts_executable(path)
+            self.auto_start_local_tts()
+
+    def accept_local_tts_connection(self, result):
+        self.local_tts_voices = result["voices"]
+        page = self.pages[5]
+        page.set_connection_result(result["health"], result["voices"])
+        if self.controller.project:
+            page.populate(self.controller.project, self.local_tts_voices, self.controller.directory)
+
+    def update_speaker_tts_voice(self, speaker_id, voice_id, speed):
+        try:
+            self.controller.update_speaker_tts_voice(speaker_id, voice_id, speed)
+            self.refresh()
+        except Exception as exc:
+            self.error(exc)
+
+    def update_audio_settings(self, orig_vol, dub_vol, add_path, add_vol, add_start):
+        try:
+            self.controller.update_audio_settings(
+                original_volume=orig_vol,
+                dubbed_volume=dub_vol,
+                additional_audio_path=add_path,
+                additional_audio_volume=add_vol,
+                additional_audio_start=add_start,
+            )
+            self.pages[5].populate(self.controller.project, self.local_tts_voices, self.controller.directory)
+            self.pages[6].populate(self.controller.project, self.controller.directory)
+        except Exception as exc:
+            self.error(exc)
+
+    def clear_additional_audio(self):
+        try:
+            self.controller.clear_additional_audio()
+            self.pages[5].populate(self.controller.project, self.local_tts_voices, self.controller.directory)
+            self.pages[6].populate(self.controller.project, self.controller.directory)
+        except Exception as exc:
+            self.error(exc)
+
+    def preview_local_tts_voice(self, voice_id):
+        try:
+            ready_ids = {voice.get("voice_id") for voice in (self.local_tts_voices or [])}
+            if not voice_id or voice_id not in ready_ids:
+                raise ValueError("Chọn một Local_TTS voice đang READY")
+            self.start_job(
+                lambda **job: self.controller.preview_local_tts_voice(voice_id, **job),
+                self.pages[5].play_audio,
+            )
+        except Exception as exc:
+            self.error(exc)
+
+    def generate_tts(self):
+        try:
+            self.sync_options()
+            self.controller.save()
+            self.start_job(self.controller.generate_tts, self.accept_tts_generation)
+        except Exception as exc:
+            self.error(exc)
+
+    def accept_tts_generation(self, result):
+        self.controller.accept(self.controller.load(self.controller.directory / "project.json"))
+        self.refresh()
+        message = f"Generated {result.generated}, cached {result.cached}"
+        if result.failed_ids:
+            message += f"; failed: {', '.join(map(str, result.failed_ids))}"
+        self.statusBar().showMessage(message, 10000)
+
+    def mix_tts(self):
+        try:
+            self.sync_options()
+            self.controller.save()
+            self.start_job(self.controller.mix_tts, self.accept_tts_mix)
+        except Exception as exc:
+            self.error(exc)
+
+    def accept_tts_mix(self, path):
+        self.refresh()
+        self.statusBar().showMessage(f"Dubbed audio mix hoàn tất: {path}", 10000)
+
+    def mix_final_audio(self):
+        try:
+            self.sync_options()
+            self.controller.save()
+            if len(self.pages) > 5 and hasattr(self.pages[5], "stop_final_audio_playback"):
+                self.pages[5].stop_final_audio_playback(release_source=True)
+            self.start_job(self.controller.mix_final_audio, self.accept_final_audio_mix)
+        except Exception as exc:
+            self.error(exc)
+
+    def accept_final_audio_mix(self, path):
+        self.refresh()
+        self.statusBar().showMessage(f"Final audio mix hoàn tất: {path}", 10000)
+
+    def render_export_video(self, is_test_30s, start_time):
+        try:
+            if not self.save_project():
+                return
+            mode_desc = f"Test 30s (từ {start_time:.2f}s)" if is_test_30s else "Full Video"
+            self.start_job(
+                lambda **job: self.controller.render_export(test_mode=is_test_30s, start=start_time, **job),
+                lambda path: self.pages[6].render_output_label.setText(f"Xuất video {mode_desc} hoàn tất: {path}"),
+            )
+        except Exception as exc:
+            self.error(exc)
 
     def open_settings(self):
         try:
@@ -232,6 +380,11 @@ class MainWindow(QMainWindow):
             self.error(exc)
 
     def error(self, message):
+        msg = str(message)
+        if "LOCAL_TTS_EXECUTABLE_NOT_FOUND" in msg:
+            self.pages[5].tts_connection_status.setText("FAILED TO START LOCAL_TTS: Không tìm thấy file chạy Local_TTS. Bấm 'Select Local_TTS…'")
+        elif "Local_TTS" in msg or "LOCAL_TTS" in msg:
+            self.pages[5].tts_connection_status.setText(f"FAILED: {msg}")
         # A pipeline failure persists status while keeping the previous subtitle list.
         if self.controller.directory and self.worker is not None:
             try:
@@ -239,7 +392,7 @@ class MainWindow(QMainWindow):
                 self.refresh()
             except (OSError, ValueError, TypeError):
                 pass
-        QMessageBox.critical(self, "Cartoon Sub", str(message))
+        QMessageBox.critical(self, "Cartoon Sub", msg)
 
     def start_job(self, operation, accept):
         self.tabs.setEnabled(False)
@@ -307,7 +460,11 @@ class MainWindow(QMainWindow):
                 self.error(exc)
 
     def accept_project(self, result):
-        if self.controller.directory != result[1]:self.pages[4].reset_media()
+        if self.controller.directory != result[1]:
+            self.pages[4].reset_media()
+            self.pages[5].reset_media()
+            self.pages[6].reset_media()
+            self.local_tts_voices = None
         self.controller.accept(result)
         self.refresh()
         from pathlib import Path
@@ -364,7 +521,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         project = self.controller.project
-        for index in range(1, 6):
+        for index in range(1, 7):
             self.tabs.setTabEnabled(index, project is not None)
         self.save_action.setEnabled(project is not None)
         if project is None:
@@ -410,15 +567,23 @@ class MainWindow(QMainWindow):
                 table.setItem(row, col, item)
         table.resizeRowsToContents()
         self.pages[3].load_project(project)
+        audio = self.pages[5]
+        audio.set_settings(self.controller.settings_store.load_local_tts())
+        audio.populate(project, self.local_tts_voices, self.controller.directory)
+        export = self.pages[6]
+        export.populate(project, self.controller.directory)
         self.refresh_timeline_table()
         self.statusBar().showMessage(f"{project.name}: {len(project.segments)} subtitles — {project.transcription_status}")
 
     def closeEvent(self, event):
+        if len(self.pages) > 5 and hasattr(self.pages[5], "stop_final_audio_playback"):
+            self.pages[5].stop_final_audio_playback(release_source=True)
         if self.worker is not None:
             self.worker.cancel()
             self.statusBar().showMessage("Đang hủy job; đóng lại sau khi hoàn tất.")
             event.ignore()
         elif self.save_project():
+            self.controller.shutdown_local_tts()
             event.accept()
         else:
             event.ignore()

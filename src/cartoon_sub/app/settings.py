@@ -6,6 +6,33 @@ from pathlib import Path
 import keyring
 from dotenv import dotenv_values
 from cartoon_sub.project.cache import atomic_json
+from cartoon_sub.tts.cache_identity import normalize_local_tts_base_url
+
+
+@dataclass
+class LocalTTSSettings:
+    base_url: str = "http://127.0.0.1:8765"
+    timeout_seconds: int = 300
+    auto_start_local_tts: bool = True
+    local_tts_executable: str | None = None
+    startup_timeout_seconds: int = 120
+    stop_local_tts_on_exit: bool = True
+
+    def validate(self):
+        try:
+            self.base_url = normalize_local_tts_base_url(self.base_url)
+        except ValueError as exc:
+            raise ValueError("Local_TTS URL phải bắt đầu bằng http:// hoặc https:// và có host hợp lệ") from exc
+        if type(self.timeout_seconds) is not int or not 10 <= self.timeout_seconds <= 1800:
+            raise ValueError("Local_TTS timeout phải từ 10 đến 1800 giây")
+        if type(self.startup_timeout_seconds) not in (int, float) or not 5 <= self.startup_timeout_seconds <= 600:
+            raise ValueError("Local_TTS startup timeout phải từ 5 đến 600 giây")
+        self.startup_timeout_seconds = int(self.startup_timeout_seconds)
+        if self.local_tts_executable is not None:
+            self.local_tts_executable = str(self.local_tts_executable).strip() or None
+        self.auto_start_local_tts = bool(self.auto_start_local_tts)
+        self.stop_local_tts_on_exit = bool(self.stop_local_tts_on_exit)
+        return self
 
 
 @dataclass
@@ -87,3 +114,15 @@ class SettingsStore:
 
     def save_dubbing(self, settings):
         atomic_json(self.folder/"dubbing.json",settings.validate().to_dict())
+
+    def load_local_tts(self):
+        path = self.folder / "local_tts.json"
+        if not path.exists():
+            return LocalTTSSettings()
+        try:
+            return LocalTTSSettings(**json.loads(path.read_text(encoding="utf-8"))).validate()
+        except (ValueError, TypeError) as exc:
+            raise ValueError("local_tts.json không hợp lệ; sửa hoặc đổi tên file rồi mở lại") from exc
+
+    def save_local_tts(self, settings):
+        atomic_json(self.folder / "local_tts.json", asdict(settings.validate()))

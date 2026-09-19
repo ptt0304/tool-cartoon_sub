@@ -1,8 +1,18 @@
 from pathlib import Path
+from dataclasses import asdict
+import hashlib
+import os
+import re
+import wave
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.subtitle.parser import import_srt
-from cartoon_sub.app.settings import SettingsStore
+from cartoon_sub.app.settings import LocalTTSSettings, SettingsStore
+from cartoon_sub.project.cache import check_cancel
+from cartoon_sub.speaker.models import Speaker
+from cartoon_sub.tts.generation_service import LocalTTSGenerationService
+from cartoon_sub.tts.local_tts_client import LocalTTSClient
+from cartoon_sub.tts.mix_service import TTSTimelineMixService
 from cartoon_sub.transcription.pipeline import TranscriptionPipeline, save_subtitle_artifacts
 from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import TextProviderClient
@@ -18,6 +28,7 @@ from cartoon_sub.tts.export_service import export_speakers
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
 from cartoon_sub.subtitle.semantic_segmentation import SemanticSegmentationService
 from cartoon_sub.subtitle.audio_timing import AudioTimingRefiner
+from cartoon_sub.tts.process_manager import LocalTTSProcessManager
 
 class Controller:
     def __init__(self, settings_store=None):
@@ -31,6 +42,7 @@ class Controller:
         self.dubbing_service=DubbingService(self.settings_store)
         self.segmentation_service=SubtitleSegmentationService(SemanticSegmentationService(self.settings_store))
         self.audio_timing_refiner=AudioTimingRefiner(self.settings_store)
+        self.local_tts_manager = LocalTTSProcessManager()
 
     def create(self, video, directory, **job):
         metadata = probe(video, **job)
@@ -130,16 +142,222 @@ class Controller:
     def export_speaker_files(self, text_type, **job):
         return export_speakers(self.project,self.directory,text_type,**job)
 
+    def _local_tts_client(self):
+        return LocalTTSClient(self.settings_store.load_local_tts())
+
+    def test_local_tts_connection(self, base_url, **job):
+        current = self.settings_store.load_local_tts()
+        current.base_url = base_url
+        settings = current.validate()
+        self.settings_store.save_local_tts(settings)
+        check_cancel(job.get("cancel"))
+        client = LocalTTSClient(settings)
+        try:
+            health = client.health()
+            check_cancel(job.get("cancel"))
+            voices = client.list_ready_voices()
+            return {"health": health, "voices": voices}
+        finally:
+            client.close()
+
+    def ensure_local_tts_running(self, **job):
+        settings = self.settings_store.load_local_tts()
+        check_cancel(job.get("cancel"))
+        ready, status = self.local_tts_manager.ensure_running(
+            settings, cancel=job.get("cancel"), progress=job.get("progress")
+        )
+        check_cancel(job.get("cancel"))
+        client = LocalTTSClient(settings)
+        try:
+            health = client.health()
+            check_cancel(job.get("cancel"))
+            voices = client.list_ready_voices()
+            return {"health": health, "voices": voices, "launch_status": status}
+        finally:
+            client.close()
+
+    def set_local_tts_executable(self, path: str):
+        settings = self.settings_store.load_local_tts()
+        settings.local_tts_executable = path
+        self.settings_store.save_local_tts(settings)
+
+    def shutdown_local_tts(self):
+        settings = self.settings_store.load_local_tts()
+        if settings.stop_local_tts_on_exit:
+            self.local_tts_manager.shutdown_owned_process()
+
+    def load_local_tts_voices(self, **job):
+        check_cancel(job.get("cancel"))
+        client = self._local_tts_client()
+        try:
+            voices = client.list_ready_voices()
+            check_cancel(job.get("cancel"))
+            return voices
+        finally:
+            client.close()
+
+    def update_speaker_tts_voice(self, speaker_id, voice_id, speed):
+        if not self.project or speaker_id not in self.project.speakers:
+            raise ValueError(f"Không tìm thấy speaker {speaker_id}")
+        values = dict(self.project.speakers[speaker_id])
+        previous_voice = values.get("tts_voice_id")
+        previous_speed = float(values.get("tts_speed", 1.0))
+        values["tts_voice_id"] = voice_id or None
+        values["tts_speed"] = speed
+        speaker = Speaker(**values)
+        self.project.speakers[speaker_id] = asdict(speaker)
+        if previous_voice != speaker.tts_voice_id or previous_speed != float(speaker.tts_speed):
+            for utterance in self.project.utterances:
+                if utterance.speaker_id == speaker_id and utterance.tts_generation_status in {"generated", "cached"}:
+                    utterance.tts_generation_status = "stale"
+                    utterance.tts_error = ""
+        self.save()
+
+    def preview_local_tts_voice(self, voice_id, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        check_cancel(job.get("cancel"))
+        client = self._local_tts_client()
+        try:
+            wav_bytes = client.preview_voice(voice_id)
+        finally:
+            client.close()
+        check_cancel(job.get("cancel"))
+        cache_dir = self.directory / "cache" / "tts" / "previews"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        safe_voice_id = re.sub(r"[^A-Za-z0-9_-]", "_", voice_id).strip("_") or "voice"
+        fingerprint = hashlib.sha256(voice_id.encode("utf-8")).hexdigest()[:12]
+        destination = cache_dir / f"{safe_voice_id}_{fingerprint}.wav"
+        temporary = destination.with_suffix(".tmp.wav")
+        try:
+            with temporary.open("wb") as handle:
+                handle.write(wav_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            with wave.open(str(temporary), "rb") as reader:
+                if reader.getnframes() <= 0:
+                    raise ValueError("Local_TTS preview WAV không hợp lệ")
+            os.replace(temporary, destination)
+            return destination
+        except (OSError, EOFError, wave.Error) as exc:
+            raise ValueError("Local_TTS preview WAV không hợp lệ") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def generate_tts(self, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        settings = self.settings_store.load_local_tts()
+        client = LocalTTSClient(settings)
+        try:
+            return LocalTTSGenerationService(
+                client, self.manager, settings.base_url
+            ).generate(self.project, self.directory, **job)
+        finally:
+            client.close()
+
+    def mix_tts(self, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        settings = self.settings_store.load_local_tts()
+        result = TTSTimelineMixService().mix(
+            self.project, self.directory, settings.base_url, **job
+        )
+        self.project.final_audio_status = "stale"
+        self.save()
+        return result
+
+    def update_audio_settings(
+        self,
+        original_volume=None,
+        dubbed_volume=None,
+        additional_audio_path=...,
+        additional_audio_volume=None,
+        additional_audio_start=None,
+    ):
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        current = self.project.audio_settings
+        new_orig = current.original_volume if original_volume is None else int(round(original_volume))
+        new_dub = current.dubbed_volume if dubbed_volume is None else int(round(dubbed_volume))
+        new_path = current.additional_audio_path if additional_audio_path is Ellipsis else (str(additional_audio_path).strip() if additional_audio_path else None)
+        new_add_vol = current.additional_audio_volume if additional_audio_volume is None else int(round(additional_audio_volume))
+        new_start = current.additional_audio_start if additional_audio_start is None else float(additional_audio_start)
+
+        if (
+            new_orig != current.original_volume
+            or new_dub != current.dubbed_volume
+            or new_path != current.additional_audio_path
+            or new_add_vol != current.additional_audio_volume
+            or abs(new_start - current.additional_audio_start) > 1e-4
+        ):
+            from cartoon_sub.subtitle.models import AudioSettings
+            self.project.audio_settings = AudioSettings(
+                original_volume=new_orig,
+                dubbed_volume=new_dub,
+                additional_audio_path=new_path,
+                additional_audio_volume=new_add_vol,
+                additional_audio_start=new_start,
+            ).validate()
+            self.project.final_audio_status = "stale"
+            self.save()
+
+    def clear_additional_audio(self):
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        self.project.audio_settings.additional_audio_path = None
+        self.project.audio_settings.additional_audio_start = 0.0
+        self.project.final_audio_status = "stale"
+        self.save()
+
+    def mix_final_audio(self, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        from cartoon_sub.tts.final_mix_service import FinalAudioMixService
+        result = FinalAudioMixService().mix(self.project, self.directory, **job)
+        self.save()
+        return result
+
+    def render_export(self, test_mode=False, start=0.0, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        from cartoon_sub.media.preview import VideoRenderer
+        renderer = VideoRenderer()
+        if test_mode:
+            return renderer.render(
+                self.project,
+                self.directory,
+                start=start,
+                preview=False,
+                duration=30.0,
+                use_final_audio=True,
+                **job,
+            )
+        else:
+            return renderer.render(
+                self.project,
+                self.directory,
+                start=0.0,
+                preview=False,
+                duration=None,
+                use_final_audio=True,
+                **job,
+            )
+
     def edit_utterance(self, sid, subtitle, dubbing, mode, target):
         from cartoon_sub.translation.modes import TranslationMode
         TranslationMode(mode)
         s=next(s for s in self.project.segments if s.id==sid)
+        previous_dubbing = s.vi_dubbing
         s.vi_subtitle,s.vi_dubbing=subtitle,dubbing
         s.translation_mode=mode
         s.target_override=target or None
         s.dubbing_optimized=dubbing!=subtitle
         s.dubbing_status="manual"
         s.dubbing_fingerprint=""
+        if previous_dubbing != dubbing and s.tts_generation_status in {"generated", "cached"}:
+            s.tts_generation_status = "stale"
+            s.tts_error = ""
         s.display_segments=[]
         self.segmentation_service.invalidate(self.project,[sid])
         self.save()

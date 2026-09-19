@@ -86,7 +86,7 @@ class MasterTimelineTests(unittest.TestCase):
             self.assertEqual(project.segments[0].speaker_id,"SPK_UNKNOWN")
             manager.save(project,directory)
             data=json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(data["schema_version"],2)
+            self.assertEqual(data["schema_version"],3)
             self.assertIn("master_timeline",data)
             self.assertNotIn("segments",data)
             self.assertEqual(data["translation_genres"],old["translation_genres"])

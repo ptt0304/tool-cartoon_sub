@@ -2,6 +2,11 @@ from dataclasses import dataclass, field, asdict
 from cartoon_sub.translation.context_models import StoryContext
 
 
+TTS_GENERATION_STATUSES = frozenset({
+    "not_generated", "stale", "generating", "generated", "cached", "failed",
+})
+
+
 @dataclass(init=False)
 class DisplaySegment:
     """Derived presentation data for a single Utterance; never a speech source."""
@@ -110,6 +115,10 @@ class Utterance:
     tts_duration: float | None = None
     tts_speed_factor: float | None = None
     tts_alignment_status: str = "not_imported"
+    tts_segment_id: str | None = None
+    tts_fingerprint: str = ""
+    tts_generation_status: str = "not_generated"
+    tts_error: str = ""
     display_segments: list[DisplaySegment] = field(default_factory=list)
 
     def __init__(self, id, start, end, zh="", vi=None, vi_subtitle=None, vi_dubbing=None, **kwargs):
@@ -150,6 +159,12 @@ class Utterance:
         if self.tts_duration is not None and (type(self.tts_duration) not in (int,float) or not math.isfinite(self.tts_duration) or self.tts_duration<=0):
             raise ValueError("TTS duration must be positive")
         if self.tts_audio_path is not None and not isinstance(self.tts_audio_path,str): raise ValueError("TTS path must be a string")
+        if self.tts_segment_id is not None and (not isinstance(self.tts_segment_id, str) or not self.tts_segment_id.strip()):
+            raise ValueError("TTS segment ID must be a non-empty string or null")
+        if not isinstance(self.tts_fingerprint, str) or not isinstance(self.tts_error, str):
+            raise ValueError("TTS metadata must be text")
+        if self.tts_generation_status not in TTS_GENERATION_STATUSES:
+            raise ValueError("Invalid TTS generation status")
 
     @property
     def vi(self):
@@ -265,10 +280,43 @@ class WatermarkStyle:
     speed: int = 120
 
 @dataclass
+class AudioSettings:
+    original_volume: int = 100
+    dubbed_volume: int = 100
+    additional_audio_path: str | None = None
+    additional_audio_volume: int = 100
+    additional_audio_start: float = 0.0
+
+    def validate(self):
+        import math
+        for name, vol in (
+            ("original_volume", self.original_volume),
+            ("dubbed_volume", self.dubbed_volume),
+            ("additional_audio_volume", self.additional_audio_volume),
+        ):
+            if type(vol) not in (int, float) or not math.isfinite(vol) or not (0 <= vol <= 100):
+                raise ValueError(f"{name} must be between 0 and 100")
+        self.original_volume = int(round(self.original_volume))
+        self.dubbed_volume = int(round(self.dubbed_volume))
+        self.additional_audio_volume = int(round(self.additional_audio_volume))
+        if self.additional_audio_path is not None and not isinstance(self.additional_audio_path, str):
+            raise ValueError("additional_audio_path must be a string or null")
+        if self.additional_audio_path is not None and not self.additional_audio_path.strip():
+            self.additional_audio_path = None
+        if (
+            type(self.additional_audio_start) not in (int, float)
+            or not math.isfinite(self.additional_audio_start)
+            or self.additional_audio_start < 0
+        ):
+            raise ValueError("additional_audio_start must be >= 0")
+        self.additional_audio_start = float(self.additional_audio_start)
+        return self
+
+@dataclass
 class Project:
     name: str
     source_video_path: str
-    schema_version: int = 2
+    schema_version: int = 3
     metadata: dict = field(default_factory=dict)
     segments: list[Utterance] = field(default_factory=list)
     transcription_status: str = "not_started"
@@ -297,6 +345,9 @@ class Project:
     segmentation_profile: str = "BALANCED"
     segmentation_settings: dict = field(default_factory=dict)
     segmentation_cache: dict = field(default_factory=dict)
+    audio_settings: AudioSettings = field(default_factory=AudioSettings)
+    final_audio_status: str = "not_generated"
+    final_audio_fingerprint: str = ""
 
     @property
     def utterances(self):
@@ -311,17 +362,21 @@ class Project:
         from cartoon_sub.speaker.service import refresh_timeline
         refresh_timeline(self)
         data=asdict(self)
-        data["schema_version"]=2
+        data["schema_version"]=3
         data["master_timeline"]=[s.to_dict() for s in self.segments]
         data.pop("segments",None)
+        if isinstance(self.audio_settings, AudioSettings):
+            data["audio_settings"] = asdict(self.audio_settings.validate())
+        elif isinstance(self.audio_settings, dict):
+            data["audio_settings"] = asdict(AudioSettings(**self.audio_settings).validate())
         return data
 
     @classmethod
     def from_dict(cls, data):
         data = dict(data)
-        if data.get("schema_version") not in (1,2):
+        if data.get("schema_version") not in (1,2,3):
             raise ValueError("Unsupported project schema")
-        data["schema_version"]=2
+        data["schema_version"]=3
         rows=data.pop("master_timeline", data.pop("segments",[]))
         data["segments"] = [Utterance.from_dict(s) for s in rows]
         ids = [s.id for s in data["segments"]]
@@ -348,6 +403,17 @@ class Project:
             data["segmentation_settings"]={}
         if not isinstance(data.get("segmentation_cache", {}), dict):
             raise ValueError("Cache segmentation không hợp lệ")
+        from cartoon_sub.speaker.models import Speaker
+        speakers = data.get("speakers", {})
+        if not isinstance(speakers, dict):
+            raise ValueError("Speaker registry must be an object")
+        data["speakers"] = {
+            key: asdict(Speaker(**value)) for key, value in speakers.items()
+        }
+        raw_audio = data.get("audio_settings", {})
+        data["audio_settings"] = AudioSettings(**raw_audio).validate()
+        data["final_audio_status"] = data.get("final_audio_status", "not_generated")
+        data["final_audio_fingerprint"] = data.get("final_audio_fingerprint", "")
         project=cls(**data)
         from cartoon_sub.speaker.service import refresh_timeline
         refresh_timeline(project)

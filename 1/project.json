@@ -1,7 +1,7 @@
 {
   "name": "1",
   "source_video_path": "D:\\Documents\\MMO\\Youtube\\Tools\\Cartoon_Sub\\20260811_李世民：我不能浪，附近有魏征在游荡..._BV1aYuz6xEQL.mp4",
-  "schema_version": 2,
+  "schema_version": 3,
   "metadata": {
     "duration": 119.317333,
     "width": 1920,
@@ -25,31 +25,17 @@
     "strength": 20
   },
   "subtitle_style": {
-    "font": "Arial",
-    "font_size": 49,
+    "font": "Montserrat",
+    "font_size": 50,
     "bold": true,
     "outline": 2.0,
-    "shadow": 7.0,
+    "shadow": 2.0,
     "alignment": 2,
     "margin_bottom": 12,
-    "max_lines": 1,
+    "max_lines": 2,
     "center_in_mask": true
   },
-  "logos": [
-    {
-      "id": "1",
-      "path": "D:/Pictures/winxp.jpg",
-      "x": 534,
-      "y": 236,
-      "width": 320,
-      "height": 215,
-      "rotation": 0,
-      "transparency": 0,
-      "base_width": 160,
-      "base_height": 108,
-      "scale": 100
-    }
-  ],
+  "logos": [],
   "watermark": {
     "text": "",
     "font": "Arial",
@@ -537,22 +523,30 @@
     "SPK_01": {
       "id": "SPK_01",
       "name": "Unknown",
-      "voice_notes": ""
+      "voice_notes": "",
+      "tts_voice_id": "xa_capcut_nam_tu_tin",
+      "tts_speed": 1.0
     },
     "SPK_02": {
       "id": "SPK_02",
       "name": "Unknown",
-      "voice_notes": ""
+      "voice_notes": "",
+      "tts_voice_id": "xa_binh_luan_quan_su",
+      "tts_speed": 1.0
     },
     "SPK_03": {
       "id": "SPK_03",
       "name": "Unknown",
-      "voice_notes": ""
+      "voice_notes": "",
+      "tts_voice_id": "xa_chau_tinh_tri",
+      "tts_speed": 1.0
     },
     "SPK_04": {
       "id": "SPK_04",
       "name": "Unknown",
-      "voice_notes": ""
+      "voice_notes": "",
+      "tts_voice_id": "xa_duy_onyx",
+      "tts_speed": 1.0
     }
   },
   "speaker_review_hash": "1a3201bd0423bf2ed06f5d318d075a2d26aae6947392e2b1f4923af212fda07c",
@@ -571,111 +565,130 @@
   "segmentation_settings": {},
   "segmentation_cache": {
     "3": {
-      "fingerprint": "cf5fceca1471d2bfcb4ef08b80f2c27f2fb9eb1fdf29f73198615d39cbae5119",
+      "fingerprint": "9b0cf128f2fb2c96cef6798c76f2ac9e1907c1a89e7b3542d40806ef3f6c59d9",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "4": {
-      "fingerprint": "071ea6d1df8e59383f520ea3fb85c74c69ccbef2a527c71cf05ff088647c823f",
+      "fingerprint": "9920da1b9a389fd3aabe4abed2832b0479839c625930df873577a4eaa77598ef",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "5": {
-      "fingerprint": "7895465936dd3dba3626db5b5a397e0ced4c7f584d992a30a8e99017ea8f14e5",
+      "fingerprint": "fd44d734fe14754e700b05784c67f5f917c6f7bfbd131d20807e3bbb38847b20",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "6": {
-      "fingerprint": "718a59deaca245dbfb4120c6f9ca2db87516f3f1569a3629b026622db6498b57",
+      "fingerprint": "db7b35ed477c0ed9f78bf43865cd3427f1dd1ce1ff9605240bd6fe73704321f6",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "7": {
-      "fingerprint": "2f0b32601275b0fba3af1a7befa2926c991e442861e2eeddcb1cc42ff08e5c39",
+      "fingerprint": "bbbe39b2a41da4dfdd06007cdcfc3503b19ac17ce9a5323db6688a5374010baa",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "8": {
-      "fingerprint": "15ca28a50886e2bf34a3ab21957799223ea1a7216a0140312445971c0b0dc4a3",
+      "fingerprint": "45451f71045d53d0d860c29b1252f08c7c6d2094846e9956f5cfc6654111b269",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "9": {
-      "fingerprint": "0d099b0a990fa83a2124fb60be81d424e403c07574a09508f1131bec2581b5c8",
+      "fingerprint": "ed08f62fed5e20ee151e09afe77e83abd79421a70dd91de4c7535f3180467628",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "10": {
-      "fingerprint": "8113bdaf2f474085c2c453e75e93778f47d0bcbdb275e420bc6b3487e4562adf",
+      "fingerprint": "d45174c34bdd9f5a2c71045cb0a9af4fbdc7889ba6930515be86fcaf945b0278",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "11": {
-      "fingerprint": "1131914b2f4999336041155fa4b9eef307dd1f8200481a54d9367536976601a1",
+      "fingerprint": "40b38c30d25c3667119e49de18c0c0e5f5192bd62cf0fbd7a9c756ed73067173",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "12": {
-      "fingerprint": "c5ab20b02b3d9866742a3be7fd0ae1c8ad106cf739a695ef3168d4029d59d9b9",
+      "fingerprint": "0e0b225cc4ee60704ef075afb71fe581c5847be52421041a8f05e911446fdf07",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "13": {
-      "fingerprint": "052fe6d6cc5c8535a606602a8f04c5e7af2a2b16f4e6c21be5f34f914668282b",
+      "fingerprint": "c565fdb2df086c95607957aa58b006a942ce2e184f5480643880f72174c18310",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "14": {
-      "fingerprint": "69c43870b43ea0de25140ad9adf28a6f086bfd4a352981c5c0f490776fac2ff2",
+      "fingerprint": "bcee0415b12afb97347194f5fcba78cdc6924acf53e3af7c5ba4bb3ea16580f1",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "15": {
-      "fingerprint": "81bb3e87e4fe8df81ead0101f866b15c09547e31cd8d4b242faceb832ed5f0f0",
+      "fingerprint": "cc788c731be2e3c2efac715d04232ffbe5b3c4f26691edd21bb472fca79bbc0b",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "16": {
-      "fingerprint": "152f6ccd98ea165d5f40e6291443de1073784e920172f103abb122eb753f9a5f",
+      "fingerprint": "78bf2f15ace9d4c0594f5114684fa766d6746a17dcadb89a150749c44bb10d4e",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "17": {
-      "fingerprint": "0b610a81f9ecaca0ed7c2ce85ab229b4080ef9f60d80b71a9b9af12b5e7ed82a",
+      "fingerprint": "f28402791469c788b67fc4acb6aae5e17e71ec2229dc8386ecd3c3d71297ab0b",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "18": {
-      "fingerprint": "844a06fa3bdfd3c0dbfdcdb2bfbc681b7cb964ea78073d0782734d317af1cdc1",
+      "fingerprint": "b9a96f4793880a08a5c1f2de54752ced7b631642a9aa009cae47de01afca9510",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "19": {
-      "fingerprint": "844e40e896ee990e617d7069e7daf1d7eb07c171fffce3c76e96a5639a98340d",
+      "fingerprint": "f6f3e89452fc8819eb4491d18ff593d47ff05cfd527a2664b4172b66296c1e55",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "20": {
-      "fingerprint": "07c1eb705fd3d080acc4c08ae84980a46df8c3c48c18f40d86280b2af173fffa",
+      "fingerprint": "1f9f40db385ee8b877dfb4296fdc322b86a9b1b45a14e45610f57098bf103c42",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "21": {
-      "fingerprint": "def1a971e046cdcb89366eefa051a2daee5c8f37eaa1e4bcfcbe01b03548875d",
+      "fingerprint": "9e6d306eeebe6d151fae9577633813e3adad6031c8ae00498d4987d480dabebb",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "22": {
-      "fingerprint": "23baf3636bb53bc5d43135275af093c8141ddaf4d2e3779f1e8186aec77fa2bd",
+      "fingerprint": "a0c2c31c7fd690f317fa7941c81e1367530de9ea45bc9af0d90f740a55b00b83",
       "manual": false,
       "timing_source": "syllable_proportion"
     },
     "23": {
-      "fingerprint": "f8e0d340f4d8e444168c20df7f826443a816cdd1ec624244a243f1281d83bbcd",
+      "fingerprint": "879643ce1c736df0cf9643bead6ce6b7b9bfe063fbf26bec7e8c18a742cb1461",
+      "manual": false,
+      "timing_source": "syllable_proportion"
+    },
+    "1": {
+      "fingerprint": "e27b41893991924fd7e8f8b473924d1e2e1df2ab3ce0a93bb86988090b25603c",
+      "manual": false,
+      "timing_source": "syllable_proportion"
+    },
+    "2": {
+      "fingerprint": "0c09c3e4e310d3418a674df2b1d21f839cd2e5ef4038f69f9636ec900fe80161",
       "manual": false,
       "timing_source": "syllable_proportion"
     }
   },
+  "audio_settings": {
+    "original_volume": 10,
+    "dubbed_volume": 100,
+    "additional_audio_path": null,
+    "additional_audio_volume": 100,
+    "additional_audio_start": 0.0
+  },
+  "final_audio_status": "ready",
+  "final_audio_fingerprint": "ada57215c3ee68724ceacea1d680293b388a5bffbb8005d96bc077d48b796609",
   "master_timeline": [
     {
       "id": 1,
@@ -705,11 +718,80 @@
       "syllable_warnings": [
         "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
       ],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
-      "display_segments": [],
+      "tts_audio_path": "audio/tts/segments/utt_000001_842fc83f277e.wav",
+      "tts_duration": 15.42,
+      "tts_speed_factor": 1.0144736842105264,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000001_842fc83f277e",
+      "tts_fingerprint": "842fc83f277e5e204164d16acbc939b5857fb13e61909a8ced22b84c5cca52cb",
+      "tts_generation_status": "generated",
+      "tts_error": "",
+      "display_segments": [
+        {
+          "id": "1.1",
+          "utterance_id": 1,
+          "start": 0.0,
+          "end": 3.8,
+          "vi_text": "Các ái khanh, năm trẫm hai mươi tám tuổi, anh em bị sát hại,",
+          "zh_text": null,
+          "vi_syllables": 14,
+          "line_count": 1,
+          "segmentation_reason": "comma_boundary",
+          "qc_flags": [
+            "OK"
+          ],
+          "manual": false,
+          "duration": 3.8
+        },
+        {
+          "id": "1.2",
+          "utterance_id": 1,
+          "start": 3.8,
+          "end": 7.871428571428571,
+          "vi_text": " phụ hoàng bị giam lỏng, một mình trẫm chống đỡ cả bầu trời Đại Đường.",
+          "zh_text": null,
+          "vi_syllables": 15,
+          "line_count": 1,
+          "segmentation_reason": "sentence_boundary",
+          "qc_flags": [
+            "OK"
+          ],
+          "manual": false,
+          "duration": 4.071428571428571
+        },
+        {
+          "id": "1.3",
+          "utterance_id": 1,
+          "start": 7.871428571428571,
+          "end": 11.399999999999999,
+          "vi_text": " Chặng đường đã qua cũng coi như đạt được chút thành tựu mọn.",
+          "zh_text": null,
+          "vi_syllables": 13,
+          "line_count": 1,
+          "segmentation_reason": "sentence_boundary",
+          "qc_flags": [
+            "OK"
+          ],
+          "manual": false,
+          "duration": 3.5285714285714276
+        },
+        {
+          "id": "1.4",
+          "utterance_id": 1,
+          "start": 11.399999999999999,
+          "end": 15.2,
+          "vi_text": " Trẫm quyết định phong thiền Thái Sơn, mọi người nói xem có được không?",
+          "zh_text": null,
+          "vi_syllables": 14,
+          "line_count": 1,
+          "segmentation_reason": "utterance_end",
+          "qc_flags": [
+            "OK"
+          ],
+          "manual": false,
+          "duration": 3.8000000000000007
+        }
+      ],
       "duration": 15.2
     },
     {
@@ -738,11 +820,32 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
-      "display_segments": [],
+      "tts_audio_path": "audio/tts/segments/utt_000002_00ee7584d7d6.wav",
+      "tts_duration": 0.88,
+      "tts_speed_factor": 0.44,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000002_00ee7584d7d6",
+      "tts_fingerprint": "00ee7584d7d6dddb1210ec7112ab5c1e727dc41f683c901e401a057661aba417",
+      "tts_generation_status": "generated",
+      "tts_error": "",
+      "display_segments": [
+        {
+          "id": "2.1",
+          "utterance_id": 2,
+          "start": 15.2,
+          "end": 17.2,
+          "vi_text": "Không được.",
+          "zh_text": null,
+          "vi_syllables": 2,
+          "line_count": 1,
+          "segmentation_reason": "utterance_end",
+          "qc_flags": [
+            "OK"
+          ],
+          "manual": false,
+          "duration": 2.0
+        }
+      ],
       "duration": 2.0
     },
     {
@@ -773,10 +876,14 @@
       "syllable_warnings": [
         "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
       ],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000003_9ddcd7bbdc2b.wav",
+      "tts_duration": 6.72,
+      "tts_speed_factor": 1.2679245283018865,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000003_9ddcd7bbdc2b",
+      "tts_fingerprint": "9ddcd7bbdc2b6a3c74d04bafc82209baa35961474da1d753832e0c2990c33012",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "3.1",
@@ -841,10 +948,14 @@
       "syllable_warnings": [
         "Số được chuẩn hóa theo quy tắc đọc local; kiểm tra cách đọc thực tế"
       ],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000004_ef8b1c3554d4.wav",
+      "tts_duration": 2.88,
+      "tts_speed_factor": 1.252173913043478,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000004_ef8b1c3554d4",
+      "tts_fingerprint": "ef8b1c3554d44dd1d609cb74f755a55d5d09c4fbb81b3377ba70f69ceec5c534",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "4.1",
@@ -891,10 +1002,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000005_1abe341abba8.wav",
+      "tts_duration": 4.32,
+      "tts_speed_factor": 1.9636363636363643,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000005_1abe341abba8",
+      "tts_fingerprint": "1abe341abba81bac923e7991cd04bf283b29c53f1d2995e7a6d30361689fa3c7",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "5.1",
@@ -941,10 +1056,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000006_c3b952ce20d9.wav",
+      "tts_duration": 5.84,
+      "tts_speed_factor": 0.9733333333333333,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000006_c3b952ce20d9",
+      "tts_fingerprint": "c3b952ce20d9ee6f95481b07c7eef0a7802cbfbac4b88edbaae4095942e88a0a",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "6.1",
@@ -1007,10 +1126,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000007_c74e85393c73.wav",
+      "tts_duration": 4.88,
+      "tts_speed_factor": 1.22,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000007_c74e85393c73",
+      "tts_fingerprint": "c74e85393c730d0202a5c6fa591db8c60fabc4bf826d5b5d1625ca8dd0396a7d",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "7.1",
@@ -1057,10 +1180,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000008_017c948f1006.wav",
+      "tts_duration": 6.48,
+      "tts_speed_factor": 1.08,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000008_017c948f1006",
+      "tts_fingerprint": "017c948f100669d703416b63745fe8542c303f83f86165bcf7b50212b786fd79",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "8.1",
@@ -1123,10 +1250,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000009_290a5f9592c9.wav",
+      "tts_duration": 2.64,
+      "tts_speed_factor": 0.7542857142857143,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000009_290a5f9592c9",
+      "tts_fingerprint": "290a5f9592c9de6d7668e4a4491c77d8854714499a27857a1780934d9dafcd2f",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "9.1",
@@ -1173,10 +1304,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000010_24083c3177ed.wav",
+      "tts_duration": 0.64,
+      "tts_speed_factor": 0.64,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000010_24083c3177ed",
+      "tts_fingerprint": "24083c3177edf0edd00e713cfdea087acd771eef95e13f27d2f120346f3f7654",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "10.1",
@@ -1223,10 +1358,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000011_75c03366707e.wav",
+      "tts_duration": 6.56,
+      "tts_speed_factor": 1.4577777777777776,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000011_75c03366707e",
+      "tts_fingerprint": "75c03366707e2fb8cfb41d0ea7159a758c17cadfe8ad45be5760c209ad61b618",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "11.1",
@@ -1289,10 +1428,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000012_f3a56a4a488d.wav",
+      "tts_duration": 9.52,
+      "tts_speed_factor": 3.808,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000012_f3a56a4a488d",
+      "tts_fingerprint": "f3a56a4a488db93a4bf51fb6720c1ad406876743420c9aa947e634b0f0257776",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "12.1",
@@ -1355,10 +1498,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000013_4d282834ac14.wav",
+      "tts_duration": 4.32,
+      "tts_speed_factor": 1.08,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000013_4d282834ac14",
+      "tts_fingerprint": "4d282834ac1495b8c207cafbde0775a2b1f95611d4a1880dbedc8fdfc1413780",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "13.1",
@@ -1405,10 +1552,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000014_821edcef7353.wav",
+      "tts_duration": 1.76,
+      "tts_speed_factor": 0.88,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000014_821edcef7353",
+      "tts_fingerprint": "821edcef73530170939dd1c71df4c61f64a6dc5281e1fd6907682ad85c622edf",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "14.1",
@@ -1455,10 +1606,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000015_abf42d7bf135.wav",
+      "tts_duration": 2.0,
+      "tts_speed_factor": 0.6666666666666666,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000015_abf42d7bf135",
+      "tts_fingerprint": "abf42d7bf1354e8b5edad4a175713f2a268efecd409a1a748c602fe43f130926",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "15.1",
@@ -1505,10 +1660,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000016_20a23f356c72.wav",
+      "tts_duration": 2.16,
+      "tts_speed_factor": 1.4400000000000002,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000016_20a23f356c72",
+      "tts_fingerprint": "20a23f356c7243d4cc05ac1f32ee17f9b50a96fa9edd9e307baa8cbfd2e2fa28",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "16.1",
@@ -1555,10 +1714,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000017_a998f0b9e5d9.wav",
+      "tts_duration": 1.84,
+      "tts_speed_factor": 0.736,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000017_a998f0b9e5d9",
+      "tts_fingerprint": "a998f0b9e5d9d7dd16c9a0b3bef33d779ab7783e6993274cba0696f438bbef0e",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "17.1",
@@ -1605,10 +1768,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000018_017ef818702e.wav",
+      "tts_duration": 2.24,
+      "tts_speed_factor": 1.4933333333333334,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000018_017ef818702e",
+      "tts_fingerprint": "017ef818702ef055e7b40fe95a855e5575d00b4669fa9e60764d52d202d4e468",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "18.1",
@@ -1655,10 +1822,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000019_b304f4d82602.wav",
+      "tts_duration": 2.24,
+      "tts_speed_factor": 0.7466666666666667,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000019_b304f4d82602",
+      "tts_fingerprint": "b304f4d82602c3400f2c9f69694bd9ebb1d12839d8c1ddf0101d32ed57ff4e61",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "19.1",
@@ -1705,10 +1876,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000020_c8f5cb141396.wav",
+      "tts_duration": 1.2,
+      "tts_speed_factor": 0.6,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000020_c8f5cb141396",
+      "tts_fingerprint": "c8f5cb14139652eb301fde9446995156fad78484140eaed285240555ef28fdc7",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "20.1",
@@ -1755,10 +1930,14 @@
       "dubbing_status": "completed",
       "dubbing_fingerprint": "6f260636a47e8633f1ffd4bd0cc37b8893f0ba9ac905cc1a1517094cfba090ea",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000021_8c6b3fcfeaaf.wav",
+      "tts_duration": 7.6,
+      "tts_speed_factor": 0.8941176470588235,
+      "tts_alignment_status": "fits",
+      "tts_segment_id": "utt_000021_8c6b3fcfeaaf",
+      "tts_fingerprint": "8c6b3fcfeaafbf9652e17b3aebd0fdc42bf2b44b553c9ebbeaca16aee2101477",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "21.1",
@@ -1821,10 +2000,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000022_922cd20250e9.wav",
+      "tts_duration": 10.4,
+      "tts_speed_factor": 1.6,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000022_922cd20250e9",
+      "tts_fingerprint": "922cd20250e9a1524e1aed10831193d3b716ab34d176b88e97f0ea46d7552cc5",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "22.1",
@@ -1903,10 +2086,14 @@
       "dubbing_status": "not_started",
       "dubbing_fingerprint": "",
       "syllable_warnings": [],
-      "tts_audio_path": null,
-      "tts_duration": null,
-      "tts_speed_factor": null,
-      "tts_alignment_status": "not_imported",
+      "tts_audio_path": "audio/tts/segments/utt_000023_4a67d074c6ac.wav",
+      "tts_duration": 18.48,
+      "tts_speed_factor": 2.31,
+      "tts_alignment_status": "warning",
+      "tts_segment_id": "utt_000023_4a67d074c6ac",
+      "tts_fingerprint": "4a67d074c6ace8640595faa6347616cf2475c00182a853af2063ad35950d9a68",
+      "tts_generation_status": "generated",
+      "tts_error": "",
       "display_segments": [
         {
           "id": "23.1",
