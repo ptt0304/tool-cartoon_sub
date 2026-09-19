@@ -1,5 +1,5 @@
 {
-  "status": "completed",
+  "status": "stale",
   "warnings": {
     "1": [
       "Dòng dài >100 ký tự",
@@ -90,7 +90,8 @@
     "21": [
       "Dòng dài >100 ký tự",
       "Biên tập: Dịch thoát ý '磨人的小妖精' thành 'tiểu yêu tinh hành hạ người ta' và '鄉巴佬' thành 'tên nhà quê' để giữ tính hài hước.",
-      "Dubbing vượt target"
+      "Meaning may be compressed — bản dubbing đã nén",
+      "Biên tập dubbing: Optimized syllable count to 29 (target 30) for better dubbing flow. Kept the humorous tone of '磨人的小妖精' as 'yêu tinh hành hạ người ta' and '鄉巴佬' as 'tên nhà quê'."
     ],
     "22": [
       "Dòng dài >100 ký tự",

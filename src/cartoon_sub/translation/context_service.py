@@ -5,6 +5,7 @@ from .prompts import CONTEXT_RULES, editorial
 from .gemini_translator import validate_context
 from .requests import CachedRequests
 from cartoon_sub.ai.gemini_client import GeminiClient
+from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.project.cache import content_hash, check_cancel
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project
@@ -25,8 +26,9 @@ class ContextService:
         from pathlib import Path
         project = Project.from_dict(project.to_dict())
         settings = self.store.load()
+        factory = self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
         requests = CachedRequests(self.store, Path(directory) / "cache" / "context", settings.translation_model,
-                                  settings.retry_count, cancel, progress, self.factory)
+                                  settings.retry_count, cancel, progress, factory, settings.translation_provider)
         proposal = StoryContext().to_dict()
         all_batches = list(batches(source_rows(project.segments), 100))
         seen = []

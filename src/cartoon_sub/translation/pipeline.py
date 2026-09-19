@@ -8,6 +8,7 @@ from .gemini_translator import TRANSLATION_SCHEMA, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
 from cartoon_sub.ai.gemini_client import GeminiClient
+from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.project.cache import check_cancel, content_hash
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project
@@ -16,7 +17,7 @@ from cartoon_sub.media.process import CancelledError
 
 def translation_fingerprint(project, settings):
     return content_hash({"source": source_rows(project.segments), "editorial": editorial(project),
-                        "system": EDITORIAL_RULES, "model": settings.translation_model,
+                        "system": EDITORIAL_RULES, "provider": settings.translation_provider, "model": settings.translation_model,
                         "chunk_size": settings.translation_chunk_size, "version": PROMPT_VERSION,
                         "dubbing_settings":project.dubbing_settings})
 
@@ -57,8 +58,9 @@ class TranslationPipeline:
             project.cache_hashes["translation"] = fingerprint
         project.translation_status = "running"
         manager.save(project, directory)
+        factory = self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
         requests = CachedRequests(self.store, Path(directory) / "cache" / "translation", settings.translation_model,
-            settings.retry_count, cancel, progress, self.factory)
+            settings.retry_count, cancel, progress, factory, settings.translation_provider)
         translated = []
         by_id = {s.id: s for s in project.segments}
         def apply_row(row):

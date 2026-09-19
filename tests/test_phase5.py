@@ -19,6 +19,10 @@ from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage, TEST_SUBTITLE, VIE
 from cartoon_sub.ui.tabs.transcript_tab import build as build_transcript
 from cartoon_sub.ui.tabs.subtitle_tab import SubtitlePage
 from cartoon_sub.ui.timeline_table import create_table
+from cartoon_sub.ui.docs_dialog import DocsWindow, TOPICS
+from cartoon_sub.ui.main_window import MainWindow
+from cartoon_sub.ui.settings_dialog import SettingsDialog
+from cartoon_sub.ai.text_client import PROVIDERS, MODEL_PRESETS
 
 
 class Phase5Tests(unittest.TestCase):
@@ -160,6 +164,32 @@ class Phase5Tests(unittest.TestCase):
         self.assertEqual((first.width,first.height,first.scale),(80,60,100))
         self.assertEqual((second.width,second.height,second.scale),(20,20,0))
         page.close()
+
+    def test_docs_button_and_copyright_are_available(self):
+        dialog=DocsWindow();self.assertEqual(len(TOPICS),9);self.assertIn('PHẠM THANH TÙNG',TOPICS[0][1]);self.assertIn('Master dialogue timeline',TOPICS[4][1]);self.assertIn('Δ target',TOPICS[4][1]);dialog.open_topic(3)
+        self.assertEqual(len(dialog.topic_windows),1)
+        window=MainWindow();self.assertEqual(window.docs_button.text(),'Docs');self.assertIn('PHẠM THANH TÙNG',window.copyright_label.text())
+        for topic in dialog.topic_windows:topic.close()
+        dialog.close();window.close()
+
+    def test_application_icon_asset_is_available(self):
+        from cartoon_sub.app.main import Path
+        self.assertTrue((Path(__file__).resolve().parents[1] / "src" / "cartoon_sub" / "assets" / "cartoon_sub.ico").is_file())
+
+    def test_text_provider_registry_has_ten_supported_choices(self):
+        from cartoon_sub.app.settings import AISettings
+        self.assertEqual(len(PROVIDERS) + 1,10)
+        for provider in ("gemini",*PROVIDERS):
+            self.assertEqual(AISettings(translation_provider=provider).validate().translation_provider,provider)
+            self.assertTrue(MODEL_PRESETS[provider])
+
+    def test_settings_switches_translation_model_presets_by_provider(self):
+        window=MainWindow();dialog=SettingsDialog(window.controller)
+        dialog.provider.setCurrentIndex(dialog.provider.findData("deepseek"))
+        self.assertEqual(dialog.translation_model.currentText(),"deepseek-chat")
+        dialog.provider.setCurrentIndex(dialog.provider.findData("anthropic"))
+        self.assertIn(dialog.translation_model.currentText(),MODEL_PRESETS["anthropic"])
+        dialog.close();window.close()
 
     def test_invalid_mask_rejected(self):
         p=self.project();p.mask=Mask(True,'blur',300,150,40,40)

@@ -31,72 +31,7 @@
     "tts_duration": null,
     "tts_speed_factor": null,
     "tts_alignment_status": "not_imported",
-    "display_segments": [
-      {
-        "id": "1.1",
-        "utterance_id": 1,
-        "start": 0.0,
-        "end": 3.8,
-        "vi_text": "Các ái khanh, năm trẫm hai mươi tám tuổi, anh em bị sát hại,",
-        "zh_text": null,
-        "vi_syllables": 14,
-        "line_count": 1,
-        "segmentation_reason": "comma_boundary",
-        "qc_flags": [
-          "OK"
-        ],
-        "manual": false,
-        "duration": 3.8
-      },
-      {
-        "id": "1.2",
-        "utterance_id": 1,
-        "start": 3.8,
-        "end": 7.871428571428571,
-        "vi_text": " phụ hoàng bị giam lỏng, một mình trẫm chống đỡ cả bầu trời Đại Đường.",
-        "zh_text": null,
-        "vi_syllables": 15,
-        "line_count": 1,
-        "segmentation_reason": "sentence_boundary",
-        "qc_flags": [
-          "OK"
-        ],
-        "manual": false,
-        "duration": 4.071428571428571
-      },
-      {
-        "id": "1.3",
-        "utterance_id": 1,
-        "start": 7.871428571428571,
-        "end": 11.399999999999999,
-        "vi_text": " Chặng đường đã qua cũng coi như đạt được chút thành tựu mọn.",
-        "zh_text": null,
-        "vi_syllables": 13,
-        "line_count": 1,
-        "segmentation_reason": "sentence_boundary",
-        "qc_flags": [
-          "OK"
-        ],
-        "manual": false,
-        "duration": 3.5285714285714276
-      },
-      {
-        "id": "1.4",
-        "utterance_id": 1,
-        "start": 11.399999999999999,
-        "end": 15.2,
-        "vi_text": " Trẫm quyết định phong thiền Thái Sơn, mọi người nói xem có được không?",
-        "zh_text": null,
-        "vi_syllables": 14,
-        "line_count": 1,
-        "segmentation_reason": "utterance_end",
-        "qc_flags": [
-          "OK"
-        ],
-        "manual": false,
-        "duration": 3.8000000000000007
-      }
-    ],
+    "display_segments": [],
     "duration": 15.2
   },
   {
@@ -129,24 +64,7 @@
     "tts_duration": null,
     "tts_speed_factor": null,
     "tts_alignment_status": "not_imported",
-    "display_segments": [
-      {
-        "id": "2.1",
-        "utterance_id": 2,
-        "start": 15.2,
-        "end": 17.2,
-        "vi_text": "Không được.",
-        "zh_text": null,
-        "vi_syllables": 2,
-        "line_count": 1,
-        "segmentation_reason": "utterance_end",
-        "qc_flags": [
-          "OK"
-        ],
-        "manual": false,
-        "duration": 2.0
-      }
-    ],
+    "display_segments": [],
     "duration": 2.0
   },
   {
@@ -1139,7 +1057,7 @@
     "end": 91.0,
     "zh": "魏徵這個磨人的小妖精，房玄齡，你別拉我，朕今日非要宰了那個鄉巴佬！",
     "vi_subtitle": "Ngụy Trưng đúng là cái đồ tiểu yêu tinh hành hạ người ta mà. Phòng Huyền Linh, ngươi đừng cản ta, trẫm hôm nay nhất định phải chém chết tên nhà quê đó!",
-    "vi_dubbing": "Ngụy Trưng đúng là cái đồ tiểu yêu tinh hành hạ người ta mà. Phòng Huyền Linh, ngươi đừng cản ta, trẫm hôm nay nhất định phải chém chết tên nhà quê đó!",
+    "vi_dubbing": "Ngụy Trưng đúng là cái đồ yêu tinh hành hạ người ta. Phòng Huyền Linh, ngươi đừng cản ta, hôm nay trẫm phải chém chết tên nhà quê đó!",
     "speaker_id": "SPK_01",
     "speaker_name": "Unknown",
     "speaker_confidence": null,
@@ -1149,15 +1067,15 @@
     "translation_mode": "balanced_dubbing",
     "target_override": null,
     "zh_syllables": 29,
-    "vi_syllables": 33,
+    "vi_syllables": 29,
     "vi_subtitle_syllables": 33,
     "target_syllables": 30,
-    "syllable_delta": 3,
-    "semantic_compression": false,
+    "syllable_delta": -1,
+    "semantic_compression": true,
     "meaning_preservation": "high",
-    "dubbing_optimized": false,
-    "dubbing_status": "not_started",
-    "dubbing_fingerprint": "",
+    "dubbing_optimized": true,
+    "dubbing_status": "completed",
+    "dubbing_fingerprint": "6f260636a47e8633f1ffd4bd0cc37b8893f0ba9ac905cc1a1517094cfba090ea",
     "syllable_warnings": [],
     "tts_audio_path": null,
     "tts_duration": null,

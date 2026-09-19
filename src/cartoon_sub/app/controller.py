@@ -5,6 +5,7 @@ from cartoon_sub.subtitle.parser import import_srt
 from cartoon_sub.app.settings import SettingsStore
 from cartoon_sub.transcription.pipeline import TranscriptionPipeline, save_subtitle_artifacts
 from cartoon_sub.ai.gemini_client import GeminiClient
+from cartoon_sub.ai.text_client import TextProviderClient
 from cartoon_sub.translation.context_service import ContextService, source_fingerprint
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
 from cartoon_sub.translation.context_models import StoryContext
@@ -101,6 +102,17 @@ class Controller:
         client = GeminiClient(entered_key.strip() or self.settings_store.get_key())
         try:
             return client.test_connection(settings.transcription_model, **job)
+        finally:
+            client.close()
+
+    def test_translation_connection(self, settings, entered_key="", **job):
+        settings.validate()
+        if settings.translation_provider == "gemini":
+            client = GeminiClient(entered_key.strip() or self.settings_store.get_key("gemini"))
+        else:
+            client = TextProviderClient(settings.translation_provider, entered_key.strip() or self.settings_store.get_key(settings.translation_provider))
+        try:
+            return client.test_connection(settings.translation_model, **job)
         finally:
             client.close()
 

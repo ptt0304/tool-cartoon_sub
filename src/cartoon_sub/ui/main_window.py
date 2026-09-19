@@ -1,5 +1,6 @@
 import json
-from PySide6.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem, QProgressBar, QPushButton, QInputDialog
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem, QProgressBar, QPushButton, QInputDialog, QLabel
 from cartoon_sub.app.controller import Controller
 from cartoon_sub.ui.worker import Worker
 from cartoon_sub.ui.settings_dialog import SettingsDialog
@@ -9,6 +10,7 @@ from cartoon_sub.speaker.service import review_complete, refresh_timeline
 from cartoon_sub.ui.speaker_dialog import SpeakerDialog
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
 from cartoon_sub.ui.utterance_dialog import UtteranceDialog
+from cartoon_sub.ui.docs_dialog import DocsWindow
 from cartoon_sub.ui.timeline_table import populate, selected_ids
 from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.ui.tabs import video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, export_tab
@@ -31,12 +33,17 @@ class MainWindow(QMainWindow):
         self.save_action.setShortcut("Ctrl+S")
         self.menuBar().addMenu("Settings").addAction("AI…", self.open_settings)
         self.menuBar().actions()[-1].menu().addAction("Translation / Dubbing…", self.open_dubbing_settings)
+        self.docs_button = QPushButton("Docs")
+        self.docs_button.clicked.connect(self.show_docs)
+        self.menuBar().setCornerWidget(self.docs_button, Qt.Corner.TopRightCorner)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(lambda: self.worker.cancel() if self.worker else None)
+        self.copyright_label = QLabel("© PHẠM THANH TÙNG - 0866891380")
+        self.statusBar().addPermanentWidget(self.copyright_label)
         self.statusBar().addPermanentWidget(self.progress)
         self.statusBar().addPermanentWidget(self.cancel_button)
         self.pages[0].open_button.clicked.connect(self.open_video)
@@ -65,6 +72,14 @@ class MainWindow(QMainWindow):
         self.pages[4].render_button.clicked.connect(lambda:self.render_video(False))
         self.pages[4].save_button.clicked.connect(self.save_project)
         self.refresh()
+
+    def show_docs(self):
+        if not hasattr(self, "docs_window") or self.docs_window is None:
+            self.docs_window = DocsWindow(self)
+            self.docs_window.destroyed.connect(lambda *_: setattr(self, "docs_window", None))
+        self.docs_window.show()
+        self.docs_window.raise_()
+        self.docs_window.activateWindow()
 
     def load_mask_frame(self):
         from cartoon_sub.media.preview import VideoRenderer

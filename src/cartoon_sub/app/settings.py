@@ -14,6 +14,7 @@ class AISettings:
     translation_model: str = "gemini-3.5-flash"
     translation_chunk_size: int = 40
     retry_count: int = 2
+    translation_provider: str = "gemini"
 
     def validate(self):
         for model in (self.transcription_model, self.translation_model):
@@ -23,6 +24,9 @@ class AISettings:
             raise ValueError("Translation chunk size phải từ 30 đến 50")
         if type(self.retry_count) is not int or not 0 <= self.retry_count <= 5:
             raise ValueError("Retry count phải từ 0 đến 5")
+        from cartoon_sub.ai.text_client import PROVIDERS
+        if self.translation_provider not in {"gemini", *PROVIDERS}:
+            raise ValueError("Provider dịch không hợp lệ")
         return self
 
 
@@ -44,31 +48,37 @@ class SettingsStore:
         except (ValueError, TypeError) as exc:
             raise ValueError("settings.json không hợp lệ; sửa hoặc đổi tên file rồi mở lại Settings") from exc
 
-    def save(self, settings, new_key=""):
+    def save(self, settings, new_key="", translation_key=""):
         settings.validate()
         if new_key.strip():
             try:
                 self.vault.set_password(self.service, self.account, new_key.strip())
             except Exception:
                 raise RuntimeError("Không lưu được key vào OS keyring. Có thể cấu hình GEMINI_API_KEY trong .env cho môi trường dev.") from None
+        if translation_key.strip() and settings.translation_provider != "gemini":
+            try:
+                self.vault.set_password(f"CartoonSub.{settings.translation_provider}", self.account, translation_key.strip())
+            except Exception:
+                raise RuntimeError("Không lưu được translation API key vào OS keyring.") from None
         atomic_json(self.folder / "settings.json", asdict(settings))
 
-    def get_key(self):
+    def get_key(self, provider="gemini"):
         try:
-            key = self.vault.get_password(self.service, self.account)
+            key = self.vault.get_password(self.service if provider == "gemini" else f"CartoonSub.{provider}", self.account)
         except Exception:
             key = None
-        key = key or os.environ.get("GEMINI_API_KEY") or dotenv_values(self.env_path).get("GEMINI_API_KEY")
+        env_name = f"{provider.upper()}_API_KEY" if provider != "gemini" else "GEMINI_API_KEY"
+        key = key or os.environ.get(env_name) or dotenv_values(self.env_path).get(env_name)
         if not key or not key.strip():
-            raise ValueError("Chưa có Gemini API key. Mở Settings > AI, nhập key và bấm Lưu.")
+            raise ValueError(f"Chưa có {provider} API key. Mở Settings > AI, nhập key và bấm Lưu.")
         return key.strip()
 
-    def key_status(self):
+    def key_status(self, provider="gemini"):
         try:
-            self.get_key()
-            return "Đã có key (keyring hoặc GEMINI_API_KEY). Để trống ô key để giữ nguyên."
+            self.get_key(provider)
+            return f"Đã có {provider} key trong keyring hoặc biến môi trường. Để trống ô key để giữ nguyên."
         except ValueError:
-            return "Chưa cấu hình key. Nhập key lấy từ Google AI Studio."
+            return f"Chưa cấu hình {provider} key."
 
     def load_dubbing(self):
         from cartoon_sub.syllable.target import DubbingSettings

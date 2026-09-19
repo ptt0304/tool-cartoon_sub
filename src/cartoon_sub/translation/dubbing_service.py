@@ -8,6 +8,7 @@ from .artifacts import save_translation_artifacts
 from .context_service import source_fingerprint
 from .context_models import StoryContext
 from cartoon_sub.ai.gemini_client import GeminiClient
+from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.speaker.service import refresh_timeline, review_complete
 from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.syllable.vietnamese import count_syllables
@@ -33,14 +34,15 @@ class DubbingService:
             raise ValueError("Hãy dịch bản subtitle trước khi tối ưu dubbing")
         settings=self.store.load()
         budget=DubbingSettings(**project.dubbing_settings)
+        factory=self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
         requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",settings.translation_model,
-            settings.retry_count,cancel,progress,self.factory)
+            settings.retry_count,cancel,progress,factory,settings.translation_provider)
         all_rows=source_rows(project.segments)
         by_id={s.id:s for s in project.segments}
         def fingerprint(segment):
             return content_hash({"version":PROMPT_VERSION,"source":all_rows,"id":segment.id,
                 "current_vi":segment.vi_dubbing,"subtitle":segment.vi_subtitle,"editorial":editorial(project),
-                "budget":project.dubbing_settings,"system":dubbing_system(),"model":settings.translation_model,
+                "budget":project.dubbing_settings,"system":dubbing_system(),"provider":settings.translation_provider,"model":settings.translation_model,
                 "mode_prompt":dubbing_prompt(project,[next(r for r in all_rows if r['id']==segment.id)],[],[])})
         chosen={sid for sid in chosen if by_id[sid].dubbing_status!="completed" or by_id[sid].dubbing_fingerprint!=fingerprint(by_id[sid])}
         try:
