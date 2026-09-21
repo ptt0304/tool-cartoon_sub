@@ -49,7 +49,7 @@ class VideoExportTests(unittest.TestCase):
         tab_count = window.tabs.count()
         self.assertEqual(tab_count, 7)
         titles = [window.tabs.tabText(i) for i in range(tab_count)]
-        expected = ["Video", "Transcript", "Translate", "Subtitle", "Mask & Style", "Audio", "Export"]
+        expected = ["Video", "Transcript", "Translate", "Subtitle", "Mask", "Audio", "Export"]
         self.assertEqual(titles, expected)
 
     def test_export_validation_missing_stale_invalid(self):
@@ -100,8 +100,10 @@ class VideoExportTests(unittest.TestCase):
 
             # 1. Test 30s export from start = 20.0s
             out_30s = renderer.render(
-                p, root, start=20.0, preview=False, duration=30.0, use_final_audio=True
+                p, root, start=20.0, preview=False, duration=30.0, use_final_audio=True,
+                export_name="test_30s.mp4"
             )
+            self.assertEqual(out_30s, root / "test_30s.mp4")
             self.assertTrue(out_30s.is_file())
             info_30s = probe(str(out_30s))
             self.assertAlmostEqual(info_30s["duration"], 30.0, delta=0.5)
@@ -120,11 +122,14 @@ class VideoExportTests(unittest.TestCase):
             make_test_video(source_video, duration=15.0)
             make_test_final_audio(final_audio, duration=15.0)
             out_full = renderer.render(
-                p, root, start=0.0, preview=False, duration=None, use_final_audio=True
+                p, root, start=0.0, preview=False, duration=None, use_final_audio=True,
+                export_name="final.mp4"
             )
+            self.assertEqual(out_full, root / "final.mp4")
             self.assertTrue(out_full.is_file())
             info_full = probe(str(out_full))
             self.assertAlmostEqual(info_full["duration"], 15.0, delta=0.5)
+            self.assertFalse((root / ".tmp" / "export").exists())
 
             # Ensure source video was untouched
             self.assertTrue(source_video.is_file())

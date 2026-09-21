@@ -44,8 +44,12 @@ class Controller:
         self.audio_timing_refiner=AudioTimingRefiner(self.settings_store)
         self.local_tts_manager = LocalTTSProcessManager()
 
-    def create(self, video, directory, **job):
-        metadata = probe(video, **job)
+    def validate_source_media(self, video, **job):
+        return probe(video, require_audio=True, **job)
+
+    def create(self, video, directory, metadata=None, **job):
+        if metadata is None:
+            metadata = self.validate_source_media(video, **job)
         project=self.manager.create(directory, video, metadata)
         project.dubbing_settings=self.settings_store.load_dubbing().to_dict()
         self.manager.save(project,directory)
@@ -60,6 +64,7 @@ class Controller:
 
     def save(self):
         if self.project:
+            self.segmentation_service.sync_stale(self.project)
             refresh_timeline(self.project)
             mark_stale(self.project, self.settings_store.load())
             self.manager.save(self.project, self.directory)
@@ -67,6 +72,13 @@ class Controller:
                 save_subtitle_artifacts(self.project, self.directory)
             if self.project.translation_status != "not_started" or (self.directory / "subtitle" / "vi.srt").exists():
                 save_translation_artifacts(self.project, self.directory)
+
+    def sync_subtitle_presentation(self):
+        """Persist only DisplaySegments stale against canonical Project.utterances."""
+        changed = self.segmentation_service.sync_stale(self.project)
+        if changed:
+            self.save()
+        return changed
 
     def import_subtitles(self, path):
         segments = import_srt(path)
@@ -82,15 +94,58 @@ class Controller:
         self.project.chunk_states.pop("translation", None)
         self.save()
 
-    def update_translation_options(self, preset, custom_prompt, glossary_text, genres):
+    def import_vietnamese_subtitles(self, path):
+        imported_rows = import_srt(path)
+        if not imported_rows:
+            raise ValueError("Vietnamese SRT không có subtitle hợp lệ")
+        matched_ids = set()
+        imported = unmatched = conflicts = 0
+        for row in imported_rows:
+            candidates = []
+            for utterance in self.project.utterances:
+                overlap = max(0.0, min(row.end, utterance.end) - max(row.start, utterance.start))
+                shortest = min(row.end - row.start, utterance.end - utterance.start)
+                near = abs(row.start - utterance.start) <= .75 and abs(row.end - utterance.end) <= .75
+                if near or (shortest > 0 and overlap / shortest >= .5):
+                    candidates.append((overlap / max(shortest, .001),
+                                       -(abs(row.start - utterance.start) + abs(row.end - utterance.end)), utterance))
+            candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            if not candidates:
+                unmatched += 1
+                continue
+            best = candidates[0][2]
+            if best.id in matched_ids or (len(candidates) > 1 and candidates[0][:2] == candidates[1][:2]):
+                conflicts += 1
+                continue
+            best.vi_subtitle = row.zh.strip()
+            if not best.vi_dubbing.strip() or best.translation_source != "imported_srt":
+                best.vi_dubbing = best.vi_subtitle
+            best.translation_source = "imported_srt"
+            best.dubbing_optimized = False
+            best.dubbing_status = "not_started"
+            best.recalculate()
+            self.segmentation_service.sync_utterance(self.project, best)
+            matched_ids.add(best.id)
+            imported += 1
+        self.project.translation_status = "completed" if imported and imported == len(self.project.utterances) else "stale"
+        self.project.cache_hashes.pop("translation", None)
+        self.project.chunk_states.pop("translation", None)
+        self.save()
+        return {"imported": imported, "unmatched": unmatched, "conflicts": conflicts}
+
+    def update_translation_options(self, preset, custom_prompt, glossary_text, genres,
+                                   proper_name_mode="sino_vietnamese"):
         from cartoon_sub.translation.presets import GENRES, STYLES
         if preset not in STYLES or any(g not in GENRES for g in genres):
             raise ValueError("Thể loại/văn phong không hợp lệ")
+        if proper_name_mode not in ("sino_vietnamese", "preserve_source", "user_mapping"):
+            raise ValueError("Chế độ tên riêng không hợp lệ")
         glossary = parse_glossary(glossary_text)
         self.project.translation_preset = preset
         self.project.translation_prompt = custom_prompt
         self.project.glossary = glossary
         self.project.translation_genres = sorted(set(genres))
+        self.project.proper_name_mode = proper_name_mode
         mark_stale(self.project, self.settings_store.load())
 
     def analyze_context(self, **job):
@@ -138,6 +193,39 @@ class Controller:
 
     def optimize_dubbing(self, ids, **job):
         return self.dubbing_service.optimize(self.project,self.directory,ids,**job)
+
+    def revert_dubbing_optimization(self, ids):
+        chosen = set(ids)
+        if not chosen:
+            raise ValueError("Chọn một hoặc nhiều câu đã Optimize for dubbing")
+        reverted = []
+        for segment in self.project.utterances:
+            if segment.id not in chosen or segment.pre_optimization_vi_dubbing is None:
+                continue
+            subtitle_changed = segment.vi_subtitle != segment.pre_optimization_vi_subtitle
+            dubbing_changed = segment.vi_dubbing != segment.pre_optimization_vi_dubbing
+            segment.vi_subtitle = segment.pre_optimization_vi_subtitle
+            segment.vi_dubbing = segment.pre_optimization_vi_dubbing
+            segment.pre_optimization_vi_subtitle = None
+            segment.pre_optimization_vi_dubbing = None
+            segment.dubbing_optimized = False
+            segment.dubbing_status = "not_started"
+            segment.dubbing_fingerprint = ""
+            segment.semantic_compression = False
+            segment.meaning_preservation = "unknown"
+            self.project.translation_notes.pop(f"dub:{segment.id}", None)
+            if subtitle_changed:
+                self.segmentation_service.sync_utterance(self.project, segment)
+            if dubbing_changed and segment.tts_generation_status in {"generated", "cached"}:
+                segment.tts_generation_status = "stale"
+                segment.tts_error = ""
+            segment.recalculate()
+            reverted.append(segment.id)
+        if not reverted:
+            raise ValueError("Các câu đã chọn không có bản Optimize for dubbing để hoàn tác")
+        self.project.final_audio_status = "stale"
+        self.save()
+        return reverted
 
     def export_speaker_files(self, text_type, **job):
         return export_speakers(self.project,self.directory,text_type,**job)
@@ -318,29 +406,34 @@ class Controller:
         self.save()
         return result
 
-    def render_export(self, test_mode=False, start=0.0, **job):
+    def render_export(self, test_mode=False, start=0.0, project_snapshot=None, **job):
         if not self.project or not self.directory:
             raise ValueError("Chưa mở project")
+        if project_snapshot is None:
+            self.sync_subtitle_presentation()
+            project_snapshot = self.project
         from cartoon_sub.media.preview import VideoRenderer
         renderer = VideoRenderer()
         if test_mode:
             return renderer.render(
-                self.project,
+                project_snapshot,
                 self.directory,
                 start=start,
                 preview=False,
                 duration=30.0,
                 use_final_audio=True,
+                export_name="test_30s.mp4",
                 **job,
             )
         else:
             return renderer.render(
-                self.project,
+                project_snapshot,
                 self.directory,
                 start=0.0,
                 preview=False,
                 duration=None,
                 use_final_audio=True,
+                export_name="final.mp4",
                 **job,
             )
 
@@ -348,6 +441,7 @@ class Controller:
         from cartoon_sub.translation.modes import TranslationMode
         TranslationMode(mode)
         s=next(s for s in self.project.segments if s.id==sid)
+        subtitle_changed = s.vi_subtitle != subtitle
         previous_dubbing = s.vi_dubbing
         s.vi_subtitle,s.vi_dubbing=subtitle,dubbing
         s.translation_mode=mode
@@ -355,12 +449,149 @@ class Controller:
         s.dubbing_optimized=dubbing!=subtitle
         s.dubbing_status="manual"
         s.dubbing_fingerprint=""
+        s.pre_optimization_vi_subtitle = None
+        s.pre_optimization_vi_dubbing = None
         if previous_dubbing != dubbing and s.tts_generation_status in {"generated", "cached"}:
             s.tts_generation_status = "stale"
             s.tts_error = ""
-        s.display_segments=[]
-        self.segmentation_service.invalidate(self.project,[sid])
+        if subtitle_changed:
+            self.segmentation_service.sync_utterance(self.project, s)
         self.save()
+
+    def apply_manual_edits(self, dirty_rows: list[dict]):
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        if not dirty_rows:
+            return self.project
+
+        # Step 1: Atomic pre-validation of all dirty rows
+        validated = []
+        for entry in dirty_rows:
+            uid = entry["id"]
+            row_idx = entry.get("row_index", uid)
+            s = next((item for item in self.project.segments if item.id == uid), None)
+            if s is None:
+                raise ValueError(f"Dòng {row_idx} (ID {uid}): Không tìm thấy trong project")
+
+            try:
+                start = float(entry["start"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Dòng {row_idx} (ID {uid}): Start '{entry['start']}' không phải là số hợp lệ")
+
+            try:
+                end = float(entry["end"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Dòng {row_idx} (ID {uid}): End '{entry['end']}' không phải là số hợp lệ")
+
+            if start < 0:
+                raise ValueError(f"Dòng {row_idx} (ID {uid}): Start ({start:.3f}) phải >= 0")
+            if end <= start:
+                raise ValueError(f"Dòng {row_idx} (ID {uid}): End ({end:.3f}) phải lớn hơn Start ({start:.3f})")
+
+            spk_raw = entry.get("speaker", "").strip()
+            if "·" in spk_raw:
+                spk_raw = spk_raw.split("·")[0].strip()
+            elif ":" in spk_raw:
+                spk_raw = spk_raw.split(":")[0].strip()
+
+            target_spk = None
+            if spk_raw in self.project.speakers:
+                target_spk = spk_raw
+            else:
+                for sid, spk_dict in self.project.speakers.items():
+                    if spk_dict.get("name", "").strip().lower() == spk_raw.lower():
+                        target_spk = sid
+                        break
+            if not target_spk:
+                import re
+                if re.match(r"^SPK_\w+$", spk_raw, re.IGNORECASE):
+                    target_spk = spk_raw.upper()
+                    if target_spk not in self.project.speakers:
+                        from cartoon_sub.speaker.models import Speaker
+                        from dataclasses import asdict
+                        self.project.speakers[target_spk] = asdict(Speaker(target_spk, target_spk))
+                else:
+                    raise ValueError(f"Dòng {row_idx} (ID {uid}): Không nhận diện được speaker '{entry.get('speaker')}'")
+
+            validated.append({
+                "segment": s,
+                "uid": uid,
+                "start": start,
+                "end": end,
+                "speaker_id": target_spk,
+                "zh": entry.get("zh", ""),
+                "vi_subtitle": entry.get("vi_subtitle", ""),
+                "vi_dubbing": entry.get("vi_dubbing", ""),
+            })
+
+        # Step 2: Apply changes to canonical project
+        timing_or_spk_changed = False
+        tts_stale = False
+
+        for v in validated:
+            s = v["segment"]
+            uid = v["uid"]
+            start, end = v["start"], v["end"]
+            new_spk = v["speaker_id"]
+            new_zh = v["zh"]
+            new_sub = v["vi_subtitle"]
+            new_dub = v["vi_dubbing"]
+
+            timing_changed = (abs(s.start - start) > 1e-4 or abs(s.end - end) > 1e-4)
+            speaker_changed = (s.speaker_id != new_spk)
+            sub_changed = (s.vi_subtitle != new_sub)
+            dub_changed = (s.vi_dubbing != new_dub)
+            zh_changed = (s.zh != new_zh)
+
+            if not (timing_changed or speaker_changed or sub_changed or dub_changed or zh_changed):
+                continue
+
+            if timing_changed and s.display_segments:
+                old_dur = s.duration if s.duration > 0 else 1.0
+                new_dur = end - start
+                for seg in s.display_segments:
+                    r_s = max(0.0, (seg.start - s.start) / old_dur)
+                    r_e = min(1.0, (seg.end - s.start) / old_dur)
+                    seg.start = start + r_s * new_dur
+                    seg.end = start + r_e * new_dur
+
+            s.start = start
+            s.end = end
+            s.zh = new_zh
+            s.speaker_id = new_spk
+            if new_spk in self.project.speakers:
+                s.speaker_name = self.project.speakers[new_spk]["name"]
+            s.vi_subtitle = new_sub
+            s.vi_dubbing = new_dub
+            s.dubbing_optimized = (new_dub != new_sub)
+            s.dubbing_status = "manual"
+            s.dubbing_fingerprint = ""
+            s.pre_optimization_vi_subtitle = None
+            s.pre_optimization_vi_dubbing = None
+
+            if sub_changed or timing_changed or speaker_changed:
+                self.segmentation_service.sync_utterance(self.project, s)
+
+            if dub_changed or speaker_changed or timing_changed:
+                if s.tts_generation_status in {"generated", "cached"}:
+                    s.tts_generation_status = "stale"
+                    s.tts_error = ""
+                tts_stale = True
+
+            if timing_changed or speaker_changed:
+                timing_or_spk_changed = True
+
+            s.recalculate()
+
+        if timing_or_spk_changed:
+            from cartoon_sub.speaker.service import refresh_timeline
+            refresh_timeline(self.project)
+
+        if tts_stale or timing_or_spk_changed:
+            self.project.final_audio_status = "stale"
+
+        self.save()
+        return self.project
 
     def update_segmentation_settings(self, profile, settings):
         self.segmentation_service.update_settings(self.project, profile, settings)
@@ -401,4 +632,3 @@ class Controller:
             self.project.segmentation_cache[str(utterance.id)] = {"manual": True, "timing_source": "audio_alignment"}
         self.save()
         return self.project, self.directory
-

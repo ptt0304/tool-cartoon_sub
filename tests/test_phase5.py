@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from threading import Event
 import pysubs2
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtGui import QPixmap, QImage, QPainter
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHeaderView, QTableWidgetItem
 from cartoon_sub.subtitle.models import DisplaySegment,Project,Segment,Mask,SubtitleStyle,LogoOverlay,WatermarkStyle
@@ -15,7 +15,7 @@ from cartoon_sub.media.preview import VideoRenderer
 from cartoon_sub.media.process import run_process,CancelledError
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.project.project_manager import ProjectManager
-from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage, TEST_SUBTITLE, VIETNAMESE_FONTS
+from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage, VIETNAMESE_FONTS
 from cartoon_sub.ui.tabs.transcript_tab import build as build_transcript
 from cartoon_sub.ui.tabs.subtitle_tab import SubtitlePage
 from cartoon_sub.ui.timeline_table import create_table
@@ -58,7 +58,7 @@ class Phase5Tests(unittest.TestCase):
 
     def test_ass_centers_subtitles_in_enabled_mask(self):
         p = self.project()
-        p.mask = Mask(True, "blur", 20, 100, 280, 50)
+        p.mask = Mask(True, "gaussian", 20, 100, 280, 50)
         p.subtitle_style.center_in_mask = True
         with tempfile.TemporaryDirectory() as tmp:
             sub = pysubs2.load(str(save_ass(p, Path(tmp) / "centered.ass")))
@@ -87,7 +87,7 @@ class Phase5Tests(unittest.TestCase):
         p=self.project();page=MaskStylePage();page.load_project(p)
         self.assertEqual(page.values()[1].font,p.subtitle_style.font)
         self.assertGreaterEqual(page.font.count(),20)
-        self.assertIn('PHẠM THANH TÙNG',TEST_SUBTITLE)
+        self.assertTrue(hasattr(page.canvas, 'draw_preview_subtitle'))
         page.canvas.resize(800,600);page.canvas.pixmap=QPixmap(1920,1080)
         self.assertEqual(page.canvas.point(QPointF(400,300)),(960,540))
         page.set_rectangle(10,120,280,40)
@@ -125,14 +125,24 @@ class Phase5Tests(unittest.TestCase):
         rect=page.canvas.image_rect();image=page.canvas.grab().toImage()
         center=image.pixelColor(round(rect.x()+100),round(rect.y()+70))
         self.assertLess(center.red(),80)
-        for kind in ('blur','gaussian','pixelate','frosted'):
-            page.canvas.mask=Mask(True,kind,40,40,120,60)
-            self.assertFalse(page.canvas.grab().isNull())
+        page.canvas.mask=Mask(True,'gaussian',40,40,120,60)
+        self.assertFalse(page.canvas.grab().isNull())
         page.canvas.mask=Mask(True,'solid',40,40,220,80)
         page.canvas.style=SubtitleStyle(font_size=18,outline=0,shadow=0)
         without_effects=page.canvas.grab().toImage()
         page.canvas.style=SubtitleStyle(font_size=18,outline=4,shadow=4)
         self.assertNotEqual(page.canvas.grab().toImage(),without_effects)
+        page.close()
+
+    def test_solid_white_uses_explicit_mask_and_text_colors(self):
+        page=MaskStylePage();image=QImage(100,100,QImage.Format.Format_ARGB32);image.fill(Qt.GlobalColor.red)
+        painter=QPainter(image);page.canvas.draw_mask_effect(painter,QRectF(10,10,50,50),10,10,50,50,'solid',10,'#FFFFFF');painter.end()
+        color=image.pixelColor(30,30)
+        self.assertGreater(color.red(),240);self.assertGreater(color.green(),240);self.assertGreater(color.blue(),240)
+        p=self.project();p.mask=Mask(True,'solid',10,120,280,40,12,'#FFFFFF');p.subtitle_style.center_in_mask=True;p.subtitle_style.text_color='#123456'
+        with tempfile.TemporaryDirectory() as tmp:
+            subs=pysubs2.load(str(save_ass(p,Path(tmp)/'white.ass')))
+        self.assertEqual(subs.styles['Default'].primarycolor, pysubs2.Color(0x12,0x34,0x56,0))
         page.close()
 
     def test_long_text_views_scroll_and_allow_resizing(self):
@@ -160,13 +170,13 @@ class Phase5Tests(unittest.TestCase):
         first=LogoOverlay('one','unused.png',10,10,40,30,base_width=40,base_height=30)
         second=LogoOverlay('two','unused.png',10,10,20,20,base_width=20,base_height=20)
         page.canvas.logos=[first,second];page.logo.addItem('Logo one','one');page.logo.addItem('Logo two','two')
-        page.logo.setCurrentIndex(0);page.logo_scale.setValue(100)
-        self.assertEqual((first.width,first.height,first.scale),(80,60,100))
-        self.assertEqual((second.width,second.height,second.scale),(20,20,0))
+        page.logo.setCurrentIndex(0);page.logo_scale.setValue(200);page.logo_scale.editingFinished.emit()
+        self.assertEqual((first.width,first.height,first.scale_percent),(80,60,200))
+        self.assertEqual((second.width,second.height,second.scale_percent),(20,20,100))
         page.close()
 
     def test_docs_button_and_copyright_are_available(self):
-        dialog=DocsWindow();self.assertEqual(len(TOPICS),9);self.assertIn('PHẠM THANH TÙNG',TOPICS[0][1]);self.assertIn('Master dialogue timeline',TOPICS[4][1]);self.assertIn('Δ target',TOPICS[4][1]);dialog.open_topic(3)
+        dialog=DocsWindow();self.assertEqual(len(TOPICS),10);self.assertIn('PHẠM THANH TÙNG',TOPICS[0][1]);self.assertIn('Master dialogue timeline',TOPICS[4][1]);self.assertIn('Δ target',TOPICS[4][1]);dialog.open_topic(3)
         self.assertEqual(len(dialog.topic_windows),1)
         window=MainWindow();self.assertEqual(window.docs_button.text(),'Docs');self.assertIn('PHẠM THANH TÙNG',window.copyright_label.text())
         for topic in dialog.topic_windows:topic.close()
@@ -192,9 +202,9 @@ class Phase5Tests(unittest.TestCase):
         dialog.close();window.close()
 
     def test_invalid_mask_rejected(self):
-        p=self.project();p.mask=Mask(True,'blur',300,150,40,40)
+        p=self.project();p.mask=Mask(True,'gaussian',300,150,40,40)
         with self.assertRaises(ValueError):validate_visuals(p)
-        p.mask=Mask(True,'blur',10,100,40,40,21)
+        p.mask=Mask(True,'gaussian',10,100,40,40,21)
         with self.assertRaises(ValueError):validate_visuals(p)
 
     def test_style_does_not_invalidate_translation(self):
@@ -212,7 +222,7 @@ class Phase5Tests(unittest.TestCase):
                 '-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',str(source)])
             renderer=VideoRenderer()
             self.assertTrue(renderer.frame(p,root,2).is_file())
-            for kind in ('solid','blur'):
+            for kind in ('solid','gaussian'):
                 p.mask=Mask(True,kind,11,131,280,36,14)
                 output=renderer.render(p,root,2,True)
                 info=probe(output)

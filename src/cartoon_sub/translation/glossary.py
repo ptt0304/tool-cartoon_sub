@@ -1,11 +1,13 @@
 def parse_glossary(text):
     result = {}
     for index, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
-        if "->" not in line:
-            raise ValueError(f"Glossary dòng {index}: cần dạng 小美 -> Tiểu Mỹ")
-        key, value = [part.strip() for part in line.split("->", 1)]
+        delimiter = "->" if "->" in line else ("=" if "=" in line else None)
+        if delimiter is None:
+            raise ValueError(f"Glossary dòng {index}: cần dạng 小美 -> Tiểu Mỹ hoặc Xuanyi = Huyền Nhất")
+        key, value = [part.strip() for part in line.split(delimiter, 1)]
         if not key or not value:
             raise ValueError(f"Glossary dòng {index}: tên và bản dịch không được rỗng")
         if key in result and result[key] != value:

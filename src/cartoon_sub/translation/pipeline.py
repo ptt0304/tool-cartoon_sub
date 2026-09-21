@@ -19,7 +19,9 @@ def translation_fingerprint(project, settings):
     return content_hash({"source": source_rows(project.segments), "editorial": editorial(project),
                         "system": EDITORIAL_RULES, "provider": settings.translation_provider, "model": settings.translation_model,
                         "chunk_size": settings.translation_chunk_size, "version": PROMPT_VERSION,
-                        "dubbing_settings":project.dubbing_settings})
+                        "dubbing_settings":project.dubbing_settings,
+                        "imported_vi": {s.id: s.vi_subtitle for s in project.segments
+                                        if s.translation_source == "imported_srt"}})
 
 
 def mark_stale(project, settings):
@@ -43,7 +45,14 @@ class TranslationPipeline:
         StoryContext.from_dict(project.story_context, {s.id for s in project.segments})
         project = Project.from_dict(project.to_dict())
         settings = self.store.load()
-        all_batches = list(translation_batches(project.segments, settings.translation_chunk_size))
+        imported_ids = {s.id for s in project.segments if s.translation_source == "imported_srt"}
+        # Keep the original full-timeline lookaround. Imported rows remain useful
+        # context, but are removed from request targets so AI cannot overwrite them.
+        all_batches = []
+        for targets, before, after in translation_batches(project.segments, settings.translation_chunk_size):
+            targets = [row for row in targets if row["id"] not in imported_ids]
+            if targets:
+                all_batches.append((targets, before, after))
         manager = ProjectManager()
         fingerprint = translation_fingerprint(project, settings)
         old_run = project.cache_hashes.get("translation")
@@ -72,6 +81,12 @@ class TranslationPipeline:
             project.translation_notes[str(row['id'])] = row['review_note']
         current = None
         try:
+            if not all_batches:
+                project.translation_status = "completed"
+                project.cache_hashes["translation"] = fingerprint
+                manager.save(project, directory)
+                save_translation_artifacts(project, directory)
+                return project, Path(directory)
             for index, (targets, before, after) in enumerate(all_batches, 1):
                 current = str(index)
                 ids = [r["id"] for r in targets]

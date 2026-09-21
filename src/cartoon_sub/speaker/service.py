@@ -5,12 +5,18 @@ from cartoon_sub.project.cache import content_hash
 
 
 def detect_overlaps(segments):
-    """Connected interval components; never change times or merge utterances."""
+    """Connected interval components; never change times or merge utterances.
+
+    An overlap group is legitimate dialogue overlap ONLY when there are multiple
+    utterances and at least 2 distinct speakers speaking simultaneously.
+    Same-speaker overlap is not treated as legitimate dialogue overlap.
+    """
     for s in segments:
         s.overlap, s.overlap_group = False, None
     group, end, number = [], -1, 0
     def finish(rows, number):
-        if len(rows) > 1:
+        distinct_speakers = {row.speaker_id for row in rows}
+        if len(rows) > 1 and len(distinct_speakers) > 1:
             number += 1
             for row in rows:
                 row.overlap = True
@@ -23,6 +29,34 @@ def detect_overlaps(segments):
         group.append(segment)
         end=segment.end if len(group)==1 else max(end,segment.end)
     finish(group,number)
+
+
+def resolve_subtitle_lanes(utterances):
+    """Assign deterministic stable vertical lane index (0, 1, 2...) for each utterance ID.
+
+    Utterances not in legitimate overlap get lane 0.
+    In each legitimate overlap group, each distinct speaker receives a stable lane (0, 1, ...)
+    based on their first appearance in the group, ensuring that lanes never swap mid-way.
+    Returns:
+        dict[int, int]: mapping from utterance ID to lane index.
+    """
+    lane_map = {u.id: 0 for u in utterances}
+    groups = {}
+    for u in utterances:
+        if u.overlap and u.overlap_group:
+            groups.setdefault(u.overlap_group, []).append(u)
+
+    for group_id, group_rows in groups.items():
+        distinct_speakers = sorted(
+            list({r.speaker_id for r in group_rows}),
+            key=lambda spk: min(r.start for r in group_rows if r.speaker_id == spk),
+        )
+        speaker_lanes = {spk: idx for idx, spk in enumerate(distinct_speakers)}
+        for r in group_rows:
+            lane_map[r.id] = speaker_lanes.get(r.speaker_id, 0)
+
+    return lane_map
+
 
 
 def refresh_timeline(project):

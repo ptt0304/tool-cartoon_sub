@@ -4,3 +4,14 @@ __pycache__/
 .env
 projects/
 *.log
+.tmp-tests/
+_inventory/
+_share_*/
+/[0-9]*/
+*.wav
+*.mp3
+*.mp4
+
+# Cartoon_Sub user projects / generated runtime data
+[0-9]*/
+Projects/

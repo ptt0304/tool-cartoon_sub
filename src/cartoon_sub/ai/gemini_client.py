@@ -3,13 +3,22 @@ from cartoon_sub.project.cache import check_cancel
 
 
 class GeminiError(RuntimeError):
-    def __init__(self, message, retryable=False):
+    def __init__(self, message, retryable=False, retry_after_seconds=None, quota_exhausted=False):
         super().__init__(message)
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+        self.quota_exhausted = quota_exhausted
 
 
 def safe_error(exc):
     code = getattr(exc, "code", None)
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    retry_after = headers.get("retry-after")
+    try:
+        retry_after = max(0.0, float(retry_after)) if retry_after is not None else None
+    except (TypeError, ValueError):
+        retry_after = None
     if code in (400, 401, 403):
         return GeminiError(f"Gemini HTTP {code}: kiểm tra key, quyền API và model/định dạng audio.")
     if code == 404:
@@ -18,9 +27,13 @@ def safe_error(exc):
                            "gemini-3.5-flash rồi Save và thử lại. Không cần tạo lại project video. "
                            "Nếu dùng model khác, kiểm tra tên model và quyền truy cập.")
     if code == 429:
-        return GeminiError("Gemini HTTP 429: hết quota hoặc vượt giới hạn tốc độ. Kiểm tra quota trong AI Studio.", True)
+        detail = str(exc).lower()
+        exhausted = "daily quota" in detail or "quota exhausted" in detail
+        message = ("GEMINI_QUOTA_EXHAUSTED: Gemini HTTP 429 báo quota ngày đã hết."
+                   if exhausted else "Gemini HTTP 429: hết quota hoặc vượt giới hạn tốc độ. Kiểm tra quota trong AI Studio.")
+        return GeminiError(message, not exhausted, retry_after, exhausted)
     if isinstance(code, int) and 500 <= code < 600:
-        return GeminiError(f"Gemini HTTP {code}: dịch vụ tạm thời gặp lỗi.", True)
+        return GeminiError(f"Gemini HTTP {code}: dịch vụ tạm thời gặp lỗi.", True, retry_after)
     # Never surface raw SDK exceptions: they may contain request bodies or credentials.
     import httpx
     if isinstance(exc, (httpx.TransportError, TimeoutError, ConnectionError)):

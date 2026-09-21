@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import wave
 from pathlib import Path
 from urllib.parse import quote
 
@@ -147,9 +149,17 @@ class LocalTTSClient:
     @staticmethod
     def _wav_bytes(response: httpx.Response) -> bytes:
         content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if content_type != "audio/wav" or not response.content:
-            raise LocalTTSError("INVALID_AUDIO", "Local_TTS did not return a WAV file")
-        return response.content
+        content = response.content
+        if content_type not in {"audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"}:
+            raise LocalTTSError("PREVIEW_AUDIO_INVALID", f"Expected WAV audio, received Content-Type {content_type or 'missing'}")
+        try:
+            with wave.open(io.BytesIO(content), "rb") as reader:
+                if reader.getnchannels() < 1 or reader.getframerate() < 1 or reader.getnframes() < 1:
+                    raise wave.Error("empty WAV")
+        except (EOFError, wave.Error) as exc:
+            magic = content[:12].hex() if content else "empty"
+            raise LocalTTSError("PREVIEW_AUDIO_INVALID", f"Invalid WAV response ({len(content)} bytes; magic={magic})") from exc
+        return content
 
     def close(self) -> None:
         self._client.close()

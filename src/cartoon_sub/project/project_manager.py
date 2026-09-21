@@ -4,13 +4,15 @@ import tempfile
 import shutil
 from pathlib import Path
 from cartoon_sub.subtitle.models import Project
+from cartoon_sub.project.paths import ProjectPaths
 
 class ProjectManager:
     folders = ("source", "audio", "subtitle", "preview", "exports", "output")
 
     def create(self, directory, video, metadata):
-        directory = Path(directory).resolve()
-        if (directory / "project.json").exists():
+        paths = ProjectPaths(directory)
+        directory = paths.root
+        if paths.project_file.exists():
             raise ValueError("Project already exists; open it instead")
         video = Path(video).resolve(strict=True)
         project = Project(directory.name, str(video), metadata=metadata)
@@ -20,11 +22,9 @@ class ProjectManager:
     def save(self, project, directory):
         # Validate before changing the persisted project; atomic replacement avoids partial JSON.
         Project.from_dict(project.to_dict())
-        directory = Path(directory)
-        directory.mkdir(parents=True, exist_ok=True)
-        for folder in self.folders:
-            (directory / folder).mkdir(exist_ok=True)
-        existing=directory / "project.json"
+        paths = ProjectPaths(directory).ensure()
+        directory = paths.root
+        existing = paths.project_file
         if existing.exists():
             old=json.loads(existing.read_text(encoding="utf-8"))
             old_schema=old.get("schema_version")
@@ -40,7 +40,7 @@ class ProjectManager:
                 json.dump(project.to_dict(), handle, ensure_ascii=False, indent=2, allow_nan=False)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, directory / "project.json")
+            os.replace(temporary, paths.project_file)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -49,8 +49,23 @@ class ProjectManager:
         path = Path(path)
         if path.is_dir():
             path = path / "project.json"
+        paths = ProjectPaths(path.parent).ensure()
         project = Project.from_dict(json.loads(path.read_text(encoding="utf-8")))
         source = Path(project.source_video_path)
         if not source.is_absolute():
-            project.source_video_path = str((path.parent / source).resolve())
+            project.source_video_path = str((paths.root / source).resolve())
+        # Schema v3 allowed absolute generated WAV paths. Normalize only paths that
+        # already belong to this project; external/server paths remain stale rather
+        # than making the moved project depend on Local_TTS storage.
+        for utterance in project.utterances:
+            raw = utterance.tts_audio_path
+            if not raw:
+                continue
+            candidate = Path(raw)
+            if candidate.is_absolute():
+                try:
+                    utterance.tts_audio_path = paths.relative(candidate)
+                except ValueError:
+                    utterance.tts_audio_path = None
+                    utterance.tts_generation_status = "stale"
         return project

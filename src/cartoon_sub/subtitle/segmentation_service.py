@@ -7,7 +7,7 @@ from cartoon_sub.project.cache import content_hash
 from cartoon_sub.ai.gemini_client import GeminiError
 from cartoon_sub.subtitle.models import DisplaySegment, Utterance
 from cartoon_sub.subtitle.segmentation import (LocalSegmentationEngine, SegmentationPlan, SegmentationProfile,
-    SegmentationSettings, settings_for)
+    SegmentationSettings, normalize_text, settings_for)
 from cartoon_sub.subtitle.segmentation_qc import apply_display_qc, review_display_segment
 from cartoon_sub.subtitle.segmentation_timing import allocate_display_segments
 from cartoon_sub.syllable.vietnamese import count_syllables
@@ -39,6 +39,72 @@ def presentation_segments(utterance):
         utterance.vi_subtitle, segmentation_reason="utterance_source")
     fallback.inherit_speaker(utterance.speaker_id)
     return [fallback]
+
+
+def reflow_text_to_segments(text: str, segments: list[DisplaySegment]) -> list[str]:
+    N = len(segments)
+    if N <= 1:
+        return [text] if N == 1 else []
+
+    words = text.split()
+    M = len(words)
+    if M < N:
+        parts = []
+        rem = text
+        for i in range(N - 1):
+            cut = max(1, len(rem) - (N - 1 - i))
+            parts.append(rem[:cut].strip() or rem[:cut])
+            rem = rem[cut:]
+        parts.append(rem.strip() or rem)
+        return parts
+
+    durations = [max(0.01, seg.duration) for seg in segments]
+    total_dur = sum(durations)
+    total_syl = max(1, count_syllables(text))
+
+    def cost(j, k, slot_idx):
+        slice_text = " ".join(words[j:k])
+        s = max(1, count_syllables(slice_text))
+        target = max(1.0, total_syl * (durations[slot_idx] / total_dur))
+        err = ((s - target) ** 2) / target
+        if slot_idx < N - 1:
+            last = words[k - 1]
+            if last[-1] in ".?!…" or last.endswith("..."):
+                bonus = 12.0
+            elif last[-1] in ",;:—":
+                bonus = 6.0
+            else:
+                bonus = 0.0
+            return err + (12.0 - bonus)
+        return err
+
+    dp = {}
+    parent = {}
+    for k in range(1, M - (N - 1) + 1):
+        dp[(1, k)] = cost(0, k, 0)
+        parent[(1, k)] = 0
+
+    for i in range(2, N + 1):
+        for k in range(i, M - (N - i) + 1):
+            best = float("inf")
+            best_j = -1
+            for j in range(i - 1, k):
+                val = dp[(i - 1, j)] + cost(j, k, i - 1)
+                if val < best:
+                    best = val
+                    best_j = j
+            dp[(i, k)] = best
+            parent[(i, k)] = best_j
+
+    bounds = [M]
+    curr = M
+    for i in range(N, 1, -1):
+        curr = parent[(i, curr)]
+        bounds.append(curr)
+    bounds.append(0)
+    bounds.reverse()
+
+    return [" ".join(words[bounds[i]:bounds[i + 1]]) for i in range(N)]
 
 
 class SubtitleSegmentationService:
@@ -125,6 +191,89 @@ class SubtitleSegmentationService:
         for segment in utterance.display_segments:
             apply_display_qc(segment, settings, utterance.vi_subtitle)
 
+    def sync_utterance(self, project, utterance):
+        profile, settings = self.settings_for(project)
+        if not utterance.vi_subtitle.strip():
+            utterance.set_display_segments([])
+            project.segmentation_cache.pop(str(utterance.id), None)
+            return
+
+        existing = list(utterance.display_segments)
+        cache_entry = project.segmentation_cache.get(str(utterance.id), {})
+        is_manual = (
+            cache_entry.get("manual") is True
+            or any(seg.manual or seg.segmentation_reason == "manual" for seg in existing)
+        )
+
+        if not existing or len(existing) == 1:
+            if len(existing) == 1:
+                seg = existing[0]
+                seg.vi_text = utterance.vi_subtitle
+                seg.start = utterance.start
+                seg.end = utterance.end
+                seg.inherit_speaker(utterance.speaker_id)
+                seg.recalculate()
+                apply_display_qc(seg, settings, utterance.vi_subtitle)
+                utterance.set_display_segments([seg])
+            else:
+                fallback = DisplaySegment(
+                    f"{utterance.id}.1", utterance.id, utterance.start, utterance.end,
+                    utterance.vi_subtitle, segmentation_reason="utterance_source"
+                )
+                fallback.inherit_speaker(utterance.speaker_id)
+                apply_display_qc(fallback, settings, utterance.vi_subtitle)
+                utterance.set_display_segments([fallback])
+            cache_key = segmentation_fingerprint(utterance, profile, settings)
+            project.segmentation_cache[str(utterance.id)] = {
+                "fingerprint": cache_key,
+                "manual": is_manual,
+                "timing_source": "manual" if is_manual else "utterance",
+            }
+        elif not is_manual:
+            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(utterance)
+            allocated = allocate_display_segments(utterance, plan, settings)
+            utterance.set_display_segments(list(allocated.segments))
+            for segment in utterance.display_segments:
+                apply_display_qc(segment, settings, utterance.vi_subtitle)
+            cache_key = segmentation_fingerprint(utterance, profile, settings)
+            project.segmentation_cache[str(utterance.id)] = {
+                "fingerprint": cache_key,
+                "manual": False,
+                "timing_source": allocated.timing_source,
+            }
+        else:
+            parts = reflow_text_to_segments(utterance.vi_subtitle, existing)
+            for seg, part in zip(existing, parts):
+                seg.vi_text = part
+                seg.inherit_speaker(utterance.speaker_id)
+                seg.recalculate()
+                apply_display_qc(seg, settings, utterance.vi_subtitle)
+            utterance.set_display_segments(existing)
+            cache_key = segmentation_fingerprint(utterance, profile, settings)
+            project.segmentation_cache[str(utterance.id)] = {
+                "fingerprint": cache_key,
+                "manual": True,
+                "timing_source": cache_entry.get("timing_source", "manual"),
+            }
+
+    @staticmethod
+    def display_segments_are_stale(utterance):
+        """Return whether persisted presentation text no longer represents its master source."""
+        if not utterance.display_segments:
+            return False
+        if not utterance.vi_subtitle.strip():
+            return True
+        return normalize_text(" ".join(segment.vi_text for segment in utterance.display_segments)) != normalize_text(utterance.vi_subtitle)
+
+    def sync_stale(self, project):
+        """Synchronize only presentation groups whose text diverged from Project.utterances."""
+        changed = []
+        for utterance in project.utterances:
+            if self.display_segments_are_stale(utterance):
+                self.sync_utterance(project, utterance)
+                changed.append(utterance.id)
+        return changed
+
     def reset(self, project, utterance_ids):
         chosen = set(utterance_ids)
         if not chosen:
@@ -133,6 +282,9 @@ class SubtitleSegmentationService:
             if utterance.id in chosen:
                 utterance.set_display_segments([])
                 project.segmentation_cache.pop(str(utterance.id), None)
+                # Reset means rebuild from the current canonical subtitle, not
+                # a previously persisted presentation-text copy.
+                self.sync_utterance(project, utterance)
 
     def split_manual(self, project, utterance_id, display_id, word_index):
         utterance = self._utterance(project, utterance_id)
@@ -179,6 +331,7 @@ class SubtitleSegmentationService:
             "manual": True, "timing_source": "manual"}
 
     def rows(self, project, warning_filter=None):
+        self.sync_stale(project)
         _, settings = self.settings_for(project)
         result = []
         for utterance in project.utterances:

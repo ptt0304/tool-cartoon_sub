@@ -1,5 +1,7 @@
 """Local frame/preview/final rendering, isolated output per run."""
 import wave
+import os
+import shutil
 from pathlib import Path
 from uuid import uuid4
 from cartoon_sub.media.process import run_process
@@ -48,13 +50,17 @@ class VideoRenderer:
         if not Path(project.source_video_path).is_file():
             raise ValueError('Không tìm thấy video nguồn')
 
-    def render(self, project, directory, start=0, preview=True, duration=None, use_final_audio=False, cancel=None, progress=None):
+    def render(self, project, directory, start=0, preview=True, duration=None, use_final_audio=False,
+               export_name=None, cancel=None, progress=None):
         self.validate_time(project, start if (preview or duration is not None) else 0)
         validate_visuals(project)
         is_partial = preview or (duration is not None)
-        folder = Path(directory).resolve() / ('preview' if preview else 'output') / uuid4().hex
+        root = Path(directory).resolve()
+        export_job = bool(export_name)
+        folder = (root / '.tmp' / 'export' / uuid4().hex) if export_job else root / ('preview' if preview else 'output') / uuid4().hex
         folder.mkdir(parents=True)
         target = folder / ('preview.mp4' if preview else ('test_30s.mp4' if duration is not None else 'final.mp4'))
+        destination = root / export_name if export_job else target
         temporary = folder / 'rendering.mp4'
 
         if duration is not None:
@@ -72,16 +78,11 @@ class VideoRenderer:
             m = project.mask
             if not m.enabled: chain = '[0:v]null[masked];'
             elif m.kind == 'solid':
-                chain = f'[0:v]drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}:color=black:t=fill[masked];'
+                color = '0x' + m.mask_color[1:]
+                chain = f'[0:v]drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}:color={color}:t=fill[masked];'
             else:
                 # RGB avoids chroma rounding changing the user's selected rectangle.
-                radius = max(1,min((min(m.width,m.height)-1)//2,m.strength*2))
-                effects = {
-                    'blur': f'boxblur=luma_radius={radius}:luma_power=2:chroma_radius=0',
-                    'gaussian': f'gblur=sigma={m.strength * 2.4:.1f}:steps=2',
-                    'pixelate': f'scale={max(2,m.width//(4+m.strength*2))}:{max(2,m.height//(4+m.strength*2))}:flags=neighbor,scale={m.width}:{m.height}:flags=neighbor',
-                    'frosted': f'gblur=sigma={m.strength * 2}:steps=2,eq=brightness=.04:saturation=.7',
-                }
+                effects = {'gaussian': f'gblur=sigma={m.strength * 2.4:.1f}:steps=2'}
                 effect = effects.get(m.kind)
                 if effect is None: raise ValueError('Kiểu mask không hợp lệ')
                 chain = (f'[0:v]format=yuv444p,split[base][region];[region]crop={m.width}:{m.height}:{m.x}:{m.y}:exact=1,'
@@ -126,12 +127,23 @@ class VideoRenderer:
                     progress('FFmpeg đang render toàn bộ video…')
             run_process(args,cancel,progress,cwd=folder)
             check_cancel(cancel)
-            temporary.replace(target)
-            state.update(status='completed',output=str(target))
-            atomic_json(folder/'render.json',state)
-            return target
+            if not temporary.is_file() or temporary.stat().st_size <= 0:
+                raise RuntimeError('FFmpeg không tạo video export hợp lệ')
+            os.replace(temporary, destination)
+            if not export_job:
+                state.update(status='completed',output=str(destination))
+                atomic_json(folder/'render.json',state)
+            return destination
         except Exception:
             temporary.unlink(missing_ok=True)
             state['status']='failed_or_cancelled'
             atomic_json(folder/'render.json',state)
             raise
+        finally:
+            if export_job:
+                shutil.rmtree(folder, ignore_errors=True)
+                export_root = root / '.tmp' / 'export'
+                try:
+                    export_root.rmdir(); export_root.parent.rmdir()
+                except OSError:
+                    pass

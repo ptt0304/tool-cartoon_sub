@@ -72,6 +72,11 @@ class DubbingService:
                 check_cancel(cancel)
                 for row in result:
                     segment=by_id[row["id"]]
+                    # Keep the pre-optimization master texts once so a user
+                    # can explicitly undo this AI-only operation later.
+                    if segment.pre_optimization_vi_dubbing is None:
+                        segment.pre_optimization_vi_subtitle = segment.vi_subtitle
+                        segment.pre_optimization_vi_dubbing = segment.vi_dubbing
                     segment.vi_dubbing=row["vi"]
                     segment.dubbing_optimized=True
                     segment.semantic_compression=row["compressed"] or segment.translation_mode=="short_dub"

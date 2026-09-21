@@ -4,6 +4,7 @@ from PySide6.QtCore import QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QComboBox,
+    QAbstractSpinBox,
     QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
@@ -13,13 +14,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSlider,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QStandardItem
 
 
 class AudioPage(QWidget):
@@ -33,6 +35,7 @@ class AudioPage(QWidget):
     mix_final_requested = Signal()
     retry_start_requested = Signal()
     select_exe_requested = Signal()
+    batch_voice_requested = Signal(list, object)
 
     def __init__(self):
         super().__init__()
@@ -64,11 +67,21 @@ class AudioPage(QWidget):
         # ----------------------------------------------------
         # Section B: Character Voice Mapping
         # ----------------------------------------------------
-        self.tts_table = QTableWidget(0, 6)
-        self.tts_table.setHorizontalHeaderLabels(("Speaker", "Character", "AI Voice", "Engine", "Speed", "Status"))
-        self.tts_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.tts_table = QTableWidget(0, 7)
+        self.tts_table.setHorizontalHeaderLabels(("✓", "Speaker", "Character", "AI Voice", "Engine", "Speed", "Status"))
+        self.tts_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.tts_table.setMinimumHeight(180)
         tts_layout.addWidget(self.tts_table)
+
+        batch_row = QHBoxLayout()
+        self.select_all_button = QPushButton("Select all")
+        self.clear_selection_button = QPushButton("Clear selection")
+        self.batch_voice = QComboBox()
+        self.apply_batch_voice_button = QPushButton("Apply voice to checked speakers")
+        batch_row.addWidget(self.select_all_button); batch_row.addWidget(self.clear_selection_button)
+        batch_row.addWidget(QLabel("AI Voice:")); batch_row.addWidget(self.batch_voice, 1)
+        batch_row.addWidget(self.apply_batch_voice_button)
+        tts_layout.addLayout(batch_row)
 
         tts_actions = QHBoxLayout()
         self.tts_preview_button = QPushButton("Preview selected voice")
@@ -96,23 +109,21 @@ class AudioPage(QWidget):
         # Original Audio
         orig_row = QHBoxLayout()
         orig_row.addWidget(QLabel("Original Audio Volume:"))
-        self.orig_slider = QSlider(Qt.Orientation.Horizontal)
-        self.orig_slider.setRange(0, 100)
-        self.orig_slider.setValue(100)
-        self.orig_label = QLabel("100 %")
-        orig_row.addWidget(self.orig_slider, 1)
-        orig_row.addWidget(self.orig_label)
+        self.orig_volume = QSpinBox()
+        self.orig_volume.setRange(0, 100);self.orig_volume.setValue(100);self.orig_volume.setSuffix(" %")
+        self.orig_volume.setKeyboardTracking(False)
+        self.orig_volume.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        orig_row.addWidget(self.orig_volume);orig_row.addStretch()
         mixer_layout.addLayout(orig_row)
 
         # Dubbed Audio
         dub_row = QHBoxLayout()
         dub_row.addWidget(QLabel("Dubbed Audio Volume:  "))
-        self.dub_slider = QSlider(Qt.Orientation.Horizontal)
-        self.dub_slider.setRange(0, 100)
-        self.dub_slider.setValue(100)
-        self.dub_label = QLabel("100 %")
-        dub_row.addWidget(self.dub_slider, 1)
-        dub_row.addWidget(self.dub_label)
+        self.dub_volume = QSpinBox()
+        self.dub_volume.setRange(0, 100);self.dub_volume.setValue(100);self.dub_volume.setSuffix(" %")
+        self.dub_volume.setKeyboardTracking(False)
+        self.dub_volume.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        dub_row.addWidget(self.dub_volume);dub_row.addStretch()
         mixer_layout.addLayout(dub_row)
 
         # Additional Audio
@@ -131,12 +142,11 @@ class AudioPage(QWidget):
 
         add_vol_row = QHBoxLayout()
         add_vol_row.addWidget(QLabel("Volume:"))
-        self.add_slider = QSlider(Qt.Orientation.Horizontal)
-        self.add_slider.setRange(0, 100)
-        self.add_slider.setValue(100)
-        self.add_label = QLabel("100 %")
-        add_vol_row.addWidget(self.add_slider, 1)
-        add_vol_row.addWidget(self.add_label)
+        self.add_volume = QSpinBox()
+        self.add_volume.setRange(0, 100);self.add_volume.setValue(100);self.add_volume.setSuffix(" %")
+        self.add_volume.setKeyboardTracking(False)
+        self.add_volume.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        add_vol_row.addWidget(self.add_volume);add_vol_row.addStretch()
         add_layout.addLayout(add_vol_row)
 
         add_start_row = QHBoxLayout()
@@ -146,6 +156,7 @@ class AudioPage(QWidget):
         self.add_start_spin.setSingleStep(1.0)
         self.add_start_spin.setDecimals(3)
         self.add_start_spin.setValue(0.0)
+        self.add_start_spin.setKeyboardTracking(False)
         add_start_row.addWidget(self.add_start_spin)
         add_start_row.addStretch()
         add_layout.addLayout(add_start_row)
@@ -191,11 +202,14 @@ class AudioPage(QWidget):
         self.tts_preview_button.clicked.connect(self._on_preview_clicked)
         self.tts_generate_button.clicked.connect(self.generate_requested.emit)
         self.tts_mix_button.clicked.connect(self.mix_dubbed_requested.emit)
+        self.select_all_button.clicked.connect(lambda: self._set_all_checked(True))
+        self.clear_selection_button.clicked.connect(lambda: self._set_all_checked(False))
+        self.apply_batch_voice_button.clicked.connect(self._apply_batch_voice)
 
-        self.orig_slider.valueChanged.connect(self._on_slider_changed)
-        self.dub_slider.valueChanged.connect(self._on_slider_changed)
-        self.add_slider.valueChanged.connect(self._on_slider_changed)
-        self.add_start_spin.valueChanged.connect(self._on_slider_changed)
+        self.orig_volume.valueChanged.connect(self._on_volume_changed)
+        self.dub_volume.valueChanged.connect(self._on_volume_changed)
+        self.add_volume.valueChanged.connect(self._on_volume_changed)
+        self.add_start_spin.valueChanged.connect(self._on_volume_changed)
         self.add_browse_btn.clicked.connect(self._browse_additional_audio)
         self.add_clear_btn.clicked.connect(self._clear_additional_audio)
 
@@ -211,16 +225,12 @@ class AudioPage(QWidget):
         if voice_id:
             self.preview_requested.emit(voice_id)
 
-    def _on_slider_changed(self):
-        orig = self.orig_slider.value()
-        dub = self.dub_slider.value()
-        add = self.add_slider.value()
+    def _on_volume_changed(self):
+        orig = self.orig_volume.value()
+        dub = self.dub_volume.value()
+        add = self.add_volume.value()
         start = self.add_start_spin.value()
         path = self.add_path_edit.text().strip() or None
-
-        self.orig_label.setText(f"{orig} %")
-        self.dub_label.setText(f"{dub} %")
-        self.add_label.setText(f"{add} %")
 
         self.audio_settings_changed.emit(orig, dub, path, add, start)
 
@@ -233,7 +243,7 @@ class AudioPage(QWidget):
         )
         if path:
             self.add_path_edit.setText(path)
-            self._on_slider_changed()
+            self._on_volume_changed()
 
     def _clear_additional_audio(self):
         self.add_path_edit.clear()
@@ -242,10 +252,22 @@ class AudioPage(QWidget):
 
     def selected_voice_id(self):
         row = self.tts_table.currentRow()
-        if row < 0 and self.tts_table.rowCount():
-            row = 0
-        combo = self.tts_table.cellWidget(row, 2) if row >= 0 else None
+        combo = self.tts_table.cellWidget(row, 3) if row >= 0 else None
         return combo.currentData() if combo else None
+
+    def _set_all_checked(self, checked):
+        for row in range(self.tts_table.rowCount()):
+            item = self.tts_table.item(row, 0)
+            if item: item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+
+    def checked_speaker_ids(self):
+        return [self.tts_table.item(row, 1).text() for row in range(self.tts_table.rowCount())
+                if self.tts_table.item(row, 0) and self.tts_table.item(row, 0).checkState() == Qt.CheckState.Checked]
+
+    def _apply_batch_voice(self):
+        ids = self.checked_speaker_ids(); voice_id = self.batch_voice.currentData()
+        if ids and voice_id:
+            self.batch_voice_requested.emit(ids, voice_id)
 
     def set_settings(self, settings):
         if not self.tts_url.hasFocus():
@@ -262,18 +284,39 @@ class AudioPage(QWidget):
         if voices is not None:
             self._voices = [v for v in voices if v.get("status") == "READY"]
         ready = {voice["voice_id"]: voice for voice in (self._voices or [])}
+        ordered = sorted(ready.values(), key=lambda item: (item.get("display_name", ""), item["voice_id"]))
+        selected_batch = self.batch_voice.currentData()
+        self.batch_voice.blockSignals(True); self.batch_voice.clear()
+        self.batch_voice.addItem("— Chọn voice —", None)
+        for voice in ordered:
+            self.batch_voice.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
+        found_batch = self.batch_voice.findData(selected_batch)
+        if found_batch >= 0: self.batch_voice.setCurrentIndex(found_batch)
+        self.batch_voice.blockSignals(False)
 
         # Populate TTS mapping table
         self.tts_table.setRowCount(0)
         for row_index, speaker_id in enumerate(sorted(project.speakers)):
             speaker = project.speakers[speaker_id]
             self.tts_table.insertRow(row_index)
-            self.tts_table.setItem(row_index, 0, QTableWidgetItem(speaker_id))
-            self.tts_table.setItem(row_index, 1, QTableWidgetItem(speaker.get("name", "Unknown")))
+            check = QTableWidgetItem(); check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            check.setCheckState(Qt.CheckState.Unchecked); self.tts_table.setItem(row_index, 0, check)
+            self.tts_table.setItem(row_index, 1, QTableWidgetItem(speaker_id))
+            self.tts_table.setItem(row_index, 2, QTableWidgetItem(speaker.get("name", "Unknown")))
 
             combo = QComboBox()
             combo.addItem("— Chưa chọn —", None)
-            for voice in sorted(ready.values(), key=lambda item: (item.get("display_name", ""), item["voice_id"])):
+            favorites = [voice for voice in ordered if voice.get("favorite") is True]
+            if favorites:
+                header = QStandardItem("★ Giọng yêu thích")
+                header.setFlags(Qt.ItemFlag.NoItemFlags)
+                combo.model().appendRow(header)
+                for voice in favorites:
+                    combo.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
+            header = QStandardItem("Tất cả giọng")
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            combo.model().appendRow(header)
+            for voice in ordered:
                 combo.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
             saved = speaker.get("tts_voice_id")
             if saved:
@@ -283,20 +326,21 @@ class AudioPage(QWidget):
                     combo.addItem(f"{prefix}: {saved}", saved)
                     found = combo.count() - 1
                 combo.setCurrentIndex(found)
-            self.tts_table.setCellWidget(row_index, 2, combo)
+            self.tts_table.setCellWidget(row_index, 3, combo)
 
             engine = QLabel()
-            self.tts_table.setCellWidget(row_index, 3, engine)
+            self.tts_table.setCellWidget(row_index, 4, engine)
 
             speed = QDoubleSpinBox()
             speed.setRange(0.1, 3.0)
             speed.setSingleStep(0.05)
             speed.setDecimals(2)
             speed.setValue(float(speaker.get("tts_speed", 1.0)))
-            self.tts_table.setCellWidget(row_index, 4, speed)
+            speed.setKeyboardTracking(False)
+            self.tts_table.setCellWidget(row_index, 5, speed)
 
             status_lbl = QLabel(ready.get(saved, {}).get("status", "READY" if saved in ready else ("MISSING" if saved else "—")))
-            self.tts_table.setCellWidget(row_index, 5, status_lbl)
+            self.tts_table.setCellWidget(row_index, 6, status_lbl)
 
             def changed(*_, sid=speaker_id, selector=combo, speed_box=speed, engine_label=engine, status_box=status_lbl):
                 vid = selector.currentData()
@@ -314,9 +358,15 @@ class AudioPage(QWidget):
         generated = sum(row.tts_generation_status in {"generated", "cached"} for row in project.utterances)
         failed = [row.id for row in project.utterances if row.tts_generation_status == "failed"]
         stale = sum(row.tts_generation_status == "stale" for row in project.utterances)
-        warnings = sum(row.tts_alignment_status == "warning" for row in project.utterances)
+        sync_ok = sum(row.tts_alignment_diagnostic == "SYNC_OK" for row in project.utterances)
+        auto_fit = sum(row.tts_alignment_diagnostic == "AUTO_FIT" for row in project.utterances)
+        needs_review = sum(row.tts_alignment_diagnostic == "NEEDS_TIMING_REVIEW" for row in project.utterances)
+        overlap_groups = len({row.overlap_group for row in project.utterances if row.overlap_group})
 
-        status_text = f"Generated: {generated}/{len(project.utterances)} • Warnings: {warnings} exceed subtitle slot"
+        status_text = (
+            f"Generated: {generated}/{len(project.utterances)} • "
+            f"Sync OK: {sync_ok} • Auto-fit: {auto_fit} • Needs review: {needs_review} • Overlap groups: {overlap_groups}"
+        )
         if stale:
             status_text += f" • Stale: {stale}"
         if failed:
@@ -333,17 +383,14 @@ class AudioPage(QWidget):
         # Mixer Settings
         audio_settings = getattr(project, "audio_settings", None)
         if audio_settings:
-            self.orig_slider.blockSignals(True)
-            self.dub_slider.blockSignals(True)
-            self.add_slider.blockSignals(True)
+            self.orig_volume.blockSignals(True)
+            self.dub_volume.blockSignals(True)
+            self.add_volume.blockSignals(True)
             self.add_start_spin.blockSignals(True)
 
-            self.orig_slider.setValue(audio_settings.original_volume)
-            self.orig_label.setText(f"{audio_settings.original_volume} %")
-            self.dub_slider.setValue(audio_settings.dubbed_volume)
-            self.dub_label.setText(f"{audio_settings.dubbed_volume} %")
-            self.add_slider.setValue(audio_settings.additional_audio_volume)
-            self.add_label.setText(f"{audio_settings.additional_audio_volume} %")
+            self.orig_volume.setValue(audio_settings.original_volume)
+            self.dub_volume.setValue(audio_settings.dubbed_volume)
+            self.add_volume.setValue(audio_settings.additional_audio_volume)
             self.add_start_spin.setValue(audio_settings.additional_audio_start)
 
             if audio_settings.additional_audio_path:
@@ -359,9 +406,9 @@ class AudioPage(QWidget):
                 self.add_path_edit.clear()
                 self.add_status_label.setText("Not selected — skipped")
 
-            self.orig_slider.blockSignals(False)
-            self.dub_slider.blockSignals(False)
-            self.add_slider.blockSignals(False)
+            self.orig_volume.blockSignals(False)
+            self.dub_volume.blockSignals(False)
+            self.add_volume.blockSignals(False)
             self.add_start_spin.blockSignals(False)
 
         # Final audio status

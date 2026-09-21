@@ -1,6 +1,8 @@
 import json
+import io
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 
 import httpx
@@ -9,7 +11,17 @@ from cartoon_sub.app.settings import LocalTTSSettings, SettingsStore
 from cartoon_sub.tts.local_tts_client import LocalTTSClient, LocalTTSError
 
 
-WAV_BYTES = b"RIFFmock-generated-wav"
+def wav_bytes():
+    output = io.BytesIO()
+    with wave.open(output, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(8000)
+        writer.writeframes(b"\0\0" * 80)
+    return output.getvalue()
+
+
+WAV_BYTES = wav_bytes()
 
 
 class LocalTTSClientTests(unittest.TestCase):
@@ -84,6 +96,24 @@ class LocalTTSClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "VOICE_NOT_FOUND")
         self.assertEqual(caught.exception.status_code, 404)
         self.assertIn("unknown", caught.exception.message)
+
+    def test_preview_accepts_standard_wav_aliases_and_reports_invalid_audio(self):
+        alias = LocalTTSClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=WAV_BYTES, headers={"content-type": "audio/x-wav"})
+        ))
+        try:
+            self.assertEqual(alias.preview_voice("ready"), WAV_BYTES)
+        finally:
+            alias.close()
+        broken = LocalTTSClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b'{"error":"bad"}', headers={"content-type": "audio/wav"})
+        ))
+        try:
+            with self.assertRaises(LocalTTSError) as caught:
+                broken.preview_voice("ready")
+            self.assertEqual(caught.exception.code, "PREVIEW_AUDIO_INVALID")
+        finally:
+            broken.close()
 
     def test_connection_error(self):
         def fail(request):

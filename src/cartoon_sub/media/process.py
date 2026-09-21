@@ -22,8 +22,12 @@ def run_process(args, cancel=None, progress=None, cwd=None):
     try:
         while True:
             if cancel.is_set():
-                process.kill()
-                process.communicate()
+                process.terminate()
+                try:
+                    process.communicate(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
                 raise CancelledError("Job cancelled")
             try:
                 stdout, stderr = process.communicate(timeout=0.2)

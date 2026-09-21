@@ -181,7 +181,8 @@ class Phase2Tests(unittest.TestCase):
             self.assertNotEqual(state["status"], "completed")
             client.close.assert_called_once()
 
-    def test_pipeline_artifacts_audio_cache_and_failure_preservation(self):
+    @patch("cartoon_sub.transcription.pipeline.probe", return_value={"audio_codec": "pcm_s16le"})
+    def test_pipeline_artifacts_audio_cache_and_failure_preservation(self, _probe):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "video.mp4"

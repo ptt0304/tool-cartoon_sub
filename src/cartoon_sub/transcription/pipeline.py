@@ -1,17 +1,22 @@
 """Local extraction, resumable transcription and subtitle artifact persistence."""
 import json
+import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 from cartoon_sub.media.ffmpeg import FFmpeg
+from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.cache import atomic_json, file_hash, content_hash, check_cancel
 from cartoon_sub.project.project_manager import ProjectManager
+from cartoon_sub.project.paths import ProjectPaths
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.subtitle.parser import export_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
 from cartoon_sub.speaker.service import refresh_timeline
+
+log = logging.getLogger(__name__)
 
 
 def save_subtitle_artifacts(project, directory):
@@ -36,13 +41,17 @@ class TranscriptionPipeline:
         if project.transcription_status == "imported":
             raise ValueError("Project đã import SRT: không gọi Gemini transcription.")
         project = Project.from_dict(project.to_dict())
-        directory = Path(directory)
+        # Re-probe here so projects created by older versions remain safe.
+        # This happens before extraction and before constructing the transcriber.
+        probe(project.source_video_path, cancel=cancel, progress=progress, require_audio=True)
+        paths = ProjectPaths(directory).ensure()
+        directory = paths.root
         settings = self.settings_store.load()
         report = progress or (lambda text: None)
         report("Kiểm tra hash video và audio cache…")
         source_hash = file_hash(project.source_video_path, cancel)
-        audio_path = directory / "audio" / "source.wav"
-        manifest_path = directory / "audio" / "source.json"
+        audio_path = paths.audio_dir / "source.wav"
+        manifest_path = paths.audio_dir / "source.json"
         profile = "pcm_s16le-mono-16000-v1"
         reuse = False
         if audio_path.exists() and manifest_path.exists():
@@ -54,7 +63,14 @@ class TranscriptionPipeline:
                 pass
         if not reuse:
             report("FFmpeg: trích audio mono 16 kHz…")
-            temporary = audio_path.parent / f"source-{uuid4().hex}.wav"
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = paths.audio_dir / f"source-{uuid4().hex}.wav"
+            log.info(
+                "Source audio extraction project_root=%r audio_dir=%r output_path=%r "
+                "output_parent=%r parent_exists=%r parent_is_dir=%r",
+                str(paths.root), str(paths.audio_dir), str(temporary),
+                str(temporary.parent), temporary.parent.exists(), temporary.parent.is_dir(),
+            )
             try:
                 self.media.extract_audio(project.source_video_path, temporary, cancel=cancel, progress=report)
                 check_cancel(cancel)

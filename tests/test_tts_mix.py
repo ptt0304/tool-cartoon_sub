@@ -124,6 +124,31 @@ class TTSTimelineMixTests(unittest.TestCase):
                 TTSTimelineMixService().mix(project, root, BASE_URL)
             self.assertFalse((root / "audio" / "tts" / "dubbed_mix.wav").exists())
 
+    def test_diagnostics_count_processes_graph_and_report_no_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_project(root)
+            progress = []
+            service = TTSTimelineMixService()
+            service.mix(project, root, BASE_URL, progress=progress.append)
+            first = service.last_diagnostics
+            service.mix(project, root, BASE_URL)
+            second = service.last_diagnostics
+
+            self.assertEqual(first.segments_total, 2)
+            self.assertEqual(first.segments_ready, 2)
+            self.assertEqual(first.ffprobe_processes, 0)
+            self.assertEqual(first.ffmpeg_processes, 1)
+            self.assertEqual(first.input_count, 3)  # silent base + two amovie inputs
+            self.assertEqual(first.filter_count, 4)  # base + two segments + final amix
+            self.assertGreater(first.filter_complex_chars, 0)
+            self.assertEqual(first.duration_headers, 0)  # persisted TTS durations are reused
+            self.assertEqual(first.cache, "NOT IMPLEMENTED")
+            self.assertEqual(second.cache, "NOT IMPLEMENTED")
+            self.assertIn("Build Dubbed Audio diagnostics", progress[-1])
+            self.assertIn("FFprobe processes: 0", progress[-1])
+            self.assertIn("FFmpeg processes: 1", progress[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

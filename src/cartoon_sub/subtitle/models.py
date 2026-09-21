@@ -107,14 +107,18 @@ class Utterance:
     syllable_delta: int = 0
     semantic_compression: bool = False
     meaning_preservation: str = "unknown"
+    translation_source: str = "ai"
     dubbing_optimized: bool = False
     dubbing_status: str = "not_started"
     dubbing_fingerprint: str = ""
+    pre_optimization_vi_subtitle: str | None = None
+    pre_optimization_vi_dubbing: str | None = None
     syllable_warnings: list[str] = field(default_factory=list)
     tts_audio_path: str | None = None
     tts_duration: float | None = None
     tts_speed_factor: float | None = None
     tts_alignment_status: str = "not_imported"
+    tts_alignment_diagnostic: str = ""
     tts_segment_id: str | None = None
     tts_fingerprint: str = ""
     tts_generation_status: str = "not_generated"
@@ -161,7 +165,7 @@ class Utterance:
         if self.tts_audio_path is not None and not isinstance(self.tts_audio_path,str): raise ValueError("TTS path must be a string")
         if self.tts_segment_id is not None and (not isinstance(self.tts_segment_id, str) or not self.tts_segment_id.strip()):
             raise ValueError("TTS segment ID must be a non-empty string or null")
-        if not isinstance(self.tts_fingerprint, str) or not isinstance(self.tts_error, str):
+        if not isinstance(self.tts_fingerprint, str) or not isinstance(self.tts_error, str) or not isinstance(self.tts_alignment_diagnostic, str):
             raise ValueError("TTS metadata must be text")
         if self.tts_generation_status not in TTS_GENERATION_STATUSES:
             raise ValueError("Invalid TTS generation status")
@@ -199,7 +203,19 @@ class Utterance:
         self.syllable_warnings=list(dict.fromkeys(zh.warnings+vi.warnings+sub.warnings))
         if self.tts_duration is not None:
             self.tts_speed_factor=self.tts_duration/self.duration
-            self.tts_alignment_status="warning" if self.tts_duration>self.duration else "fits"
+            tolerance = max(0.10, self.duration * 0.03)
+            if self.tts_duration <= self.duration + tolerance:
+                self.tts_alignment_status = "fits"
+                self.tts_alignment_diagnostic = "SYNC_OK"
+            elif self.tts_speed_factor <= 1.20:
+                self.tts_alignment_status = "warning"
+                self.tts_alignment_diagnostic = "AUTO_FIT"
+            else:
+                self.tts_alignment_status = "warning"
+                self.tts_alignment_diagnostic = "NEEDS_TIMING_REVIEW"
+        else:
+            self.tts_alignment_status = "not_imported"
+            self.tts_alignment_diagnostic = ""
         for display_segment in self.display_segments:
             display_segment.inherit_speaker(self.speaker_id)
 
@@ -241,6 +257,7 @@ class Mask:
     width: int = 0
     height: int = 0
     strength: int = 12
+    mask_color: str = "#000000"
 
 @dataclass
 class SubtitleStyle:
@@ -253,6 +270,9 @@ class SubtitleStyle:
     margin_bottom: int = 30
     max_lines: int = 2
     center_in_mask: bool = False
+    speaker_label_mode: str = "overlap_only"
+    text_color: str = "#FFFFFF"
+    outline_color: str = "#000000"
 
 @dataclass
 class LogoOverlay:
@@ -267,6 +287,11 @@ class LogoOverlay:
     base_width: int | None = None
     base_height: int | None = None
     scale: int = 0
+    scale_percent: int | None = None
+
+    def __post_init__(self):
+        if self.scale_percent is None:
+            self.scale_percent = 100 + int(self.scale)
 
 @dataclass
 class WatermarkStyle:
@@ -331,6 +356,7 @@ class Project:
     cache_hashes: dict = field(default_factory=dict)
     chunk_states: dict = field(default_factory=dict)
     translation_genres: list[str] = field(default_factory=list)
+    proper_name_mode: str = "sino_vietnamese"
     story_context: dict = field(default_factory=lambda: StoryContext().to_dict())
     context_proposal: dict = field(default_factory=dict)
     context_source_hash: str = ""
@@ -382,16 +408,50 @@ class Project:
         ids = [s.id for s in data["segments"]]
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate subtitle IDs")
-        data["mask"] = Mask(**data.get("mask", {}))
-        data["subtitle_style"] = SubtitleStyle(**data.get("subtitle_style", {}))
-        data["logos"] = [LogoOverlay(**row) for row in data.get("logos", [])]
+        mask_data = dict(data.get("mask", {}))
+        style_data = dict(data.get("subtitle_style", {}))
+        # Migrate the removed white-background mode to explicit colors. Old
+        # projects retain the same appearance without renderer special cases.
+        if mask_data.get("kind") == "white_background":
+            mask_data["kind"] = "solid"
+            mask_data.setdefault("mask_color", "#FFFFFF")
+            style_data.setdefault("text_color", "#000000")
+        elif mask_data.get("kind") in ("blur", "pixelate", "frosted"):
+            mask_data["kind"] = "gaussian"
+        data["mask"] = Mask(**mask_data)
+        data["subtitle_style"] = SubtitleStyle(**style_data)
+        logo_rows = []
+        for raw_logo in data.get("logos", []):
+            row = dict(raw_logo)
+            if row.get("scale_percent") is None:
+                # Legacy scale was an additive percentage: 0=100%, 100=200%.
+                row["scale_percent"] = 100 + int(row.get("scale", 0))
+            logo_rows.append(LogoOverlay(**row))
+        data["logos"] = logo_rows
         data["watermark"] = WatermarkStyle(**data.get("watermark", {}))
         data["story_context"] = StoryContext.from_dict(data.get("story_context", {})).to_dict()
         if data.get("context_proposal"):
             data["context_proposal"] = StoryContext.from_dict(data["context_proposal"]).to_dict()
-        from cartoon_sub.translation.presets import GENRES
-        if not isinstance(data.get("translation_genres", []), list) or any(g not in GENRES for g in data.get("translation_genres", [])):
-            raise ValueError("Thể loại dịch không hợp lệ")
+        from cartoon_sub.translation.context_profiles import normalize_context_ids
+        legacy_context = data.pop("translation_context", "")
+        raw_contexts = data.get("translation_genres", [])
+        data["translation_genres"] = normalize_context_ids(raw_contexts)
+        if isinstance(raw_contexts, str) and raw_contexts.strip() and not data["translation_genres"]:
+            legacy_context = "\n".join(filter(None, (legacy_context, raw_contexts.strip())))
+        elif isinstance(raw_contexts, list):
+            legacy_names = {"rebirth": "Trọng sinh", "face_slap": "Vả mặt"}
+            unmapped = [legacy_names.get(key, str(key)) for key in raw_contexts
+                        if key not in data["translation_genres"]
+                        and key not in ("historical", "urban", "documentary")]
+            if unmapped:
+                legacy_context = "\n".join(filter(None, (
+                    legacy_context, "Ngữ cảnh từ project cũ: " + ", ".join(unmapped))))
+        if legacy_context:
+            data["translation_prompt"] = "\n".join(filter(None, (data.get("translation_prompt", ""), legacy_context)))
+        mode = data.get("proper_name_mode", "sino_vietnamese")
+        if mode not in ("sino_vietnamese", "preserve_source", "user_mapping"):
+            mode = "sino_vietnamese"
+        data["proper_name_mode"] = mode
         from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings
         profile=SegmentationProfile(data.get("segmentation_profile", "BALANCED"))
         data["segmentation_profile"]=profile.value
@@ -417,4 +477,8 @@ class Project:
         project=cls(**data)
         from cartoon_sub.speaker.service import refresh_timeline
         refresh_timeline(project)
+        # Project.utterances is canonical even for legacy project files that
+        # persisted an older presentation-text copy.
+        from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+        SubtitleSegmentationService().sync_stale(project)
         return project

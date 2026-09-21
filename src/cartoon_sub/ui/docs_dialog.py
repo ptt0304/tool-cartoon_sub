@@ -7,12 +7,14 @@ TOPICS = (
 <h1>Cartoon Sub là gì?</h1><p><b>PHẠM THANH TÙNG - 0866891380</b></p>
 <p>Cartoon Sub chuyển video tiếng Trung thành video có phụ đề Việt. Tool lưu toàn bộ công việc theo một project để có thể đóng/mở và tiếp tục.</p>
 <h2>Khái niệm</h2><ul><li><b>Transcript</b>: lời thoại tiếng Trung và thời điểm nói.</li><li><b>Translate</b>: bản dịch Việt theo thể loại, nhân vật và xưng hô.</li><li><b>Subtitle</b>: cách chia bản dịch thành các đoạn ngắn để người xem đọc.</li><li><b>Dubbing</b>: bản Việt tối ưu riêng cho thời lượng đọc/giọng, không thay bản subtitle.</li><li><b>Mask</b>: vùng che chữ Trung trên ảnh; <b>Style</b>: font, viền, bóng và vị trí chữ Việt.</li><li><b>Export</b>: xuất dữ liệu theo speaker để làm TTS hoặc biên tập ngoài.</li></ul>
-<p>Ví dụ: câu tiếng Trung dài 8 giây được Transcript ghi lại; Translate dịch thành một câu Việt; Subtitle tách thành hai DisplaySegment dễ đọc; Mask che chữ gốc rồi render MP4.</p>"""),
+<p>Ví dụ: câu tiếng Trung dài 8 giây được Transcript ghi lại; Translate dịch thành một câu Việt; Subtitle tách thành hai DisplaySegment dễ đọc; Mask che chữ gốc rồi render MP4.</p>
+<p><b>Undo:</b> nhấn Ctrl+Z để hoàn tác edit đã commit; Ctrl+Y hoặc Ctrl+Shift+Z để redo. Undo đổi project state và không gửi lại API hay tự render.</p>"""),
+    
     ("2. Project", """
 <h1>Thư mục project</h1><p>Tạo project mới tại tab <b>Video</b>: chọn video nguồn và chọn thư mục project. Video không được tự sao chép, vì vậy đừng đổi vị trí video nguồn.</p>
 <ul><li><code>project.json</code>: file chính chứa timeline, speaker, bản dịch, mask, style, logo, watermark và trạng thái công việc.</li><li><code>audio/source.wav</code>: audio trích từ video khi cần AI transcription.</li><li><code>subtitle/zh.srt</code>, <code>subtitle/vi.srt</code>: phụ đề Trung và Việt.</li><li><code>cache/</code>: kết quả AI từng bước để bấm tiếp tục sau lỗi; không nên tự sửa.</li><li><code>preview/</code>: preview 10 giây; <code>output/</code>: MP4 render hoàn chỉnh.</li></ul>
 <p>Mở project có sẵn: chọn <b>Project → Open project</b>, rồi mở đúng file <code>project.json</code>. Để sao lưu, giữ nguyên toàn bộ thư mục project và video nguồn.</p>"""),
-    ("3. Settings & AI", """
+    ("3. Settings", """
 <h1>Settings và AI API</h1><p>Mở <b>Settings → AI</b>. API key được lưu trong Windows Credential Manager/keyring, không nằm trong project.json.</p>
 <h2>Gemini cho audio</h2><p><b>Gemini API key</b> và <b>Transcription model</b> dùng cho tạo transcript và căn timing audio. Lấy key từ Google AI Studio, dán key, bấm Test Gemini transcription rồi Save. Request audio có thể dùng quota.</p>
 <h2>AI cho text</h2><p>Provider dịch/ngữ cảnh áp dụng cho phân tích ngữ cảnh, dịch, tối ưu dubbing text và semantic fallback. Chọn provider, nhập Translation API key, chọn model rồi Save.</p>
@@ -40,13 +42,54 @@ TOPICS = (
     ("7. Mask", """
 <h1>Mask, phụ đề, logo và watermark</h1><p>Nhập mốc thời gian, bấm <b>Lấy khung hình</b>, kéo vùng chữ gốc. Chọn <b>solid</b>, <b>blur</b>, <b>gaussian</b>, <b>pixelate</b> hoặc <b>frosted</b>. Độ nhòe 10–14 thường đủ; 15–18 cho nền nhiều chi tiết.</p>
 <p>Chỉnh font, cỡ chữ, đậm, viền, bóng, vị trí và số dòng. Bật <b>Căn phụ đề giữa vùng mask</b> để đặt chữ vào giữa vùng che. Canvas là preview nhanh; Tạo preview 10 giây là kiểm tra FFmpeg trước khi render toàn bộ.</p>
-<p><b>Logo</b>: load nhiều ảnh, chọn ảnh trên canvas hoặc danh sách rồi kéo để di chuyển. Có X/Y, kích thước, xoay, trong suốt; scale 0% giữ nguyên, 100% gấp đôi.</p>
+<p><b>Logo</b>: load nhiều ảnh, chọn ảnh trên canvas hoặc danh sách rồi kéo để di chuyển. Có X/Y, kích thước, xoay và trong suốt. Logo Scale là phần trăm so với kích thước gốc: 50% = một nửa, 100% = gốc, 250% = 2,5 lần, 1000% = 10 lần. Giá trị âm dùng trị tuyệt đối làm độ lớn (ví dụ -504% = 5,04 lần); renderer hiện không mirror ảnh.</p>
 <p><b>Watermark</b>: nhập text để chữ chạy và phản xạ ở mép video. Font, viền, bóng, trong suốt và tốc độ được xem trực tiếp trên canvas và dùng khi render.</p>"""),
-    ("8. Export", """
+    ("8. Audio", """
+<h1>Audio và Local_TTS</h1>
+<h2>Quy trình Audio</h2>
+<p><b>Master Dialogue Timeline</b> → VI Dubbing → Speaker → AI Voice → Generate / Resume TTS → TTS Segments → Build Dubbed Audio → Audio Mixer → Build Final Audio → <code>audio/final_audio.wav</code>.</p>
+
+<h2>Local_TTS</h2>
+<p><b>Local_TTS URL</b> là địa chỉ backend. <b>Test connection</b> kiểm tra kết nối và tải voice READY; <b>Auto Start</b> khởi động executable đã cấu hình; <b>Select Local_TTS…</b> chọn executable. Trạng thái READY cho biết backend và voice dùng được; FAILED cần kiểm tra URL, process và cấu hình.</p>
+<p>Local_TTS chỉ tạo WAV từ text + voice_id. Cartoon_Sub tải và giữ WAV trong project, không phụ thuộc thư mục <code>Local_TTS/outputs</code>.</p>
+
+<h2>Bảng Speaker / Voice</h2>
+<ul><li><b>✓</b>: chọn speaker cho batch assignment.</li><li><b>Speaker</b>: ID ổn định như SPK_01.</li><li><b>Character</b>: tên hiển thị nhân vật.</li><li><b>AI Voice</b>: voice_id gán cho speaker.</li><li><b>Engine</b>: engine/source của voice.</li><li><b>Speed</b>: tốc độ TTS của speaker.</li><li><b>Status</b>: READY, MISSING hoặc trạng thái voice.</li></ul>
+<p><b>Select all</b> và <b>Clear selection</b> quản lý checkbox. Chọn voice ở dropdown batch rồi bấm <b>Apply voice to checked speakers</b>. Checkbox chỉ phục vụ batch; <b>Preview selected voice</b> luôn nghe voice của row đang active.</p>
+
+<h2>Generate / Resume TTS</h2>
+<p>Dùng <b>VI Dubbing</b> và tạo một WAV cho mỗi Utterance. Segment hoàn tất có fingerprint hợp lệ được reuse; lần Resume chỉ xử lý phần pending, failed hoặc stale. VI Dubbing, voice_id, speed hay cấu hình TTS liên quan thay đổi sẽ làm segment stale.</p>
+<ul><li><b>Generated</b>: số WAV đã generated/cached.</li><li><b>Sync OK</b>: WAV phù hợp slot thời gian.</li><li><b>Auto-fit</b>: WAV dài hơn nhẹ và được chỉnh tempo khi mix.</li><li><b>Needs review</b>: timing cần kiểm tra.</li><li><b>Overlap groups</b>: speaker thật sự nói chồng nhau.</li><li><b>Stale</b>: input đổi, cần Generate / Resume lại.</li></ul>
+
+<h2>Build Dubbed Audio</h2>
+<p>Nút này <b>không tạo voice mới</b>. Nó lấy WAV đã generate, đặt mỗi WAV tại <code>Utterance.start</code>, giữ overlap hợp lệ rồi mix thành <code>audio/tts/dubbed_mix.wav</code>. Diagnostics sau build hiển thị số segment, phase timing, số process và kích thước graph. Dubbed mix hiện rebuild mỗi lần bấm, chưa có cache hit riêng.</p>
+
+<h2>Audio Mixer</h2>
+<ul><li><b>Original Audio Volume</b>: ô số 0–100%; 0 mute tiếng gốc, 100 là mức chuẩn.</li><li><b>Dubbed Audio Volume</b>: 0–100%, điều khiển <code>dubbed_mix.wav</code>, không thay TTS generation.</li><li><b>Additional Audio</b>: tùy chọn. Browse chọn file, Clear bỏ file, Volume 0–100%, Start Offset tính bằng giây; để trống thì skipped.</li></ul>
+<p>Ba volume nhập bằng bàn phím; mouse wheel không thay đổi giá trị.</p>
+
+<h2>Build và Play Final Audio</h2>
+<p><b>Build Final Audio</b> trộn Original + Dubbed + Optional Additional theo volume hiện tại thành <code>audio/final_audio.wav</code>. <b>Play Final Audio</b> phát file này; nút đổi Play/Stop, Stop hoặc phát hết sẽ dừng và lần phát sau bắt đầu lại từ đầu.</p>
+
+<h2>File trong project</h2>
+<pre>&lt;ProjectRoot&gt;/
+  audio/
+    source.wav
+    tts/
+      segments/          WAV theo Utterance, có thể reuse
+      dubbed_mix.wav
+    final_audio.wav</pre>
+
+<h2>Ví dụ</h2>
+<ol><li><b>Chỉ dubbing:</b> Original 0%, Dubbed 100%, không chọn Additional.</li><li><b>Giữ tiếng gốc nhỏ:</b> Original 20%, Dubbed 100%.</li><li><b>Thêm BGM:</b> Original 0%, Dubbed 100%, Additional 10–20%.</li><li><b>Nhiều speaker cùng voice:</b> tick speaker → chọn voice batch → Apply voice to checked speakers.</li></ol>
+
+<h2>Troubleshooting</h2>
+<ul><li>Local_TTS không kết nối: kiểm tra URL, Test connection, Auto Start hoặc chọn lại executable.</li><li>Voice không READY/MISSING: chọn voice READY và Generate / Resume lại.</li><li>Preview WAV lỗi: kiểm tra row đang chọn, voice và trạng thái Local_TTS.</li><li><code>TTS_AUDIO_STALE</code> hoặc thiếu segment: Generate / Resume TTS.</li><li><code>DUBBED_AUDIO_NOT_FOUND</code>: Build Dubbed Audio trước.</li><li><code>FINAL_AUDIO_STALE</code> hoặc thiếu file: Build Final Audio lại.</li><li><code>FINAL_AUDIO_FILE_LOCKED</code> / WinError 5: dừng player và đóng ứng dụng đang giữ file.</li><li><code>ADDITIONAL_AUDIO_NOT_FOUND</code> / <code>ADDITIONAL_AUDIO_INVALID</code>: chọn file audio hợp lệ hoặc Clear.</li></ul>"""),
+    ("9. Export", """
 <h1>Export</h1><p>Export xuất dữ liệu theo speaker để chuẩn bị TTS hoặc biên tập bằng phần mềm khác. Chọn loại văn bản cần xuất theo giao diện tab Export.</p>
 <p>Để có video hoàn chỉnh có subtitle, dùng <b>Mask</b> → Tạo preview 10 giây → Render toàn bộ MP4. File MP4 nằm trong thư mục <code>output</code> của project. SRT Việt nằm tại <code>subtitle/vi.srt</code>.</p>
 <p>Tool chưa tự clone giọng hoặc mix TTS vào video. Export speaker là đầu vào an toàn cho bước TTS bên ngoài.</p>"""),
-    ("9. Lỗi thường gặp", """
+    ("10. Lỗi thường gặp", """
 <h1>Lỗi thường gặp</h1><ul><li><b>401/403</b>: key sai hoặc chưa có quyền API/model.</li><li><b>404 model</b>: model gõ sai hoặc key không được provider cho dùng; chọn model gợi ý khác.</li><li><b>429</b>: hết quota/vượt tốc độ; chờ rồi thử lại.</li><li><b>AI trả JSON không hợp lệ</b>: giảm chunk size, đổi model, rồi chạy lại. Tool giữ dữ liệu cũ.</li><li><b>SPK_UNKNOWN</b>: vào Speaker review, nghe dòng và gán speaker trước khi dịch.</li><li><b>Không lấy khung/render</b>: kiểm tra FFmpeg/ffprobe trong PATH, video nguồn còn tồn tại và logo nằm trong khung.</li><li><b>Chữ không đúng font</b>: cài font trên Windows hoặc chọn font có hỗ trợ tiếng Việt.</li><li><b>Sub lệch lời nói</b>: kiểm tra Transcript; việc chia Subtitle không sửa timestamp nguồn.</li></ul>"""),
 )
 

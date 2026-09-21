@@ -15,6 +15,7 @@ from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.translation.context_service import source_fingerprint
 from cartoon_sub.translation.pipeline import translation_fingerprint
 from cartoon_sub.app.settings import AISettings
+from cartoon_sub.app.controller import Controller
 from cartoon_sub.tts.export_service import export_speakers
 from cartoon_sub.transcription.gemini_transcriber import validate_response
 from cartoon_sub.subtitle.parser import import_srt
@@ -39,6 +40,30 @@ def reply(text,compressed=False):
 
 
 class MasterTimelineTests(unittest.TestCase):
+    def test_revert_selected_dubbing_optimization_restores_snapshot_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = ready_project()
+            row = project.segments[0]
+            row.pre_optimization_vi_subtitle = row.vi_subtitle
+            row.pre_optimization_vi_dubbing = row.vi_dubbing
+            row.vi_subtitle = "Bản subtitle đã optimize"
+            row.vi_dubbing = "Bản dubbing đã optimize"
+            row.dubbing_optimized = True
+            row.dubbing_status = "completed"
+            row.tts_generation_status = "generated"
+            project.translation_notes["dub:1"] = "AI note"
+            controller = Controller()
+            controller.accept((project, Path(directory)))
+
+            self.assertEqual(controller.revert_dubbing_optimization([1]), [1])
+            self.assertEqual(row.vi_subtitle, "Chuyện này không liên quan đến cô")
+            self.assertEqual(row.vi_dubbing, "Chuyện này không liên quan đến cô")
+            self.assertIsNone(row.pre_optimization_vi_subtitle)
+            self.assertIsNone(row.pre_optimization_vi_dubbing)
+            self.assertFalse(row.dubbing_optimized)
+            self.assertEqual(row.tts_generation_status, "stale")
+            self.assertNotIn("dub:1", project.translation_notes)
+
     def test_required_counts_and_normalization(self):
         self.assertEqual(count_zh("跟你没关系").count,5)
         self.assertEqual(count_vi("Chuyện này không liên quan đến cô").count,7)
@@ -136,6 +161,8 @@ class MasterTimelineTests(unittest.TestCase):
             s=result.segments[0]
             self.assertEqual(s.vi_subtitle,"Chuyện này không liên quan đến cô")
             self.assertEqual(s.vi_dubbing,"Không liên quan đến cô")
+            self.assertEqual(s.pre_optimization_vi_subtitle,"Chuyện này không liên quan đến cô")
+            self.assertEqual(s.pre_optimization_vi_dubbing,"Chuyện này không liên quan đến cô")
             self.assertEqual(s.vi_syllables,5)
             self.assertEqual(s.dubbing_status,"completed")
             self.assertEqual(client.generate_json.call_count,2)

@@ -1,4 +1,0 @@
-{
-  "status": "completed",
-  "response": "{\n  \"translations\": [\n    {\n      \"id\": 21,\n      \"vi\": \"Ngụy Trưng đúng là cái đồ yêu tinh hành hạ người ta. Phòng Huyền Linh, ngươi đừng cản ta, hôm nay trẫm phải chém chết tên nhà quê đó!\",\n      \"review_note\": \"Optimized syllable count to 29 (target 30) for better dubbing flow. Kept the humorous tone of '磨人的小妖精' as 'yêu tinh hành hạ người ta' and '鄉巴佬' as 'tên nhà quê'.\",\n      \"meaning_preservation\": \"high\",\n      \"compressed\": true\n    }\n  ]\n}"
-}
