@@ -264,7 +264,7 @@ Chi tiết: [Project, cache và tiếp tục công việc](docs/CACHE_RESUME.md)
 
 ## Portable ZIP / Chuyển sang máy khác
 
-Cartoon_Sub hiện **chưa có** PyInstaller `.spec`, build script hoặc `Cartoon_Sub.exe` được định nghĩa/kiểm thử. Build mode thật là chạy từ source qua Python `>=3.11`; vì vậy chưa thể gọi ZIP hiện tại là binary standalone. Source-transfer sang PC khác phải mang `pyproject.toml`, `Cartoon_Sub_GUI.pyw`, toàn bộ `src/cartoon_sub/` (gồm assets/prompts), rồi tạo venv và `pip install -e .` trên máy đích.
+Cartoon_Sub hiện **chưa có** PyInstaller `.spec`, build script hoặc `Cartoon_Sub.exe` được định nghĩa/kiểm thử. Build mode thật là chạy từ source qua Python `>=3.11`; vì vậy chưa thể gọi ZIP hiện tại là binary standalone. Source-transfer sang PC khác phải mang `pyproject.toml`, `Cartoon_Sub_GUI.pyw`, toàn bộ `src/cartoon_sub/` (gồm assets/prompts), rồi tạo venv và `pip install .` trên máy đích.
 
 `ffmpeg` và `ffprobe` không được bundle và phải có trong `PATH`. Font subtitle cũng lấy từ Windows. Local_TTS có thể auto-discover một số layout source tương đối; cách chắc chắn sau khi chuyển là **Audio → Select Local_TTS…**, chọn `Local_TTS.exe`, rồi **Test connection** tại `http://127.0.0.1:8765`.
 
@@ -293,6 +293,14 @@ Guide chi tiết gồm bảng REQUIRED/OPTIONAL/PRIVATE/DEV, source-transfer com
 - [ ] Start Cartoon_Sub
 - [ ] Create a test project ngoài app folder
 - [ ] Preview one TTS voice
+
+## Source-only ZIP / Developer Transfer Package
+
+Gói developer transfer được chuẩn hóa thành `Cartoon_Sub_Source.zip`, tách biệt với binary portable. Minimal ZIP chỉ gồm `pyproject.toml`, `Cartoon_Sub_GUI.pyw`, `README.md`, `docs/SOURCE_PACKAGE.md` và toàn bộ `src/cartoon_sub/` (bao gồm assets/prompts). Không kèm Python, `.venv`, pip libraries, FFmpeg, Local_TTS, secrets, project, media, cache hoặc output.
+
+Trên PC đích, giải nén vào `C:\CartoonSuite\Cartoon_Sub`, cài Python 3.11 x64, tạo venv riêng, chạy `python -m pip install .` và `python -m pip check`. FFmpeg và ffprobe phải được cài riêng trong `PATH`. Local_TTS được chuyển bằng `Local_Sub_Source.zip`, chạy ở `127.0.0.1:8765`, sau đó chọn/test từ tab Audio. Trong layout máy đích, hướng dẫn backend nằm tại `..\Local_Sub\docs\SOURCE_PACKAGE.md`.
+
+Lệnh Git Bash tạo staging sạch và ZIP, layout `C:\CartoonSuite`, quy trình cài 15 bước, dependency/model boundary và checklist hai phía: [docs/SOURCE_PACKAGE.md](docs/SOURCE_PACKAGE.md).
 
 ## Development
 
