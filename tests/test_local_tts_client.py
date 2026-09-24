@@ -34,7 +34,7 @@ class LocalTTSClientTests(unittest.TestCase):
             if path == "/api/health":
                 return httpx.Response(200, json={"status": "READY", "voices": 1})
             if path == "/api/voices":
-                return httpx.Response(200, json={"voices": [
+                return httpx.Response(200, json={"revision": "rev-1", "voices": [
                     {"voice_id": "ready", "display_name": "Ready", "status": "READY", "engine": "vieneu"},
                     {"voice_id": "pending", "display_name": "Pending", "status": "REQUIRES_REFERENCE", "engine": "vieneu"},
                 ]})
@@ -70,9 +70,34 @@ class LocalTTSClientTests(unittest.TestCase):
 
     def test_health_voice_listing_and_ready_filtering(self):
         self.assertEqual(self.client.health(), {"status": "READY", "voices": 1})
+        self.assertEqual(self.client.voice_library()["revision"], "rev-1")
         self.assertEqual(len(self.client.list_voices()), 2)
         self.assertEqual([voice["voice_id"] for voice in self.client.list_ready_voices()], ["ready"])
         self.assertEqual(self.client.get_voice("ready")["status"], "READY")
+
+    def test_poll_timeout_override_is_independent_from_generation_timeout(self):
+        polling = LocalTTSClient(
+            LocalTTSSettings("https://tts.example.test/", 300),
+            transport=httpx.MockTransport(lambda request: httpx.Response(
+                200, json={"revision": "rev-1", "voices": []},
+            )),
+            request_timeout_seconds=2,
+        )
+        try:
+            self.assertEqual(polling.voice_library()["revision"], "rev-1")
+        finally:
+            polling.close()
+
+    def test_legacy_voice_api_gets_stable_transitional_revision(self):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"voices": [
+            {"voice_id": "a", "display_name": "A", "engine": "vieneu",
+             "status": "READY", "favorite": True},
+        ]}))
+        client = LocalTTSClient(transport=transport, request_timeout_seconds=2)
+        try:
+            self.assertEqual(client.voice_library()["revision"], client.voice_library()["revision"])
+        finally:
+            client.close()
 
     def test_preview_generate_payload_audio_url_and_download(self):
         self.assertEqual(self.client.preview_voice("ready"), WAV_BYTES)

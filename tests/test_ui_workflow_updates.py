@@ -83,6 +83,21 @@ class UIWorkflowUpdateTests(unittest.TestCase):
         self.assertFalse(panel.cancel_button.isEnabled())
         window.worker = None; window.close()
 
+    def test_transcript_updates_only_its_single_progress_row(self):
+        window = MainWindow(); window.active_job_tab = 1
+        panel = window.tab_job_panels[1]; panel.show()
+        window.progress.hide(); window.cancel_button.hide()
+        window.update_job_progress("Transcribing chunk 3/10")
+        self.assertEqual((panel.progress_bar.value(), panel.progress_bar.maximum()), (3,10))
+        self.assertNotEqual(window.statusBar().currentMessage(), "Transcribing chunk 3/10")
+        self.assertFalse(panel.isHidden())
+        self.assertFalse(window.progress.isVisible())
+        self.assertFalse(window.cancel_button.isVisible())
+        fake = Mock(); window.worker = fake; window.cancel_job()
+        fake.cancel.assert_called_once_with()
+        self.assertFalse(panel.cancel_button.isEnabled())
+        window.worker = None; window.close()
+
     def test_audio_batch_voice_checks_only_selected_speakers(self):
         page = AudioPage(); emitted=[]; page.batch_voice_requested.connect(lambda ids, voice: emitted.append((ids,voice)))
         project = Project("p", "v", speakers={f"SPK_0{i}": {"id":f"SPK_0{i}","name":str(i)} for i in range(1,5)})
@@ -92,6 +107,36 @@ class UIWorkflowUpdateTests(unittest.TestCase):
         page.batch_voice.setCurrentIndex(page.batch_voice.findData("voice_x")); page._apply_batch_voice()
         self.assertEqual(emitted, [(["SPK_01","SPK_03","SPK_04"], "voice_x")])
         page.close()
+
+    def test_voice_sync_uses_revision_preserves_selection_and_keeps_cache_offline(self):
+        window = MainWindow()
+        self.assertEqual(window.voice_sync_timer.interval(), 3000)
+        old = [{"voice_id": "voice_b", "display_name": "B", "status": "READY", "favorite": False}]
+        window.local_tts_voice_revision = "rev-1"
+        window.local_tts_voices = old
+        page = window.pages[5]
+        page.populate = Mock()
+        window.accept_voice_library_sync({
+            "revision": "rev-1", "voices": [{"voice_id": "ignored"}], "all_voice_ids": ["ignored"],
+        })
+        page.populate.assert_not_called()
+        self.assertIs(window.local_tts_voices, old)
+
+        window.controller.project = Project("p", "v", speakers={
+            "SPK_01": {"id": "SPK_01", "name": "One", "tts_voice_id": "voice_b", "tts_speed": 1.0},
+        })
+        updated = [
+            {"voice_id": "voice_a", "display_name": "A", "status": "READY", "favorite": True},
+            {"voice_id": "voice_b", "display_name": "B", "status": "READY", "favorite": False},
+        ]
+        window.accept_voice_library_sync({"revision": "rev-2", "voices": updated,
+                                          "all_voice_ids": ["voice_a", "voice_b"]})
+        page.populate.assert_called_once()
+        self.assertEqual(window.controller.project.speakers["SPK_01"]["tts_voice_id"], "voice_b")
+        window.voice_library_sync_failed("offline")
+        self.assertIs(window.local_tts_voices, updated)
+        window.controller.project = None
+        window.close()
 
 
 if __name__ == "__main__": unittest.main()

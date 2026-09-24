@@ -278,21 +278,52 @@ class AudioPage(QWidget):
         status = health.get("status", "UNKNOWN")
         self.tts_connection_status.setText(f"{status} — {len(voices)} READY voices")
 
+    def _ordered_voices(self):
+        return [voice for voice in (self._voices or []) if voice.get("status") == "READY"]
+
+    @staticmethod
+    def _voice_label(voice):
+        return voice.get("display_name") or voice["voice_id"]
+
+    @staticmethod
+    def _add_disabled_combo_item(combo, label):
+        item = QStandardItem(label)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        combo.model().appendRow(item)
+
+    def _populate_voice_combo(self, combo, current_voice_id=None, preserve_current=False):
+        voices = self._ordered_voices()
+        available = {voice["voice_id"]: voice for voice in voices}
+        favorites = [voice for voice in voices if voice.get("favorite") is True]
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("— Chọn voice —" if not preserve_current else "— Chưa chọn —", None)
+        self._add_disabled_combo_item(combo, "★ Giọng yêu thích")
+        if favorites:
+            for voice in favorites:
+                combo.addItem(self._voice_label(voice), voice["voice_id"])
+        else:
+            self._add_disabled_combo_item(combo, "Không có giọng yêu thích")
+        self._add_disabled_combo_item(combo, "Tất cả giọng")
+        for voice in voices:
+            combo.addItem(self._voice_label(voice), voice["voice_id"])
+        if preserve_current and current_voice_id and current_voice_id not in available and not voices:
+            prefix = "Missing voice" if self._voices is not None else "Saved voice"
+            combo.addItem(f"{prefix}: {current_voice_id}", current_voice_id)
+        if current_voice_id not in available and voices:
+            current_voice_id = voices[0]["voice_id"]
+        found = combo.findData(current_voice_id)
+        combo.setCurrentIndex(found if found >= 0 else 0)
+        combo.blockSignals(False)
+
     def populate(self, project, voices=None, project_dir=None):
         self._project = project
         self._root = Path(project_dir) if project_dir else None
         if voices is not None:
             self._voices = [v for v in voices if v.get("status") == "READY"]
         ready = {voice["voice_id"]: voice for voice in (self._voices or [])}
-        ordered = sorted(ready.values(), key=lambda item: (item.get("display_name", ""), item["voice_id"]))
         selected_batch = self.batch_voice.currentData()
-        self.batch_voice.blockSignals(True); self.batch_voice.clear()
-        self.batch_voice.addItem("— Chọn voice —", None)
-        for voice in ordered:
-            self.batch_voice.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
-        found_batch = self.batch_voice.findData(selected_batch)
-        if found_batch >= 0: self.batch_voice.setCurrentIndex(found_batch)
-        self.batch_voice.blockSignals(False)
+        self._populate_voice_combo(self.batch_voice, selected_batch)
 
         # Populate TTS mapping table
         self.tts_table.setRowCount(0)
@@ -305,27 +336,8 @@ class AudioPage(QWidget):
             self.tts_table.setItem(row_index, 2, QTableWidgetItem(speaker.get("name", "Unknown")))
 
             combo = QComboBox()
-            combo.addItem("— Chưa chọn —", None)
-            favorites = [voice for voice in ordered if voice.get("favorite") is True]
-            if favorites:
-                header = QStandardItem("★ Giọng yêu thích")
-                header.setFlags(Qt.ItemFlag.NoItemFlags)
-                combo.model().appendRow(header)
-                for voice in favorites:
-                    combo.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
-            header = QStandardItem("Tất cả giọng")
-            header.setFlags(Qt.ItemFlag.NoItemFlags)
-            combo.model().appendRow(header)
-            for voice in ordered:
-                combo.addItem(voice.get("display_name") or voice["voice_id"], voice["voice_id"])
             saved = speaker.get("tts_voice_id")
-            if saved:
-                found = combo.findData(saved)
-                if found < 0:
-                    prefix = "Missing voice" if voices is not None else "Saved voice"
-                    combo.addItem(f"{prefix}: {saved}", saved)
-                    found = combo.count() - 1
-                combo.setCurrentIndex(found)
+            self._populate_voice_combo(combo, saved, preserve_current=True)
             self.tts_table.setCellWidget(row_index, 3, combo)
 
             engine = QLabel()
@@ -339,7 +351,10 @@ class AudioPage(QWidget):
             speed.setKeyboardTracking(False)
             self.tts_table.setCellWidget(row_index, 5, speed)
 
-            status_lbl = QLabel(ready.get(saved, {}).get("status", "READY" if saved in ready else ("MISSING" if saved else "—")))
+            selected_voice = combo.currentData()
+            status_lbl = QLabel(ready.get(selected_voice, {}).get(
+                "status", "READY" if selected_voice in ready else ("MISSING" if selected_voice else "—"),
+            ))
             self.tts_table.setCellWidget(row_index, 6, status_lbl)
 
             def changed(*_, sid=speaker_id, selector=combo, speed_box=speed, engine_label=engine, status_box=status_lbl):

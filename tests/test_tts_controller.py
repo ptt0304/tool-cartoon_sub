@@ -21,7 +21,7 @@ def preview_wav():
 
 
 class FakeClient:
-    def __init__(self, settings):
+    def __init__(self, settings, **kwargs):
         self.settings = settings
 
     def health(self):
@@ -29,6 +29,9 @@ class FakeClient:
 
     def list_ready_voices(self):
         return [{"voice_id": "ready", "display_name": "Ready Voice", "status": "READY", "engine": "vieneu"}]
+
+    def voice_library(self):
+        return {"revision": "rev-ready", "voices": self.list_ready_voices()}
 
     def preview_voice(self, voice_id):
         return preview_wav()
@@ -77,10 +80,32 @@ class LocalTTSControllerTests(unittest.TestCase):
                 result = controller.test_local_tts_connection("https://tunnel.example/")
                 preview = controller.preview_local_tts_voice("ready")
             self.assertEqual(result["health"]["status"], "READY")
+            self.assertEqual(result["revision"], "rev-ready")
             self.assertEqual(result["voices"][0]["voice_id"], "ready")
             self.assertEqual(store.load_local_tts().base_url, "https://tunnel.example")
             self.assertTrue(preview.is_file())
             self.assertEqual(preview.parent, root / "cache" / "tts" / "previews")
+
+    def test_voice_library_poll_uses_short_request_and_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Controller(SettingsStore(folder=Path(directory) / "settings", vault=Mock()))
+            with patch("cartoon_sub.app.controller.LocalTTSClient", wraps=FakeClient) as client_class:
+                result = controller.fetch_local_tts_voice_library(timeout_seconds=2)
+            self.assertEqual(result["revision"], "rev-ready")
+            self.assertEqual(result["all_voice_ids"], ["ready"])
+            self.assertEqual(client_class.call_args.kwargs["request_timeout_seconds"], 2)
+
+    def test_deleted_voice_mapping_falls_back_to_first_api_voice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Controller(SettingsStore(folder=Path(directory) / "settings", vault=Mock()))
+            controller.project = self.project()
+            controller.directory = Path(directory)
+            controller.manager.save(controller.project, directory)
+            changed = controller.fallback_deleted_tts_voice_mappings(
+                [{"voice_id": "ready", "status": "READY"}], ["ready"],
+            )
+            self.assertEqual(changed, ["SPK_01"])
+            self.assertEqual(controller.project.speakers["SPK_01"]["tts_voice_id"], "ready")
 
 
 if __name__ == "__main__":

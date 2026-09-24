@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,
-    QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView)
+    QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView,QGroupBox)
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
@@ -58,6 +58,12 @@ class SubtitlePage(QWidget):
         self.tree.header().sectionResized.connect(lambda *_:self.tree.doItemsLayout())
         layout.addWidget(self.tree,1)
         self.summary = QLabel(); self.summary.setWordWrap(True); layout.addWidget(self.summary)
+        export_group = QGroupBox("EXPORT SUBTITLE")
+        export_layout = QVBoxLayout(export_group)
+        self.export_subtitle_button = QPushButton("Export Subtitle SRT")
+        self.export_subtitle_status = QLabel(); self.export_subtitle_status.setWordWrap(True)
+        export_layout.addWidget(self.export_subtitle_button); export_layout.addWidget(self.export_subtitle_status)
+        layout.addWidget(export_group)
         self.profile.currentIndexChanged.connect(self.load_profile_defaults)
 
     def load_profile_defaults(self):

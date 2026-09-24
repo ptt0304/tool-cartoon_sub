@@ -4,8 +4,8 @@ from .service import refresh_timeline
 
 
 def new_speaker(project, name="Unknown"):
-    number=1
-    while f"SPK_{number:02d}" in project.speakers: number+=1
+    numbers = [int(key[4:]) for key in project.speakers if key.startswith("SPK_") and key[4:].isdigit()]
+    number = max(numbers, default=0) + 1
     key=f"SPK_{number:02d}"
     project.speakers[key]=asdict(Speaker(key,name))
     return key

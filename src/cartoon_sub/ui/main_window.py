@@ -1,6 +1,8 @@
 import json
+import logging
 import re
-from PySide6.QtCore import Qt
+from pathlib import Path
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QUndoStack
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem,
     QProgressBar, QPushButton, QInputDialog, QLabel, QScrollArea, QWidget, QHBoxLayout, QVBoxLayout)
@@ -35,6 +37,12 @@ class MainWindow(QMainWindow):
         self.redo_action.setShortcuts([QKeySequence.StandardKey.Redo, QKeySequence("Ctrl+Shift+Z")])
         self.addAction(self.undo_action);self.addAction(self.redo_action)
         self.local_tts_voices = None
+        self.local_tts_voice_revision = None
+        self.voice_sync_worker = None
+        self.voice_sync_offline = False
+        self.voice_sync_timer = QTimer(self)
+        self.voice_sync_timer.setInterval(3000)
+        self.voice_sync_timer.timeout.connect(self.poll_local_tts_voices)
         self.setWindowTitle("Cartoon Sub — Master Timeline / Speaker & Dubbing")
         screen = self.screen().availableGeometry()
         self.resize(min(1100, screen.width()), min(750, screen.height()))
@@ -80,6 +88,7 @@ class MainWindow(QMainWindow):
         self.pages[1].import_button.clicked.connect(self.import_srt)
         self.pages[1].transcribe_button.clicked.connect(self.transcribe)
         self.pages[1].speaker_button.clicked.connect(self.edit_speakers)
+        self.pages[1].export_transcript_button.clicked.connect(self.export_transcript_srt)
         self.pages[2].translate_button.clicked.connect(self.translate)
         self.pages[2].import_vi_button.clicked.connect(self.import_vi_srt)
         self.pages[2].apply_context_button.clicked.connect(self.apply_translation_context)
@@ -92,6 +101,8 @@ class MainWindow(QMainWindow):
         self.pages[2].revert_optimize_button.clicked.connect(self.revert_dubbing_optimization)
         self.pages[2].apply_edits_button.clicked.connect(self.apply_manual_edits)
         self.pages[2].revert_edits_button.clicked.connect(self.revert_manual_edits)
+        self.pages[2].export_translate_button.clicked.connect(self.export_translate_srt)
+        self.pages[2].export_speakers_button.clicked.connect(self.export_speakers)
         subtitle = self.pages[3]
         subtitle.apply_settings.clicked.connect(self.apply_segmentation_settings)
         subtitle.warning_filter.currentIndexChanged.connect(self.refresh_segmentation_page)
@@ -101,6 +112,7 @@ class MainWindow(QMainWindow):
         subtitle.split_manual.clicked.connect(self.split_display_segment)
         subtitle.merge.clicked.connect(self.merge_display_segments)
         subtitle.reset.clicked.connect(self.reset_segmentation)
+        subtitle.export_subtitle_button.clicked.connect(self.export_subtitle_srt)
         self.pages[4].frame_button.clicked.connect(self.load_mask_frame)
         self.pages[4].preview_button.clicked.connect(lambda:self.render_video(True))
         self.pages[4].render_button.clicked.connect(lambda:self.render_video(False))
@@ -120,10 +132,8 @@ class MainWindow(QMainWindow):
         audio.mix_final_requested.connect(self.mix_final_audio)
 
         export = self.pages[6]
-        export.export_button.clicked.connect(self.export_speakers)
         export.render_requested.connect(self.render_export_video)
         self.refresh()
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(150, lambda: self.auto_start_local_tts() if self.isVisible() else None)
 
     def show_docs(self):
@@ -193,11 +203,17 @@ class MainWindow(QMainWindow):
     def edit_speakers(self):
         try:
             before=self._project_state();self.sync_options()
-            dialog=SpeakerDialog(self.controller.project,self.controller.directory,self)
+            dialog=SpeakerDialog(self.controller.project,self.controller.directory,self,
+                                  reset_callback=self.reset_speaker_review)
             if dialog.exec()==dialog.DialogCode.Accepted:
-                self.controller.project=dialog.project
-                self.controller.save();self._record_project_edit(before,"Edit speakers");self.refresh()
+                self.controller.commit_speaker_review(dialog.speakers,dialog.assignments)
+                self._record_project_edit(before,"Edit speakers");self.refresh()
         except Exception as exc:self.error(exc)
+
+    def reset_speaker_review(self):
+        self.controller.reset_speaker_review()
+        self.refresh()
+        return self.controller.project
 
     def refresh_timeline_table(self):
         if self.controller.project:
@@ -325,10 +341,36 @@ class MainWindow(QMainWindow):
 
     def export_speakers(self):
         try:
+            if get_dirty_rows(self.pages[2].table):
+                raise ValueError("Còn thay đổi chưa được áp dụng. Hãy Áp dụng bản sửa tay trước khi export.")
             self.sync_options();self.controller.save()
-            text_type=self.pages[6].text_type.currentData()
+            text_type=self.pages[2].speaker_text_type.currentData()
             self.start_job(lambda **job:self.controller.export_speaker_files(text_type,**job),
-                           lambda path:self.pages[6].path_label.setText(str(path)))
+                           lambda path:self.pages[2].export_speakers_status.setText("Exported: " + self._relative_project_path(path)))
+        except Exception as exc:self.error(exc)
+
+    def _relative_project_path(self, path):
+        return Path(path).resolve().relative_to(Path(self.controller.directory).resolve()).as_posix()
+
+    def export_transcript_srt(self):
+        try:
+            path = self.controller.export_transcript_srt()
+            self.pages[1].export_transcript_status.setText("Exported: " + self._relative_project_path(path))
+        except Exception as exc:self.error(exc)
+
+    def export_translate_srt(self):
+        try:
+            if get_dirty_rows(self.pages[2].table):
+                raise ValueError("Còn thay đổi chưa được áp dụng. Hãy Áp dụng bản sửa tay trước khi export.")
+            path = self.controller.export_translate_srt()
+            self.pages[2].export_translate_status.setText("Exported: " + self._relative_project_path(path))
+        except Exception as exc:self.error(exc)
+
+    def export_subtitle_srt(self):
+        try:
+            path = self.controller.export_subtitle_srt()
+            self.pages[3].populate(self.controller.project)
+            self.pages[3].export_subtitle_status.setText("Exported: " + self._relative_project_path(path))
         except Exception as exc:self.error(exc)
 
     def test_local_tts_connection(self, url):
@@ -360,11 +402,68 @@ class MainWindow(QMainWindow):
             self.auto_start_local_tts()
 
     def accept_local_tts_connection(self, result):
+        self.local_tts_voice_revision = result.get("revision")
         self.local_tts_voices = result["voices"]
+        self.voice_sync_offline = False
+        self._fallback_deleted_voice_mappings(result)
         page = self.pages[5]
         page.set_connection_result(result["health"], result["voices"])
         if self.controller.project:
             page.populate(self.controller.project, self.local_tts_voices, self.controller.directory)
+
+    def poll_local_tts_voices(self):
+        if self.voice_sync_worker is not None or not self.isVisible():
+            return
+        self.voice_sync_worker = Worker(
+            lambda **job: self.controller.fetch_local_tts_voice_library(
+                timeout_seconds=2.0, **job,
+            ),
+            self,
+            log_errors=False,
+        )
+        self.voice_sync_worker.result.connect(self.accept_voice_library_sync)
+        self.voice_sync_worker.error.connect(self.voice_library_sync_failed)
+        self.voice_sync_worker.finished.connect(self.voice_library_sync_finished)
+        self.voice_sync_worker.start()
+
+    def accept_voice_library_sync(self, result):
+        revision = result["revision"]
+        if self.voice_sync_offline:
+            logging.getLogger(__name__).info("[VOICE SYNC] Local_TTS reconnected")
+        self.voice_sync_offline = False
+        if revision == self.local_tts_voice_revision:
+            return
+        self.local_tts_voice_revision = revision
+        self.local_tts_voices = result["voices"]
+        self._fallback_deleted_voice_mappings(result)
+        page = self.pages[5]
+        page.set_connection_result({"status": "READY"}, self.local_tts_voices)
+        if self.controller.project:
+            page.populate(self.controller.project, self.local_tts_voices, self.controller.directory)
+
+    def _fallback_deleted_voice_mappings(self, result):
+        voices = result.get("voices") or []
+        self.controller.fallback_deleted_tts_voice_mappings(
+            voices, result.get("all_voice_ids") or [voice["voice_id"] for voice in voices],
+        )
+
+    def voice_library_sync_failed(self, message):
+        if not self.voice_sync_offline:
+            logging.getLogger(__name__).warning(
+                "[VOICE SYNC] Local_TTS unavailable, retry in 3s: %s", message,
+            )
+        self.voice_sync_offline = True
+
+    def voice_library_sync_finished(self):
+        if self.voice_sync_worker is not None:
+            self.voice_sync_worker.deleteLater()
+            self.voice_sync_worker = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self.voice_sync_timer.isActive():
+            self.voice_sync_timer.start()
+        QTimer.singleShot(0, self.poll_local_tts_voices)
 
     def update_speaker_tts_voice(self, speaker_id, voice_id, speed):
         try:
@@ -512,9 +611,10 @@ class MainWindow(QMainWindow):
         if self.worker is not None:
             self.statusBar().showMessage("Một tác vụ đang chạy; hãy đợi hoặc bấm Cancel.", 5000)
             return False
-        self.progress.show()
-        self.cancel_button.show()
         self.active_job_tab = self.tabs.currentIndex()
+        if self.active_job_tab != 1:
+            self.progress.show()
+            self.cancel_button.show()
         panel = self.tab_job_panels[self.active_job_tab]
         panel.status_label.setText("Running..."); panel.progress_bar.setRange(0,0)
         panel.cancel_button.setText("Cancel"); panel.cancel_button.setEnabled(True); panel.show()
@@ -527,24 +627,29 @@ class MainWindow(QMainWindow):
         return True
 
     def update_job_progress(self, message):
-        self.statusBar().showMessage(message)
+        if getattr(self, "active_job_tab", -1) != 1:
+            self.statusBar().showMessage(message)
         panel = self.tab_job_panels[getattr(self, "active_job_tab", self.tabs.currentIndex())]
         panel.status_label.setText(message)
         match = re.search(r"(\d+)\s*/\s*(\d+)", message)
         if match and int(match.group(2)) > 0:
-            self.progress.setRange(0, int(match.group(2)))
-            self.progress.setValue(min(int(match.group(1)), int(match.group(2))))
+            if getattr(self, "active_job_tab", -1) != 1:
+                self.progress.setRange(0, int(match.group(2)))
+                self.progress.setValue(min(int(match.group(1)), int(match.group(2))))
             panel.progress_bar.setRange(0, int(match.group(2)))
             panel.progress_bar.setValue(min(int(match.group(1)), int(match.group(2))))
         else:
-            self.progress.setRange(0, 0)
+            if getattr(self, "active_job_tab", -1) != 1:
+                self.progress.setRange(0, 0)
             panel.progress_bar.setRange(0, 0)
 
     def cancel_job(self):
         if self.worker:
-            self.cancel_button.setEnabled(False)
-            self.cancel_button.setText("Cancelling...")
-            self.statusBar().showMessage("Cancelling...")
+            if getattr(self, "active_job_tab", -1) != 1:
+                self.cancel_button.setEnabled(False)
+                self.cancel_button.setText("Cancelling...")
+            if getattr(self, "active_job_tab", -1) != 1:
+                self.statusBar().showMessage("Cancelling...")
             panel = self.tab_job_panels[getattr(self, "active_job_tab", self.tabs.currentIndex())]
             panel.status_label.setText("Cancelling...")
             panel.cancel_button.setText("Cancelling..."); panel.cancel_button.setEnabled(False)
@@ -624,6 +729,10 @@ class MainWindow(QMainWindow):
             self.pages[4].reset_media()
             self.pages[5].reset_media()
             self.pages[6].reset_media()
+            self.pages[1].export_transcript_status.clear()
+            self.pages[2].export_translate_status.clear()
+            self.pages[2].export_speakers_status.clear()
+            self.pages[3].export_subtitle_status.clear()
             self.local_tts_voices = None
             self.undo_stack.clear()
         self.controller.accept(result)
@@ -738,8 +847,9 @@ class MainWindow(QMainWindow):
         table = self.pages[1].table
         table.setRowCount(len(project.segments))
         for row, s in enumerate(project.segments):
+            overlap_status = s.overlap_group or (s.overlap_type if s.overlap_type != "NONE" else "No")
             values = [s.id, f"{s.start:.3f}", f"{s.end:.3f}", f"{s.duration:.3f}",
-                f"{s.speaker_id} · {s.speaker_name}", s.overlap_group or "No", s.zh]
+                f"{s.speaker_id} · {s.speaker_name}", overlap_status, s.zh]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
@@ -762,6 +872,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Đang hủy job; đóng lại sau khi hoàn tất.")
             event.ignore()
         elif self.save_project():
+            self.voice_sync_timer.stop()
+            if self.voice_sync_worker is not None:
+                self.voice_sync_worker.cancel()
+                self.voice_sync_worker.wait()
+                self.voice_sync_worker.deleteLater()
+                self.voice_sync_worker = None
             self.controller.shutdown_local_tts()
             event.accept()
         else:

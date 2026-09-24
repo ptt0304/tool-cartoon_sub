@@ -110,6 +110,22 @@ class TTSTimelineMixService:
         if not project.utterances:
             raise ValueError("Project không có Utterance để mix")
 
+        ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
+        false_overlaps = [(left, right) for left, right in zip(ordered, ordered[1:])
+                          if right.start < left.end
+                          and left.speaker_id == right.speaker_id
+                          and left.speaker_id != "SPK_UNKNOWN"]
+        if false_overlaps:
+            left, right = false_overlaps[0]
+            logging.getLogger(__name__).warning(
+                "FALSE OVERLAP SAFETY: same speaker overlap detected: utt_%s -> utt_%s (%s)",
+                left.id, right.id, left.speaker_id,
+            )
+            raise ValueError(
+                f"FALSE_OVERLAP_SAFETY: Utterance {left.id} và {right.id} cùng speaker "
+                "nhưng timestamp overlap. Hãy xác nhận/reconcile Speaker trước khi Build Dubbed Audio."
+            )
+
         inputs: list[tuple[Path, int, float]] = []
         for utterance in project.utterances:
             check_cancel(cancel)

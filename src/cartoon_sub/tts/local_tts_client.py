@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import wave
 from pathlib import Path
 from urllib.parse import quote
@@ -27,13 +29,20 @@ class LocalTTSClient:
         settings: LocalTTSSettings | None = None,
         *,
         transport: httpx.BaseTransport | None = None,
+        request_timeout_seconds: float | None = None,
     ):
         self.settings = (settings or LocalTTSSettings()).validate()
+        timeout_seconds = (
+            self.settings.timeout_seconds
+            if request_timeout_seconds is None else request_timeout_seconds
+        )
+        if timeout_seconds <= 0:
+            raise ValueError("Local_TTS request timeout must be positive")
         timeout = httpx.Timeout(
-            self.settings.timeout_seconds,
-            connect=min(10, self.settings.timeout_seconds),
-            write=min(30, self.settings.timeout_seconds),
-            pool=min(10, self.settings.timeout_seconds),
+            timeout_seconds,
+            connect=min(2, timeout_seconds),
+            write=min(30, timeout_seconds),
+            pool=min(2, timeout_seconds),
         )
         self._client = httpx.Client(
             base_url=self.settings.base_url,
@@ -82,12 +91,27 @@ class LocalTTSClient:
     def health(self) -> dict:
         return self._json_object(self._request("GET", "/api/health"))
 
-    def list_voices(self) -> list[dict]:
+    def voice_library(self) -> dict:
         payload = self._json_object(self._request("GET", "/api/voices"))
         voices = payload.get("voices")
         if not isinstance(voices, list) or any(not isinstance(item, dict) for item in voices):
             raise LocalTTSError("INVALID_RESPONSE", "Local_TTS voice list is invalid")
-        return voices
+        revision = payload.get("revision")
+        if revision is None:
+            # Transitional compatibility with an older packaged Local_TTS.exe.
+            fields = [{key: voice.get(key) for key in (
+                "voice_id", "display_name", "engine", "status", "favorite",
+            )} for voice in voices]
+            encoded = json.dumps(
+                fields, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            ).encode("utf-8")
+            revision = hashlib.sha256(encoded).hexdigest()
+        if not isinstance(revision, str) or not revision:
+            raise LocalTTSError("INVALID_RESPONSE", "Local_TTS voice revision is invalid")
+        return {"revision": revision, "voices": voices}
+
+    def list_voices(self) -> list[dict]:
+        return self.voice_library()["voices"]
 
     def list_ready_voices(self) -> list[dict]:
         return [voice for voice in self.list_voices() if voice.get("status") == "READY"]

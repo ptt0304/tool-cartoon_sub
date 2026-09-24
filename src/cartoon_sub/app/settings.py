@@ -42,6 +42,7 @@ class AISettings:
     translation_chunk_size: int = 40
     retry_count: int = 2
     translation_provider: str = "gemini"
+    gemini_api_keys_file: str = ""
 
     def validate(self):
         for model in (self.transcription_model, self.translation_model):
@@ -54,6 +55,9 @@ class AISettings:
         from cartoon_sub.ai.text_client import PROVIDERS
         if self.translation_provider not in {"gemini", *PROVIDERS}:
             raise ValueError("Provider dịch không hợp lệ")
+        if not isinstance(self.gemini_api_keys_file, str):
+            raise ValueError("Đường dẫn file Gemini API keys không hợp lệ")
+        self.gemini_api_keys_file = self.gemini_api_keys_file.strip()
         return self
 
 
@@ -99,6 +103,13 @@ class SettingsStore:
         if not key or not key.strip():
             raise ValueError(f"Chưa có {provider} API key. Mở Settings > AI, nhập key và bấm Lưu.")
         return key.strip()
+
+    def get_gemini_keys(self, settings=None):
+        from cartoon_sub.ai.gemini_client import load_gemini_keys
+        settings = settings or self.load()
+        if settings.gemini_api_keys_file:
+            return load_gemini_keys(settings.gemini_api_keys_file)
+        return [self.get_key("gemini")]
 
     def key_status(self, provider="gemini"):
         try:

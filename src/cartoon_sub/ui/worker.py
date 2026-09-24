@@ -8,9 +8,10 @@ class Worker(QThread):
     error = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, operation, parent=None):
+    def __init__(self, operation, parent=None, log_errors=True):
         super().__init__(parent)
         self.operation = operation
+        self.log_errors = log_errors
         self.cancel_event = Event()
 
     def run(self):
@@ -19,7 +20,8 @@ class Worker(QThread):
         except CancelledError:
             self.progress.emit("Job cancelled")
         except Exception as exc:
-            logging.getLogger(__name__).exception("Job failed")
+            if self.log_errors:
+                logging.getLogger(__name__).exception("Job failed")
             self.error.emit(str(exc))
 
     def cancel(self):

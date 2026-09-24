@@ -98,6 +98,8 @@ class Utterance:
     transcript_confidence: float | None = None
     overlap: bool = False
     overlap_group: str | None = None
+    overlap_type: str = "NONE"
+    overlap_diagnostics: list[str] = field(default_factory=list)
     translation_mode: str = "balanced_dubbing"
     target_override: int | None = None
     zh_syllables: int = 0
@@ -169,6 +171,13 @@ class Utterance:
             raise ValueError("TTS metadata must be text")
         if self.tts_generation_status not in TTS_GENERATION_STATUSES:
             raise ValueError("Invalid TTS generation status")
+        if self.overlap_type not in {
+            "NONE", "LEGITIMATE_OVERLAP", "SAME_SPEAKER_CONFLICT",
+            "UNKNOWN_SPEAKER_REVIEW", "TIMING_REVIEW_REQUIRED",
+        }:
+            raise ValueError("Invalid overlap type")
+        if not isinstance(self.overlap_diagnostics, list) or any(not isinstance(item, str) for item in self.overlap_diagnostics):
+            raise ValueError("Overlap diagnostics must be text")
 
     @property
     def vi(self):
@@ -367,6 +376,7 @@ class Project:
 
     speakers: dict = field(default_factory=dict)
     speaker_review_hash: str = ""
+    speaker_review_initial_state: dict = field(default_factory=dict)
     dubbing_settings: dict = field(default_factory=dict)
     segmentation_profile: str = "BALANCED"
     segmentation_settings: dict = field(default_factory=dict)

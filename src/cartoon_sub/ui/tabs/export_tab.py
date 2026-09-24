@@ -3,7 +3,6 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
@@ -23,8 +22,8 @@ class ExportPage(QWidget):
         layout = QVBoxLayout(self)
 
         description = QLabel(
-            "Export video và subtitle từ master timeline. Video render sẽ sử dụng file audio/final_audio.wav "
-            "kết hợp với hình ảnh, mask và phụ đề."
+            "Export video từ project hiện tại. Video render sử dụng file audio/final_audio.wav "
+            "kết hợp với hình ảnh, mask và phụ đề đã đồng bộ."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -73,22 +72,6 @@ class ExportPage(QWidget):
         v_layout.addWidget(self.render_output_label)
 
         layout.addWidget(video_group)
-
-        # ----------------------------------------------------
-        # Subtitle / Text Manifest Export Section
-        # ----------------------------------------------------
-        sub_group = QGroupBox("SUBTITLE & TEXT EXPORT")
-        s_layout = QVBoxLayout(sub_group)
-        self.text_type = QComboBox()
-        self.text_type.addItem("Vietnamese Dubbing", "vi_dubbing")
-        self.text_type.addItem("Vietnamese Subtitle", "vi_subtitle")
-        self.export_button = QPushButton("Export SRT + TXT/manifest theo speaker")
-        self.path_label = QLabel()
-        self.path_label.setWordWrap(True)
-        s_layout.addWidget(self.text_type)
-        s_layout.addWidget(self.export_button)
-        s_layout.addWidget(self.path_label)
-        layout.addWidget(sub_group)
 
         layout.addStretch()
 

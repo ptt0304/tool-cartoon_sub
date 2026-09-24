@@ -14,7 +14,7 @@ from cartoon_sub.project.paths import ProjectPaths
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.subtitle.parser import export_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
-from cartoon_sub.speaker.service import refresh_timeline
+from cartoon_sub.speaker.service import refresh_timeline, reconcile_overlaps, capture_initial_speaker_state
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class TranscriptionPipeline:
         manager = ProjectManager()
         manager.save(project, directory)
         try:
-            transcriber = self.transcriber_factory(self.settings_store.get_key, settings.transcription_model,
+            transcriber = self.transcriber_factory(lambda: self.settings_store.get_gemini_keys(settings), settings.transcription_model,
                                                    directory / "cache" / "transcription", settings.retry_count)
             segments = transcriber.transcribe(audio_path, cancel=cancel, progress=report)
             check_cancel(cancel)
@@ -115,6 +115,8 @@ class TranscriptionPipeline:
             project.speakers={}
             for segment in segments: segment.translation_mode=project.dubbing_settings.get("mode","balanced_dubbing")
         refresh_timeline(project)
+        reconcile_overlaps(project.segments)
+        capture_initial_speaker_state(project, replace=not same_text or not project.speaker_review_initial_state)
         project.transcription_status = "completed" if segments else "no_speech"
         project.selected_models["transcription"] = settings.transcription_model
         project.cache_hashes["transcription"] = content_hash({"source": source_hash,

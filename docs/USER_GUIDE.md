@@ -6,8 +6,8 @@
    trích và các output sinh ra nằm trong folder project.
 2. **Transcript** — Import SRT tiếng Trung hoặc chạy Gemini. Media ngắn dùng
    request cũ; media dài được chia audio chunk, gọi tuần tự và có retry/cache.
-3. **Transcript / Speaker review** — Kiểm tra `SPK_UNKNOWN`, đặt tên, gộp/tách
-   speaker và xác nhận review trước khi dịch/TTS.
+3. **Transcript / Speaker Review** — Kiểm tra `SPK_UNKNOWN`, tạo/đổi tên speaker,
+   gán các dòng đang hiển thị rồi xác nhận trước khi dịch/TTS.
 4. **Translate** — Chọn profile/ngữ cảnh, áp dụng profile rồi dịch. Master
    dialogue timeline là nơi chỉnh Start, End, Speaker, Chinese, VI Subtitle và
    VI Dubbing. Bấm **Áp dụng bản sửa tay** sau khi sửa ô. **Import Vietnamese
@@ -20,6 +20,31 @@
 7. **Audio** — Kết nối Local_TTS, chọn voice/speed cho từng speaker, Generate /
    Resume TTS, Build Dubbed Audio, rồi Build Final Audio.
 8. **Export** — Render test hoặc full export sau khi output cần thiết hợp lệ.
+
+## Export SRT theo từng bước
+
+- **Transcript → Export Transcript SRT** ghi transcript nguồn đã commit hiện tại vào
+  `exports/transcript/transcript_N.srt`.
+- **Translate → Export Translate SRT** ghi `VI Subtitle` mới nhất đã Apply vào
+  `exports/translate/translate_N.srt`; không gọi AI và không copy file import/cache cũ.
+- **Subtitle → Export Subtitle SRT** đồng bộ presentation stale rồi ghi các
+  DisplaySegment hiện tại vào `exports/subtitle/subtitle_N.srt`.
+
+`N` được tính từ các file đang có trên filesystem, tiếp tục đúng sau khi mở lại
+project và không ghi đè bản export trước. Tab **Export** chỉ render/export video.
+
+## Speaker Review
+
+- **Chọn tất cả** chỉ chọn các dòng đang hiển thị theo bộ lọc hiện tại.
+- **Speaker mới** tạo stable ID tiếp theo và vẫn giữ speaker chưa có câu.
+- **Đổi tên** chỉ đổi tên hiển thị, không đổi ID; **Gán dòng cho SPK** gán toàn bộ
+  các dòng đang chọn thành một thao tác có thể Ctrl+Z.
+- Các thay đổi chỉ nằm trong cửa sổ cho tới khi bấm **Xác nhận Speaker và Lưu**.
+  **Hủy** bỏ các thay đổi chưa xác nhận.
+- **Reset** là thao tác riêng có xác nhận, khôi phục registry và assignment speaker
+  về trạng thái ban đầu sau khi transcript được tạo/import; text và timestamp không đổi.
+- Phải xử lý hết `SPK_UNKNOWN` trước khi xác nhận. AI confidence vẫn được giữ để
+  tham khảo, không bị ghi lại khi đổi tên/gán speaker.
 
 ## VI Subtitle và VI Dubbing
 
@@ -47,6 +72,13 @@ Local_TTS chỉ là backend tạo WAV. Cartoon_Sub tải `audio_url`, kiểm tra
 lưu bản sao vào `audio/tts/segments/`; không phụ thuộc thư mục output của server.
 
 - **Preview selected voice** chỉ nghe thử voice, không thay thế WAV timeline.
+- AI Voice từng speaker và dropdown batch cùng hiển thị hai section:
+  **★ Giọng yêu thích** và **Tất cả giọng**, lấy trực tiếp từ Local_TTS.
+- Cartoon_Sub polling mỗi 3 giây: đổi dấu ★, clone hoặc xóa voice bên Local_TTS
+  tự cập nhật mà không restart. Favorite đổi không làm mất selection hiện tại;
+  voice đã bị xóa chuyển sang voice hợp lệ đầu tiên.
+- Khi Local_TTS offline, tool giữ danh sách gần nhất, không hiện popup lặp lại và
+  tự kết nối lại ở lần polling sau.
 - **Generate / Resume TTS** reuse item hợp lệ theo fingerprint.
 - Checkbox speaker và **Apply voice to checked speakers** gán cùng một voice;
   Preview vẫn dùng row đang active.

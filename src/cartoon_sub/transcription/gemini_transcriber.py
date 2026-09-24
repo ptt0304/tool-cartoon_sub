@@ -170,7 +170,7 @@ class GeminiTranscriber:
                             payload = None
                             try:
                                 payload = client.transcribe_json(buffer.getvalue(), PROMPT + f"\nTARGET AUDIO duration: {duration:.6f} seconds. Known IDs: {sorted({s.speaker_id for s in result})}" + correction,
-                                    SCHEMA, self.model, cancel=cancel, references=references)
+                                    SCHEMA, self.model, cancel=cancel, references=references, progress=report)
                                 local = validate_response(payload, duration)
                                 check_cancel(cancel)
                                 response = {"segments": [{k: v for k, v in asdict(s).items() if k != "vi"} for s in local]}
@@ -270,7 +270,7 @@ class GeminiTranscriber:
                           "of the original media. Return timestamps relative to the beginning of this chunk."
                           f"\nTARGET AUDIO duration: {duration:.6f} seconds. Known IDs: {sorted(references)}" + correction)
                 payload = client.transcribe_json(audio_bytes, prompt, SCHEMA, self.model,
-                                                  cancel=cancel, references=references)
+                                                  cancel=cancel, references=references, progress=report)
                 local = validate_response(payload, duration)
                 response = {"segments": [{k: v for k, v in asdict(s).items() if k != "vi"} for s in local]}
                 atomic_json(path, {"status": "completed", "start": chunk_start, "end": chunk_end,

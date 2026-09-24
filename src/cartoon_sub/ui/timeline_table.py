@@ -104,6 +104,14 @@ def populate(table, project, view="both"):
     for row, s in enumerate(project.segments):
         actual = s.vi_subtitle_syllables if view == "subtitle" else s.vi_syllables
         delta = actual - s.target_syllables
+        qc_notes = list(warnings[str(s.id)])
+        overlap_labels = {
+            "SAME_SPEAKER_CONFLICT": "Same-speaker overlap đã reconcile",
+            "UNKNOWN_SPEAKER_REVIEW": "Overlap cần duyệt speaker",
+            "TIMING_REVIEW_REQUIRED": "Overlap cần sửa timing thủ công",
+        }
+        if s.overlap_type in overlap_labels:
+            qc_notes.append(overlap_labels[s.overlap_type])
         values = [
             s.id,
             f"{s.start:.3f}",
@@ -118,7 +126,7 @@ def populate(table, project, view="both"):
             s.target_syllables,
             f"{delta:+d}",
             MODE_LABELS[s.translation_mode],
-            " | ".join(warnings[str(s.id)]) or "Không cảnh báo tự động"
+            " | ".join(dict.fromkeys(qc_notes)) or "Không cảnh báo tự động"
         ]
         for col, value in enumerate(values):
             item = QTableWidgetItem(str(value))

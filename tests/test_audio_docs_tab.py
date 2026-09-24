@@ -19,6 +19,7 @@ class AudioDocsTabTests(unittest.TestCase):
         audio_html = TOPICS[7][1]
         for expected in ('Local_TTS URL', 'Preview selected voice', 'Generate / Resume TTS',
                          'Build Dubbed Audio', 'Original Audio Volume', 'Build Final Audio',
+                         '★ Giọng yêu thích', 'Tất cả giọng', 'Test connection',
                          'audio/tts/dubbed_mix.wav', 'audio/final_audio.wav', 'Troubleshooting'):
             self.assertIn(expected, audio_html)
 

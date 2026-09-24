@@ -22,12 +22,14 @@ from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
 from cartoon_sub.translation.dubbing_service import DubbingService
-from cartoon_sub.speaker.service import refresh_timeline, approve_review, review_complete
+from cartoon_sub.speaker.service import (refresh_timeline, approve_review, review_complete,
+    apply_speaker_review_state, capture_initial_speaker_state, restore_initial_speaker_state)
 from cartoon_sub.speaker import editor_service as speaker_editor
 from cartoon_sub.tts.export_service import export_speakers
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
 from cartoon_sub.subtitle.semantic_segmentation import SemanticSegmentationService
 from cartoon_sub.subtitle.audio_timing import AudioTimingRefiner
+from cartoon_sub.subtitle.export_service import export_current_srt
 from cartoon_sub.tts.process_manager import LocalTTSProcessManager
 
 class Controller:
@@ -86,6 +88,8 @@ class Controller:
         self.project.speakers={}
         self.project.speaker_review_hash=""
         for s in segments: s.translation_mode=self.project.dubbing_settings.get("mode","balanced_dubbing")
+        refresh_timeline(self.project)
+        capture_initial_speaker_state(self.project, replace=True)
         self.project.transcription_status = "imported"
         self.project.translation_status = "not_started"
         self.project.translation_notes = {}
@@ -93,6 +97,16 @@ class Controller:
         self.project.cache_hashes.pop("translation", None)
         self.project.chunk_states.pop("translation", None)
         self.save()
+
+    def commit_speaker_review(self, speakers, assignments):
+        apply_speaker_review_state(self.project, speakers, assignments)
+        self.save()
+        return self.project
+
+    def reset_speaker_review(self):
+        restore_initial_speaker_state(self.project)
+        self.save()
+        return self.project
 
     def import_vietnamese_subtitles(self, path):
         imported_rows = import_srt(path)
@@ -166,7 +180,7 @@ class Controller:
 
     def test_connection(self, settings, entered_key="", **job):
         settings.validate()
-        client = GeminiClient(entered_key.strip() or self.settings_store.get_key())
+        client = GeminiClient(self.settings_store.get_gemini_keys(settings))
         try:
             return client.test_connection(settings.transcription_model, **job)
         finally:
@@ -230,6 +244,16 @@ class Controller:
     def export_speaker_files(self, text_type, **job):
         return export_speakers(self.project,self.directory,text_type,**job)
 
+    def export_transcript_srt(self):
+        return export_current_srt(self.project, self.directory, "transcript")
+
+    def export_translate_srt(self):
+        return export_current_srt(self.project, self.directory, "translate")
+
+    def export_subtitle_srt(self):
+        self.sync_subtitle_presentation()
+        return export_current_srt(self.project, self.directory, "subtitle")
+
     def _local_tts_client(self):
         return LocalTTSClient(self.settings_store.load_local_tts())
 
@@ -243,8 +267,10 @@ class Controller:
         try:
             health = client.health()
             check_cancel(job.get("cancel"))
-            voices = client.list_ready_voices()
-            return {"health": health, "voices": voices}
+            library = client.voice_library()
+            voices = [voice for voice in library["voices"] if voice.get("status") == "READY"]
+            return {"health": health, "revision": library["revision"], "voices": voices,
+                    "all_voice_ids": [voice.get("voice_id") for voice in library["voices"]]}
         finally:
             client.close()
 
@@ -259,10 +285,44 @@ class Controller:
         try:
             health = client.health()
             check_cancel(job.get("cancel"))
-            voices = client.list_ready_voices()
-            return {"health": health, "voices": voices, "launch_status": status}
+            library = client.voice_library()
+            voices = [voice for voice in library["voices"] if voice.get("status") == "READY"]
+            return {"health": health, "revision": library["revision"], "voices": voices,
+                    "all_voice_ids": [voice.get("voice_id") for voice in library["voices"]],
+                    "launch_status": status}
         finally:
             client.close()
+
+    def fetch_local_tts_voice_library(self, timeout_seconds=2.0, **job):
+        check_cancel(job.get("cancel"))
+        client = LocalTTSClient(
+            self.settings_store.load_local_tts(), request_timeout_seconds=timeout_seconds,
+        )
+        try:
+            library = client.voice_library()
+        finally:
+            client.close()
+        check_cancel(job.get("cancel"))
+        return {
+            "revision": library["revision"],
+            "voices": [voice for voice in library["voices"] if voice.get("status") == "READY"],
+            "all_voice_ids": [voice.get("voice_id") for voice in library["voices"]],
+        }
+
+    def fallback_deleted_tts_voice_mappings(self, voices, all_voice_ids):
+        if not self.project or not voices:
+            return []
+        existing = set(all_voice_ids)
+        fallback_id = voices[0]["voice_id"]
+        changed = []
+        for speaker_id, speaker in self.project.speakers.items():
+            saved = speaker.get("tts_voice_id")
+            if saved and saved not in existing:
+                self.update_speaker_tts_voice(
+                    speaker_id, fallback_id, float(speaker.get("tts_speed", 1.0)),
+                )
+                changed.append(speaker_id)
+        return changed
 
     def set_local_tts_executable(self, path: str):
         settings = self.settings_store.load_local_tts()
@@ -580,6 +640,8 @@ class Controller:
 
             if timing_changed or speaker_changed:
                 timing_or_spk_changed = True
+                s.overlap_type = "NONE"
+                s.overlap_diagnostics = []
 
             s.recalculate()
 

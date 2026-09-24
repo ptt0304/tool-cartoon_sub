@@ -3,7 +3,7 @@
 ## Cách sử dụng
 
 1. Đóng bản tool cũ, chạy `.\.venv\Scripts\cartoon-sub.exe` từ thư mục Cartoon_Sub và mở project.
-2. Trong **Transcript**, mở **Speaker review**. Với transcript cũ, các dòng chưa biết người nói là `SPK_UNKNOWN`: tạo speaker, chọn nhiều dòng và gán. Nghe lại khi cần; đổi tên, tách hoặc gộp speaker rồi **Xác nhận speaker và lưu**. Speaker là giọng nói; tên nhân vật trong hồ sơ truyện được quản lý riêng.
+2. Trong **Transcript**, mở **Speaker Review**. Với transcript cũ, các dòng chưa biết người nói là `SPK_UNKNOWN`: tạo speaker, lọc/chọn các dòng đang hiển thị rồi **Gán dòng cho SPK**. Đổi tên chỉ đổi tên hiển thị và giữ stable ID. Các chỉnh sửa chỉ commit khi bấm **Xác nhận Speaker và Lưu**; **Hủy** bỏ thay đổi chưa xác nhận. **Reset** có xác nhận riêng và khôi phục đúng speaker registry/assignment ban đầu sau transcript, không đổi text hoặc timestamp. Speaker là giọng nói; tên nhân vật trong hồ sơ truyện được quản lý riêng.
 3. Trong **Translate → Ngữ cảnh & văn phong**, giữ hoặc chỉnh các thể loại, văn phong, glossary và hồ sơ truyện như trước. Phân tích ngữ cảnh hoặc tự áp dụng hồ sơ, rồi dịch bản subtitle. Không bắt buộc gọi phân tích AI nếu đã có hồ sơ phù hợp.
 4. Trong **Settings → Translation / Dubbing**, mặc định `balanced_dubbing`, target theo thời lượng, 3.5 âm tiết/giây, giữ riêng hai bản Việt. Cài đặt lưu làm mặc định cho project mới và áp dụng vào các câu project hiện tại qua giao diện.
 5. Trong **Translate → Master dialogue timeline**, chọn dòng, sửa nội dung/mode/target hoặc bấm **Optimize selected for dubbing**. Có thể chọn nhiều dòng bằng Ctrl/Shift. Cuộn ngang để xem Target, Δ, Mode và QC. Chế độ Both/Subtitle/Dubbing thay đổi cột hiển thị.
