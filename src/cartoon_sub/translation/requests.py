@@ -34,7 +34,9 @@ class CachedRequests:
             except (ValueError, TypeError, KeyError, AttributeError, GeminiError):
                 pass
         if self.client is None:
-            self.client = self.factory(self.store.get_key(self.provider))
+            credential = (self.store.get_gemini_keys() if self.provider == "gemini" and self.factory is GeminiClient
+                          else self.store.get_key(self.provider))
+            self.client = self.factory(credential)
         correction = ""
         for attempt in range(self.retries + 1):
             check_cancel(self.cancel)

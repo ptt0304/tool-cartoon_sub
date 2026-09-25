@@ -22,7 +22,7 @@ from cartoon_sub.ui.timeline_table import create_table
 from cartoon_sub.ui.docs_dialog import DocsWindow, TOPICS
 from cartoon_sub.ui.main_window import MainWindow
 from cartoon_sub.ui.settings_dialog import SettingsDialog
-from cartoon_sub.ai.text_client import PROVIDERS, MODEL_PRESETS
+from cartoon_sub.ai.text_client import PROVIDERS, MODEL_PRESETS, PROVIDER_CATALOG
 
 
 class Phase5Tests(unittest.TestCase):
@@ -188,18 +188,21 @@ class Phase5Tests(unittest.TestCase):
 
     def test_text_provider_registry_has_ten_supported_choices(self):
         from cartoon_sub.app.settings import AISettings
-        self.assertEqual(len(PROVIDERS) + 1,10)
+        self.assertEqual(len(PROVIDER_CATALOG),10)
         for provider in ("gemini",*PROVIDERS):
             self.assertEqual(AISettings(translation_provider=provider).validate().translation_provider,provider)
             self.assertTrue(MODEL_PRESETS[provider])
 
     def test_settings_switches_translation_model_presets_by_provider(self):
-        window=MainWindow();dialog=SettingsDialog(window.controller)
-        dialog.provider.setCurrentIndex(dialog.provider.findData("deepseek"))
-        self.assertEqual(dialog.translation_model.currentText(),"deepseek-chat")
-        dialog.provider.setCurrentIndex(dialog.provider.findData("anthropic"))
-        self.assertIn(dialog.translation_model.currentText(),MODEL_PRESETS["anthropic"])
-        dialog.close();window.close()
+        with tempfile.TemporaryDirectory() as directory:
+            key_file=Path(directory)/"api_key.txt"
+            key_file.write_text("gemini_key: TEST\ndeepseek_key: TEST\nclaude_key: TEST\n",encoding="utf-8")
+            window=MainWindow();dialog=SettingsDialog(window.controller);dialog.key_file.setText(str(key_file))
+            dialog.provider.setCurrentIndex(dialog.provider.findData("deepseek"))
+            self.assertEqual(dialog.translation_model.currentText(),"deepseek-v4-pro")
+            dialog.provider.setCurrentIndex(dialog.provider.findData("anthropic"))
+            self.assertIn(dialog.translation_model.currentText(),MODEL_PRESETS["anthropic"])
+            dialog.close();window.close()
 
     def test_invalid_mask_rejected(self):
         p=self.project();p.mask=Mask(True,'gaussian',300,150,40,40)

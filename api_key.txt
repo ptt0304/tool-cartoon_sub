@@ -1,0 +1,10 @@
+gemini_key: AQ.Ab8RN6JRqA0ksz3QT39wgX7hJLo_7r6fVCE7n5grjnftm8DPBQ
+openai_key: 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
+claude_key: YOUR_ANTHROPIC_CLAUDE_API_KEY
+openrouter_key: YOUR_OPENROUTER_API_KEY
+deepseek_key: sk-cff283f8d57a4e98ba493a35e4ee3159
+groq_key: YOUR_GROQ_API_KEY
+mistral_key: YOUR_MISTRAL_API_KEY
+together_key: YOUR_TOGETHER_API_KEY
+fireworks_key: YOUR_FIREWORKS_API_KEY
+xai_key: YOUR_XAI_GROK_API_KEY

@@ -44,10 +44,8 @@ def safe_error(exc):
     if code in (401, 403):
         return GeminiError(f"Gemini HTTP {code}: key không hợp lệ hoặc không có quyền API.", rotate_key=True)
     if code == 404:
-        return GeminiError("Gemini HTTP 404: model không có sẵn cho request này. Nếu đang dùng gemini-2.5-flash, "
-                           "Google có thể hạn chế model này với project mới. Mở Settings > AI, chọn "
-                           "gemini-3.5-flash rồi Save và thử lại. Không cần tạo lại project video. "
-                           "Nếu dùng model khác, kiểm tra tên model và quyền truy cập.")
+        return GeminiError("Gemini HTTP 404: model không có sẵn cho request này. Mở Settings > AI, "
+                           "chọn một model hiện hành rồi Save và thử lại; đồng thời kiểm tra quyền truy cập.")
     if code == 429:
         detail = str(exc).lower()
         exhausted = "daily quota" in detail or "quota exhausted" in detail
@@ -92,7 +90,7 @@ class GeminiClient:
         self._key_index = index
 
     def _request(self, operation, cancel=None, progress=None):
-        if not self.key_pool_enabled:
+        if not getattr(self, "key_pool_enabled", False):
             try:
                 return operation()
             except Exception as exc:
@@ -132,8 +130,6 @@ class GeminiClient:
             raise GeminiError("Model này không hỗ trợ generateContent. Chọn model nhận audio và trả structured JSON.")
         message = ("Đọc metadata model thành công. Chưa kiểm tra quyền generateContent, quota inference "
                    "hay chất lượng transcription.")
-        if model.removeprefix("models/").startswith("gemini-2.5-"):
-            message += " Model 2.5 có thể trả 404 với project mới; nên chọn gemini-3.5-flash rồi Save."
         if self.key_pool_enabled:
             message += f" PASS using key {self._key_index + 1}/{len(self._api_keys)}."
         return message

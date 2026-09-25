@@ -12,6 +12,7 @@ from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError, safe_error
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project, Segment
+from cartoon_sub.subtitle.parser import import_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, validate_response
 from cartoon_sub.transcription.pipeline import TranscriptionPipeline
 
@@ -31,6 +32,21 @@ def response(text="你好"):
 
 
 class Phase2Tests(unittest.TestCase):
+    def test_stable_pipeline_splits_77_second_audio_at_60_seconds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audio-77s.wav"
+            audio_file(path, 77)
+            client = Mock()
+            client.transcribe_json.side_effect = [
+                {"segments": [{"start": 1.0, "end": 59.5, "zh": "稳"}]},
+                {"segments": [{"start": 1.0, "end": 16.5, "zh": "定"}]},
+            ]
+            transcriber = GeminiTranscriber(lambda: "key", "model", Path(directory) / "cache", 0,
+                                             lambda _: client)
+            output = transcriber.transcribe(path)
+            self.assertEqual(client.transcribe_json.call_count, 2)
+            self.assertEqual([(row.start, row.end) for row in output], [(1.0, 59.5), (61.0, 76.5)])
+
     def test_transcript_normalizes_labels_explicit_time_formats_and_extra_fields(self):
         payload = {"segments": [
             {"id": 0, "start": "00:01.250", "end": "2.5", "zh": "你好", "vi": ""},
@@ -68,20 +84,20 @@ class Phase2Tests(unittest.TestCase):
     def test_404_guidance_and_legacy_metadata_does_not_claim_inference_access(self):
         from types import SimpleNamespace
         error = safe_error(SimpleNamespace(code=404))
-        self.assertIn("gemini-3.5-flash", str(error))
+        self.assertIn("Settings > AI", str(error))
         self.assertFalse(error.retryable)
         sdk = Mock()
         sdk.models.get.return_value = SimpleNamespace(supported_actions=["generateContent"])
         with patch("google.genai.Client", return_value=sdk):
             gateway = GeminiClient("fake-key")
             message = gateway.test_connection("models/gemini-2.5-flash")
-            self.assertIn("404", message)
-            self.assertIn("generateContent", message)
+            self.assertIn("metadata model thành công", message)
+            self.assertIn("Chưa kiểm tra quyền generateContent", message)
             sdk.models.generate_content.assert_not_called()
             gateway.close()
 
     def test_new_default_preserves_existing_selected_model(self):
-        self.assertEqual(AISettings().transcription_model, "gemini-3.5-flash")
+        self.assertEqual(AISettings().transcription_model, "gemini-3.8-flash")
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(directory, Mock())
             store.save(AISettings(transcription_model="gemini-2.5-flash"))
@@ -199,6 +215,7 @@ class Phase2Tests(unittest.TestCase):
             self.assertEqual(updated.transcription_status, "completed")
             self.assertTrue((root / "subtitle" / "zh.srt").exists())
             self.assertIn("你好", (root / "subtitle" / "zh.srt").read_text(encoding="utf-8"))
+            self.assertEqual(import_srt(root / "subtitle" / "zh.srt")[0].zh, "你好")
             updated.subtitle_style.font_size = 60
             pipeline.run(updated, root)
             self.assertEqual(media.extract_audio.call_count, 1)

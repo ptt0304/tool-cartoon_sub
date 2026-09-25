@@ -78,7 +78,9 @@ class AudioTimingRefiner:
                 if data.get("status") == "completed": return validate_timing(data["response"], utterance)
             except (ValueError, KeyError, GeminiError): pass
         check_cancel(cancel)
-        client = self.factory(self.store.get_key())
+        if settings.transcription_provider != "gemini":
+            raise ValueError(f"Provider {settings.transcription_provider} không hỗ trợ căn timing audio.")
+        client = self.factory(self.store.get_gemini_keys(settings))
         try:
             if progress: progress(f"Căn audio Utterance {utterance.id} bằng Gemini…")
             prompt = TIMING_PROMPT + "\n" + json.dumps({"clip_duration": utterance.duration,

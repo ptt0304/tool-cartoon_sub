@@ -14,9 +14,31 @@ from cartoon_sub.project.paths import ProjectPaths
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.subtitle.parser import export_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
+from cartoon_sub.ai.gemini_client import GeminiClient
+from cartoon_sub.ai.openai_transcription_client import OpenAITranscriptionClient
 from cartoon_sub.speaker.service import refresh_timeline, reconcile_overlaps, capture_initial_speaker_state
 
 log = logging.getLogger(__name__)
+
+
+TRANSCRIPTION_CLIENTS = {"gemini": GeminiClient, "openai": OpenAITranscriptionClient}
+
+
+def resolve_transcription_client(settings, settings_store):
+    from cartoon_sub.ai.text_client import model_metadata
+    provider = settings.transcription_provider
+    metadata = model_metadata(provider, settings.transcription_model)
+    if not metadata or not metadata["capabilities"]["transcription"]:
+        raise ValueError("Model đã chọn không có capability audio transcription.")
+    client_factory = TRANSCRIPTION_CLIENTS.get(provider)
+    if client_factory is None:
+        raise ValueError("Provider/model này chưa được Cartoon_Sub hỗ trợ audio transcription.")
+    if provider == "gemini":
+        key_provider = lambda: settings_store.get_gemini_keys(settings)
+    else:
+        key_provider = lambda: (settings_store.get_api_key(provider, settings) if settings.api_key_file
+                                else settings_store.get_key(provider))
+    return provider, key_provider, client_factory
 
 
 def save_subtitle_artifacts(project, directory):
@@ -39,7 +61,7 @@ class TranscriptionPipeline:
 
     def run(self, project, directory, *, cancel=None, progress=None):
         if project.transcription_status == "imported":
-            raise ValueError("Project đã import SRT: không gọi Gemini transcription.")
+            raise ValueError("Project đã import SRT: không gọi AI transcription.")
         project = Project.from_dict(project.to_dict())
         # Re-probe here so projects created by older versions remain safe.
         # This happens before extraction and before constructing the transcriber.
@@ -47,6 +69,7 @@ class TranscriptionPipeline:
         paths = ProjectPaths(directory).ensure()
         directory = paths.root
         settings = self.settings_store.load()
+        provider, key_provider, client_factory = resolve_transcription_client(settings, self.settings_store)
         report = progress or (lambda text: None)
         report("Kiểm tra hash video và audio cache…")
         source_hash = file_hash(project.source_video_path, cancel)
@@ -86,8 +109,9 @@ class TranscriptionPipeline:
         manager = ProjectManager()
         manager.save(project, directory)
         try:
-            transcriber = self.transcriber_factory(lambda: self.settings_store.get_gemini_keys(settings), settings.transcription_model,
-                                                   directory / "cache" / "transcription", settings.retry_count)
+            transcriber = self.transcriber_factory(key_provider, settings.transcription_model,
+                                                   directory / "cache" / "transcription", settings.retry_count,
+                                                   client_factory)
             segments = transcriber.transcribe(audio_path, cancel=cancel, progress=report)
             check_cancel(cancel)
         except Exception as exc:
@@ -119,8 +143,9 @@ class TranscriptionPipeline:
         capture_initial_speaker_state(project, replace=not same_text or not project.speaker_review_initial_state)
         project.transcription_status = "completed" if segments else "no_speech"
         project.selected_models["transcription"] = settings.transcription_model
+        project.selected_models["transcription_provider"] = provider
         project.cache_hashes["transcription"] = content_hash({"source": source_hash,
-            "model": settings.transcription_model, "version": PROMPT_VERSION})
+            "provider": provider, "model": settings.transcription_model, "version": PROMPT_VERSION})
         manager.save(project, directory)
         save_subtitle_artifacts(project, directory)
         if project.translation_status != "not_started":

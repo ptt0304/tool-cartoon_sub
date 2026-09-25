@@ -15,7 +15,7 @@ from cartoon_sub.tts.local_tts_client import LocalTTSClient
 from cartoon_sub.tts.mix_service import TTSTimelineMixService
 from cartoon_sub.transcription.pipeline import TranscriptionPipeline, save_subtitle_artifacts
 from cartoon_sub.ai.gemini_client import GeminiClient
-from cartoon_sub.ai.text_client import TextProviderClient
+from cartoon_sub.ai.text_client import ProviderModelClient, TextProviderClient
 from cartoon_sub.translation.context_service import ContextService, source_fingerprint
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
 from cartoon_sub.translation.context_models import StoryContext
@@ -180,7 +180,11 @@ class Controller:
 
     def test_connection(self, settings, entered_key="", **job):
         settings.validate()
-        client = GeminiClient(self.settings_store.get_gemini_keys(settings))
+        provider = settings.transcription_provider
+        key = (self.settings_store.get_api_key(provider, settings) if settings.api_key_file
+               else self.settings_store.get_key(provider))
+        client = (GeminiClient(self.settings_store.get_gemini_keys(settings)) if provider == "gemini"
+                  else ProviderModelClient(provider, key))
         try:
             return client.test_connection(settings.transcription_model, **job)
         finally:
@@ -189,9 +193,11 @@ class Controller:
     def test_translation_connection(self, settings, entered_key="", **job):
         settings.validate()
         if settings.translation_provider == "gemini":
-            client = GeminiClient(entered_key.strip() or self.settings_store.get_key("gemini"))
+            client = GeminiClient(self.settings_store.get_gemini_keys(settings))
         else:
-            client = TextProviderClient(settings.translation_provider, entered_key.strip() or self.settings_store.get_key(settings.translation_provider))
+            key = (self.settings_store.get_api_key(settings.translation_provider, settings) if settings.api_key_file
+                   else self.settings_store.get_key(settings.translation_provider))
+            client = TextProviderClient(settings.translation_provider, key)
         try:
             return client.test_connection(settings.translation_model, **job)
         finally:

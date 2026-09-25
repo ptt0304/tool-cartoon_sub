@@ -1,7 +1,7 @@
 """Global AI preferences. Secrets are only stored in the OS credential vault."""
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import keyring
 from dotenv import dotenv_values
@@ -37,12 +37,15 @@ class LocalTTSSettings:
 
 @dataclass
 class AISettings:
-    transcription_model: str = "gemini-3.5-flash"
-    translation_model: str = "gemini-3.5-flash"
+    transcription_model: str = "gemini-3.8-flash"
+    translation_model: str = "gemini-3.8-flash"
     translation_chunk_size: int = 40
     retry_count: int = 2
     translation_provider: str = "gemini"
     gemini_api_keys_file: str = ""
+    api_key_file: str = ""
+    provider_filter: str = "all"
+    transcription_provider: str = "gemini"
 
     def validate(self):
         for model in (self.transcription_model, self.translation_model):
@@ -52,13 +55,43 @@ class AISettings:
             raise ValueError("Translation chunk size phải từ 30 đến 50")
         if type(self.retry_count) is not int or not 0 <= self.retry_count <= 5:
             raise ValueError("Retry count phải từ 0 đến 5")
-        from cartoon_sub.ai.text_client import PROVIDERS
-        if self.translation_provider not in {"gemini", *PROVIDERS}:
+        from cartoon_sub.ai.text_client import PROVIDER_CATALOG
+        if self.translation_provider not in PROVIDER_CATALOG:
             raise ValueError("Provider dịch không hợp lệ")
+        if self.transcription_provider not in PROVIDER_CATALOG:
+            raise ValueError("Provider transcription không hợp lệ")
+        if self.provider_filter not in {"all", *PROVIDER_CATALOG}:
+            raise ValueError("Bộ lọc provider không hợp lệ")
         if not isinstance(self.gemini_api_keys_file, str):
             raise ValueError("Đường dẫn file Gemini API keys không hợp lệ")
+        if not isinstance(self.api_key_file, str):
+            raise ValueError("Đường dẫn file API keys không hợp lệ")
         self.gemini_api_keys_file = self.gemini_api_keys_file.strip()
+        self.api_key_file = self.api_key_file.strip()
         return self
+
+
+def load_api_keys(path):
+    from cartoon_sub.ai.text_client import PROVIDER_CATALOG
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError("Không tìm thấy file API key.")
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeError):
+        raise ValueError("Không đọc được file API key.") from None
+    by_name = {item["key_name"]: provider for provider, item in PROVIDER_CATALOG.items()}
+    result = {}
+    disabled = {"", "null", "none", '""', "''"}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        name, value = (part.strip() for part in line.split(":", 1))
+        provider = by_name.get(name.casefold())
+        if provider:
+            result[provider] = None if value.casefold() in disabled else value
+    return result
 
 
 class SettingsStore:
@@ -75,7 +108,19 @@ class SettingsStore:
         if not path.exists():
             return AISettings()
         try:
-            return AISettings(**json.loads(path.read_text(encoding="utf-8"))).validate()
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if "gemini_keys_file" in data and "gemini_api_keys_file" not in data:
+                data["gemini_api_keys_file"] = data["gemini_keys_file"]
+            allowed = {item.name for item in fields(AISettings)}
+            settings = AISettings(**{key: value for key, value in data.items() if key in allowed}).validate()
+            from cartoon_sub.ai.text_client import provider_models
+            transcription = provider_models(settings.transcription_provider, "transcription")
+            translation = provider_models(settings.translation_provider, "text")
+            if transcription and settings.transcription_model not in transcription:
+                settings.transcription_model = transcription[0]
+            if translation and settings.translation_model not in translation:
+                settings.translation_model = translation[0]
+            return settings
         except (ValueError, TypeError) as exc:
             raise ValueError("settings.json không hợp lệ; sửa hoặc đổi tên file rồi mở lại Settings") from exc
 
@@ -94,6 +139,9 @@ class SettingsStore:
         atomic_json(self.folder / "settings.json", asdict(settings))
 
     def get_key(self, provider="gemini"):
+        settings = self.load()
+        if settings.api_key_file:
+            return self.get_api_key(provider, settings)
         try:
             key = self.vault.get_password(self.service if provider == "gemini" else f"CartoonSub.{provider}", self.account)
         except Exception:
@@ -101,15 +149,31 @@ class SettingsStore:
         env_name = f"{provider.upper()}_API_KEY" if provider != "gemini" else "GEMINI_API_KEY"
         key = key or os.environ.get(env_name) or dotenv_values(self.env_path).get(env_name)
         if not key or not key.strip():
-            raise ValueError(f"Chưa có {provider} API key. Mở Settings > AI, nhập key và bấm Lưu.")
+            raise ValueError(f"Chưa có {provider} API key trong File API keys.")
         return key.strip()
+
+    def get_api_key(self, provider, settings=None):
+        settings = settings or self.load()
+        keys = load_api_keys(settings.api_key_file)
+        key = keys.get(provider)
+        if not key:
+            raise ValueError(f"Provider {provider} chưa được cấu hình trong File API keys.")
+        return key
 
     def get_gemini_keys(self, settings=None):
         from cartoon_sub.ai.gemini_client import load_gemini_keys
         settings = settings or self.load()
+        if settings.api_key_file:
+            return [self.get_api_key("gemini", settings)]
         if settings.gemini_api_keys_file:
             return load_gemini_keys(settings.gemini_api_keys_file)
         return [self.get_key("gemini")]
+
+    def available_api_providers(self, settings=None):
+        settings = settings or self.load()
+        if not settings.api_key_file:
+            return []
+        return [provider for provider, key in load_api_keys(settings.api_key_file).items() if key]
 
     def key_status(self, provider="gemini"):
         try:
