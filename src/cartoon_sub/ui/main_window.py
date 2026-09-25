@@ -75,16 +75,8 @@ class MainWindow(QMainWindow):
         self.docs_button = QPushButton("Docs")
         self.docs_button.clicked.connect(self.show_docs)
         self.menuBar().setCornerWidget(self.docs_button, Qt.Corner.TopRightCorner)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.hide()
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.hide()
-        self.cancel_button.clicked.connect(self.cancel_job)
         self.copyright_label = QLabel("© PHẠM THANH TÙNG - 0866891380")
         self.statusBar().addPermanentWidget(self.copyright_label)
-        self.statusBar().addPermanentWidget(self.progress)
-        self.statusBar().addPermanentWidget(self.cancel_button)
         self.pages[0].open_button.clicked.connect(self.open_video)
         self.pages[1].import_button.clicked.connect(self.import_srt)
         self.pages[1].transcribe_button.clicked.connect(self.transcribe)
@@ -613,9 +605,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Một tác vụ đang chạy; hãy đợi hoặc bấm Cancel.", 5000)
             return False
         self.active_job_tab = self.tabs.currentIndex()
-        if self.active_job_tab != 1:
-            self.progress.show()
-            self.cancel_button.show()
         panel = self.tab_job_panels[self.active_job_tab]
         panel.status_label.setText("Running..."); panel.progress_bar.setRange(0,0)
         panel.cancel_button.setText("Cancel"); panel.cancel_button.setEnabled(True); panel.show()
@@ -628,29 +617,17 @@ class MainWindow(QMainWindow):
         return True
 
     def update_job_progress(self, message):
-        if getattr(self, "active_job_tab", -1) != 1:
-            self.statusBar().showMessage(message)
         panel = self.tab_job_panels[getattr(self, "active_job_tab", self.tabs.currentIndex())]
         panel.status_label.setText(message)
         match = re.search(r"(\d+)\s*/\s*(\d+)", message)
         if match and int(match.group(2)) > 0:
-            if getattr(self, "active_job_tab", -1) != 1:
-                self.progress.setRange(0, int(match.group(2)))
-                self.progress.setValue(min(int(match.group(1)), int(match.group(2))))
             panel.progress_bar.setRange(0, int(match.group(2)))
             panel.progress_bar.setValue(min(int(match.group(1)), int(match.group(2))))
         else:
-            if getattr(self, "active_job_tab", -1) != 1:
-                self.progress.setRange(0, 0)
             panel.progress_bar.setRange(0, 0)
 
     def cancel_job(self):
         if self.worker:
-            if getattr(self, "active_job_tab", -1) != 1:
-                self.cancel_button.setEnabled(False)
-                self.cancel_button.setText("Cancelling...")
-            if getattr(self, "active_job_tab", -1) != 1:
-                self.statusBar().showMessage("Cancelling...")
             panel = self.tab_job_panels[getattr(self, "active_job_tab", self.tabs.currentIndex())]
             panel.status_label.setText("Cancelling...")
             panel.cancel_button.setText("Cancelling..."); panel.cancel_button.setEnabled(False)
@@ -663,10 +640,6 @@ class MainWindow(QMainWindow):
                 self.refresh()
             except (OSError, ValueError, TypeError):
                 pass
-        self.progress.hide()
-        self.cancel_button.hide()
-        self.cancel_button.setEnabled(True)
-        self.cancel_button.setText("Cancel")
         self.tab_job_panels[getattr(self, "active_job_tab", self.tabs.currentIndex())].hide()
         self.worker.deleteLater()
         self.worker = None

@@ -1,9 +1,13 @@
 """Narrow, text-preserving Gemini fallback for unresolved subtitle boundaries."""
 import json
+import logging
 
 from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
 from cartoon_sub.ai.text_client import text_client_factory
-from cartoon_sub.subtitle.segmentation import normalize_text
+from cartoon_sub.subtitle.segmentation import restore_exact_parts
+
+
+log = logging.getLogger(__name__)
 
 
 SEMANTIC_SEGMENTATION_SCHEMA = {
@@ -34,9 +38,10 @@ def validate_parts(payload, original_text, max_segments):
     parts = payload["parts"]
     if not 2 <= len(parts) <= max_segments or any(not isinstance(part, str) or not part.strip() for part in parts):
         raise SemanticSegmentationValidationError("Gemini semantic split có số phần hoặc nội dung không hợp lệ")
-    if normalize_text("".join(parts)) != normalize_text(original_text):
-        raise SemanticSegmentationValidationError("Gemini semantic split đã thay đổi văn bản nguồn")
-    return tuple(parts)
+    try:
+        return restore_exact_parts(parts, original_text)
+    except ValueError as exc:
+        raise SemanticSegmentationValidationError(f"Gemini semantic split đã thay đổi văn bản nguồn: {exc}") from None
 
 
 class SemanticSegmentationService:
@@ -62,6 +67,13 @@ class SemanticSegmentationService:
                 "max_syllables": max_syllables, "max_segments": max_segments}, ensure_ascii=False)
             payload = client.generate_json(SEMANTIC_SEGMENTATION_RULES, prompt,
                 SEMANTIC_SEGMENTATION_SCHEMA, settings.translation_model, cancel=cancel)
-            return validate_parts(payload, text, max_segments)
+            log.info("[TIMING] semantic raw_response=%r", payload)
+            try:
+                parts = validate_parts(payload, text, max_segments)
+            except SemanticSegmentationValidationError as exc:
+                log.warning("[TIMING] semantic rejected=%s", exc)
+                raise
+            log.info("[TIMING] semantic accepted=%r", parts)
+            return parts
         finally:
             client.close()

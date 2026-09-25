@@ -27,6 +27,10 @@ class SemanticSegmentationTests(unittest.TestCase):
             with self.subTest(parts=parts), self.assertRaises(SemanticSegmentationValidationError):
                 validate_parts({"parts": list(parts)}, TEXT, 3)
 
+    def test_validation_restores_boundary_spaces_trimmed_by_structured_output(self):
+        trimmed = [part.strip() for part in PARTS]
+        self.assertEqual(validate_parts({"parts": trimmed}, TEXT, 3), PARTS)
+
     def test_local_success_never_calls_gemini(self):
         client_factory = Mock()
         semantic = SemanticSegmentationService(store(), client_factory)

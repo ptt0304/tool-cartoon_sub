@@ -104,6 +104,31 @@ def normalize_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def restore_exact_parts(parts, source_text):
+    """Restore boundary whitespace trimmed by structured-output string fields.
+
+    Every non-whitespace character must still match the source consecutively;
+    this does not permit rewriting, reordering, or punctuation changes.
+    """
+    restored = []
+    cursor = 0
+    for part in parts:
+        token = part.strip()
+        content_start = cursor
+        while content_start < len(source_text) and source_text[content_start].isspace():
+            content_start += 1
+        if not token or not source_text.startswith(token, content_start):
+            raise ValueError("parts không còn là các substring liên tiếp của văn bản nguồn")
+        end = content_start + len(token)
+        while end < len(source_text) and source_text[end].isspace():
+            end += 1
+        restored.append(source_text[cursor:end])
+        cursor = end
+    if cursor != len(source_text):
+        raise ValueError("parts không phủ hết văn bản nguồn")
+    return tuple(restored)
+
+
 def protected_spans(text):
     spans = []
     for pattern in PROTECTED_PATTERNS:

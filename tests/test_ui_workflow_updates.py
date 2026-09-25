@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QScrollArea, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QProgressBar, QScrollArea, QSpinBox, QVBoxLayout, QWidget
 
 from cartoon_sub.app.controller import Controller
 from cartoon_sub.app.settings import AISettings
@@ -75,6 +75,7 @@ class UIWorkflowUpdateTests(unittest.TestCase):
     def test_tab_progress_is_determinate_and_cancel_feedback_is_immediate(self):
         window = MainWindow(); window.active_job_tab = 2
         panel = window.tab_job_panels[2]; panel.show()
+        self.assertEqual(window.statusBar().findChildren(QProgressBar), [])
         window.update_job_progress("Dịch nhóm 4/10")
         self.assertEqual((panel.progress_bar.value(), panel.progress_bar.maximum()), (4,10))
         fake = Mock(); window.worker = fake; window.cancel_job()
@@ -86,13 +87,11 @@ class UIWorkflowUpdateTests(unittest.TestCase):
     def test_transcript_updates_only_its_single_progress_row(self):
         window = MainWindow(); window.active_job_tab = 1
         panel = window.tab_job_panels[1]; panel.show()
-        window.progress.hide(); window.cancel_button.hide()
         window.update_job_progress("Transcribing chunk 3/10")
         self.assertEqual((panel.progress_bar.value(), panel.progress_bar.maximum()), (3,10))
         self.assertNotEqual(window.statusBar().currentMessage(), "Transcribing chunk 3/10")
         self.assertFalse(panel.isHidden())
-        self.assertFalse(window.progress.isVisible())
-        self.assertFalse(window.cancel_button.isVisible())
+        self.assertEqual(window.statusBar().findChildren(QProgressBar), [])
         fake = Mock(); window.worker = fake; window.cancel_job()
         fake.cancel.assert_called_once_with()
         self.assertFalse(panel.cancel_button.isEnabled())

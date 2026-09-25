@@ -53,6 +53,24 @@ class AudioTimingTests(unittest.TestCase):
             validate_timing(bad, utterance)
         self.assertEqual(utterance.to_dict(), before)
 
+    def test_trimmed_boundary_whitespace_is_restored_from_original_text(self):
+        payload = {"segments": [{"start": 0, "end": 5, "vi": PARTS[0].strip()},
+                                {"start": 5, "end": 10, "vi": PARTS[1].strip()}]}
+        segments = validate_timing(payload, self.utterance())
+        self.assertEqual([item.vi_text for item in segments], PARTS)
+        self.assertEqual("".join(item.vi_text for item in segments), TEXT)
+
+    def test_real_utterance_91_uses_relative_points_and_preserves_exact_text(self):
+        text = "Nếu không phải ngươi đào thì ta lấy đâu ra chuyện này cơ chứ."
+        utterance = Utterance(91, 437.653, 444.363, "中文", vi=text, speaker_id="SPK_01")
+        payload = {"segments": [
+            {"start": 0, "end": 3.2, "vi": "Nếu không phải ngươi đào"},
+            {"start": 3.2, "end": 6.71, "vi": "thì ta lấy đâu ra chuyện này cơ chứ."},
+        ]}
+        segments = validate_timing(payload, utterance)
+        self.assertEqual([(item.start, item.end) for item in segments], [(437.653, 440.853), (440.853, 444.363)])
+        self.assertEqual("".join(item.vi_text for item in segments), text)
+
 
 if __name__ == "__main__":
     unittest.main()
