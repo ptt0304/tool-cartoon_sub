@@ -16,6 +16,19 @@ def source_fingerprint(project):
     return content_hash([{"id":s.id,"zh":s.zh} for s in project.segments])
 
 
+def context_config_fingerprint(project):
+    """Identity of user-owned context constraints plus their source transcript."""
+    return content_hash({
+        "source": source_fingerprint(project),
+        "genres": list(project.translation_genres),
+        "primary_genre": project.translation_genres[0] if project.translation_genres else None,
+        "translation_style": project.translation_preset,
+        "proper_name_rule": project.proper_name_mode,
+        "user_mappings": project.glossary,
+        "supplemental_requirements": project.translation_prompt.strip(),
+    })
+
+
 class ContextService:
     def __init__(self, store, client_factory=GeminiClient):
         self.store, self.factory = store, client_factory
@@ -42,6 +55,7 @@ class ContextService:
             check_cancel(cancel)
             project.context_proposal = proposal
             project.context_proposal_hash = source_fingerprint(project)
+            project.context_proposal_config_hash = context_config_fingerprint(project)
             project.context_status = "proposal_ready"
             ProjectManager().save(project, directory)
             return project, Path(directory)

@@ -5,6 +5,13 @@ from cartoon_sub.translation.presets import GENRES, STYLES
 from cartoon_sub.ui.table_search import add_table_search
 
 
+PROPER_NAME_DESCRIPTIONS = {
+    "sino_vietnamese": "Tên người, địa danh, môn phái, chiêu thức và tổ chức dùng âm Hán Việt khi có cách đọc ổn định.",
+    "preserve_source": "Giữ nguyên tên theo transcript/source, không tự chuyển sang âm Hán Việt.",
+    "user_mapping": "Tên có mapping dùng mapping; tên chưa có mapping giữ nguyên theo nguồn.",
+}
+
+
 def build():
     widget = QWidget()
     outer = QVBoxLayout(widget)
@@ -20,72 +27,139 @@ def build():
                    "Gemini chỉ nhận transcript văn bản. Phân tích ngữ cảnh và dịch là các request riêng có dùng quota API.")
     intro.setWordWrap(True)
     layout.addWidget(intro)
-    group = QGroupBox("Ngữ cảnh / văn phong dịch — có thể chọn nhiều")
-    grid = QGridLayout(group)
+    group = QGroupBox("Thể loại chính — chọn tối đa 3")
+    genre_layout = QVBoxLayout(group)
+    genre_help = QLabel("Chọn tối đa 3 thể loại chính để AI hiểu thế giới truyện, thuật ngữ, cách xưng hô và bối cảnh. Không chọn quá nhiều để tránh xung đột.")
+    genre_help.setWordWrap(True); genre_layout.addWidget(genre_help)
+    grid = QGridLayout(); genre_layout.addLayout(grid)
     widget.genres = {}
     for index, (key, (label, guidance)) in enumerate(GENRES.items()):
         check = QCheckBox(label)
         check.setToolTip(guidance)
         grid.addWidget(check, index // 3, index % 3)
         widget.genres[key] = check
+    widget.genre_status = QLabel(""); widget.genre_status.setStyleSheet("color: #b45309;")
+    genre_layout.addWidget(widget.genre_status)
     layout.addWidget(group)
-    widget.selected_contexts = QLabel("Ngữ cảnh đang chọn: Chưa chọn")
-    widget.selected_contexts.setWordWrap(True); layout.addWidget(widget.selected_contexts)
-    widget.context_descriptions = QPlainTextEdit(); widget.context_descriptions.setReadOnly(True)
-    widget.context_descriptions.setMaximumHeight(180)
-    widget.context_descriptions.setPlaceholderText("Chọn context để xem mô tả chi tiết.")
-    layout.addWidget(QLabel("Mô tả context")); layout.addWidget(widget.context_descriptions)
-    def update_context_description(*_):
-        selected=[(key, GENRES[key]) for key,check in widget.genres.items() if check.isChecked()]
-        widget.selected_contexts.setText("Ngữ cảnh đang chọn: " + (" + ".join(value[0] for _,value in selected) or "Chưa chọn"))
-        widget.context_descriptions.setPlainText("\n\n".join(f"{value[0]}\n{'─'*len(value[0])}\n{value[1]}" for _,value in selected))
-    widget.update_context_description = update_context_description
-    for check in widget.genres.values(): check.toggled.connect(update_context_description)
+
+    style_group = QGroupBox("Văn phong dịch")
+    style_layout = QVBoxLayout(style_group)
     widget.preset = QComboBox()
     for key, (label, _) in STYLES.items():
         widget.preset.addItem(label, key)
-    layout.addWidget(QLabel("Văn phong"))
-    layout.addWidget(widget.preset)
+    widget.style_description = QLabel(); widget.style_description.setWordWrap(True)
+    style_layout.addWidget(widget.preset); style_layout.addWidget(widget.style_description)
+    layout.addWidget(style_group)
+
+    name_group = QGroupBox("Quy tắc tên riêng")
+    name_layout = QVBoxLayout(name_group)
     widget.proper_name_mode = QComboBox()
     widget.proper_name_mode.addItem("Hán Việt (mặc định)", "sino_vietnamese")
     widget.proper_name_mode.addItem("Giữ nguyên theo nguồn", "preserve_source")
     widget.proper_name_mode.addItem("Theo Mapping của user", "user_mapping")
-    layout.addWidget(QLabel("Tên riêng Trung Quốc")); layout.addWidget(widget.proper_name_mode)
+    widget.proper_name_description = QLabel(); widget.proper_name_description.setWordWrap(True)
+    mapping_note = QLabel("Mapping của user luôn ưu tiên hơn quy tắc tên riêng đang chọn.")
+    mapping_note.setWordWrap(True)
+    name_layout.addWidget(widget.proper_name_mode); name_layout.addWidget(widget.proper_name_description); name_layout.addWidget(mapping_note)
+    layout.addWidget(name_group)
+
+    requirements_group = QGroupBox("Bối cảnh bổ sung / Yêu cầu riêng — ưu tiên cao nhất")
+    requirements_layout = QVBoxLayout(requirements_group)
+    requirements_help = QLabel("Ưu tiên cao nhất. Nếu để trống thì bỏ qua. Dùng để bổ sung quan hệ nhân vật, cách xưng hô, thuật ngữ bắt buộc, tên riêng, yêu cầu dịch đặc biệt hoặc thông tin AI khó suy ra từ transcript.")
+    requirements_help.setWordWrap(True); requirements_layout.addWidget(requirements_help)
     editors = QHBoxLayout()
     widget.prompt, widget.glossary = QPlainTextEdit(), QPlainTextEdit()
-    for edit, label, placeholder in ((widget.prompt, "Bối cảnh bổ sung / yêu cầu riêng", "Ví dụ: SPK_01 là hoàng đế. SPK_03 luôn xưng thần với SPK_01."),
-                                     (widget.glossary, "Từ điển / Mapping — ưu tiên cao nhất", "Xuanyi = Huyền Nhất\nQingyun Sect -> Thanh Vân Tông\n# có thể ghi chú")):
+    for edit, label, placeholder in ((widget.prompt, "Yêu cầu riêng", "Ví dụ: A và B là sư huynh đệ. Không dùng mày/tao. Nhân vật chính nói lạnh lùng nhưng không quá cổ."),
+                                     (widget.glossary, "Mapping tên riêng / thuật ngữ — ưu tiên sau yêu cầu riêng", "顾沉 = Cố Trầm\n青云宗 -> Thanh Vân Tông\n灵石 = linh thạch")):
         box = QVBoxLayout()
         box.addWidget(QLabel(label))
         edit.setPlaceholderText(placeholder)
         edit.setMaximumHeight(120)
         box.addWidget(edit)
         editors.addLayout(box)
-    layout.addLayout(editors)
+    requirements_layout.addLayout(editors)
+    layout.addWidget(requirements_group)
+
+    constraints_group = QGroupBox("Ràng buộc từ lựa chọn")
+    constraints_layout = QVBoxLayout(constraints_group)
+    widget.selected_contexts = QLabel("Primary genre: Chưa chọn")
+    widget.selected_contexts.setWordWrap(True); constraints_layout.addWidget(widget.selected_contexts)
+    widget.context_descriptions = QPlainTextEdit(); widget.context_descriptions.setReadOnly(True)
+    widget.context_descriptions.setMaximumHeight(240)
+    constraints_layout.addWidget(widget.context_descriptions)
+    layout.addWidget(constraints_group)
+
+    ai_group = QGroupBox("Ngữ cảnh AI")
+    ai_layout = QVBoxLayout(ai_group)
     row = QHBoxLayout()
-    widget.analyze_button = QPushButton("Phân tích ngữ cảnh bằng Gemini")
-    widget.proposal_button = QPushButton("Duyệt đề xuất AI")
-    widget.context_button = QPushButton("Hồ sơ đang áp dụng / tự nhập")
-    for control in (widget.analyze_button, widget.proposal_button, widget.context_button):
+    widget.analyze_button = QPushButton("Phân tích ngữ cảnh bằng AI")
+    widget.proposal_button = QPushButton("Duyệt & lưu ngữ cảnh AI")
+    for control in (widget.analyze_button, widget.proposal_button):
         row.addWidget(control)
-    layout.addLayout(row)
+    ai_layout.addLayout(row)
     widget.summary = QLabel()
     widget.summary.setTextFormat(Qt.TextFormat.PlainText)
     widget.summary.setWordWrap(True)
     widget.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    layout.addWidget(widget.summary)
+    ai_layout.addWidget(widget.summary)
+    layout.addWidget(ai_group)
     widget.translate_button = QPushButton("Dịch / tiếp tục bản Việt bằng Gemini")
-    widget.apply_context_button = QPushButton("Áp dụng ngữ cảnh / văn phong")
-    layout.addWidget(widget.apply_context_button)
     widget.import_vi_button = QPushButton("Import Vietnamese SRT")
     layout.addWidget(widget.import_vi_button)
     layout.addWidget(widget.translate_button)
-    note = QLabel("Hồ sơ chưa rõ có thể để trống và tự áp dụng; không bắt buộc chạy phân tích AI. "
+    note = QLabel("Không bắt buộc phân tích AI: khi chưa có ngữ cảnh đã duyệt, bản dịch dùng trực tiếp lựa chọn và yêu cầu của user. "
                   "Dịch dùng cache khi dữ liệu không đổi. Đổi hồ sơ/glossary/model sẽ cần cập nhật bản dịch. "
                   "Hoàn tất tự lưu subtitle/vi.srt; cảnh báo cần biên tập không tự sửa nội dung.")
     note.setWordWrap(True)
     layout.addWidget(note)
     layout.addStretch()
+
+    widget.genre_guard = False
+    def update_context_description(*_):
+        selected = [(key, GENRES[key]) for key, check in widget.genres.items() if check.isChecked()]
+        primary = selected[0][1][0] if selected else "Chưa chọn"
+        secondary = ", ".join(value[0] for _, value in selected[1:]) or "Không có"
+        widget.selected_contexts.setText(f"Primary genre: {primary}\nSecondary genres: {secondary}")
+        style_key = widget.preset.currentData() or "Natural Vietnamese"
+        style_label, style_description = STYLES.get(style_key, STYLES["Natural Vietnamese"])
+        widget.style_description.setText(style_description)
+        proper_key = widget.proper_name_mode.currentData() or "sino_vietnamese"
+        proper_description = PROPER_NAME_DESCRIPTIONS[proper_key]
+        widget.proper_name_description.setText(proper_description)
+        mappings = widget.glossary.toPlainText().strip()
+        supplemental = widget.prompt.toPlainText().strip()
+        genre_details = "\n".join(f"- {value[0]}: {value[1]}" for _, value in selected) or "- Chưa chọn"
+        sections = [
+            "Primary genre:\n" + primary,
+            "Secondary genres:\n" + secondary,
+            "Translation style:\n" + style_label + " — " + style_description,
+            "Proper-name rule:\n" + widget.proper_name_mode.currentText() + " — " + proper_description,
+            "User mappings:\n" + (mappings or "Không có"),
+            "Supplemental requirements:\n" + (supplemental or "Không có"),
+            "Genre guidance:\n" + genre_details,
+        ]
+        widget.context_descriptions.setPlainText("\n\n".join(sections))
+
+    def on_genre_toggled(key, checked):
+        if widget.genre_guard:
+            return
+        selected = [name for name, check in widget.genres.items() if check.isChecked()]
+        if checked and len(selected) > 3:
+            widget.genre_guard = True
+            widget.genres[key].setChecked(False)
+            widget.genre_guard = False
+            widget.genre_status.setText("Chỉ nên chọn tối đa 3 thể loại chính.")
+        else:
+            widget.genre_status.clear()
+        update_context_description()
+
+    widget.update_context_description = update_context_description
+    for key, check in widget.genres.items():
+        check.toggled.connect(lambda checked, genre_key=key: on_genre_toggled(genre_key, checked))
+    widget.preset.currentIndexChanged.connect(update_context_description)
+    widget.proper_name_mode.currentIndexChanged.connect(update_context_description)
+    widget.prompt.textChanged.connect(update_context_description)
+    widget.glossary.textChanged.connect(update_context_description)
     from cartoon_sub.ui.timeline_table import create_table
     timeline=QWidget(); timeline_layout=QVBoxLayout(timeline)
     toolbar=QHBoxLayout()

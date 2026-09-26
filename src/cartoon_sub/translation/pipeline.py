@@ -40,8 +40,6 @@ class TranslationPipeline:
             raise ValueError("Hãy gán và xác nhận speaker trong Transcript trước khi dịch")
         if not project.segments or any(not s.zh.strip() for s in project.segments):
             raise ValueError("Cần transcript tiếng Trung không rỗng để dịch")
-        if project.context_source_hash != source_fingerprint(project):
-            raise ValueError("Hãy mở Hồ sơ đang áp dụng, kiểm tra và bấm Áp dụng hồ sơ cho transcript hiện tại")
         StoryContext.from_dict(project.story_context, {s.id for s in project.segments})
         project = Project.from_dict(project.to_dict())
         settings = self.store.load()

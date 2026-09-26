@@ -13,7 +13,14 @@ from cartoon_sub.subtitle.models import Project
 from cartoon_sub.translation.context_profiles import PROFILES
 from cartoon_sub.translation.glossary import parse_glossary
 from cartoon_sub.translation.pipeline import translation_fingerprint
-from cartoon_sub.translation.prompts import BASE_TRANSLATION_INSTRUCTION, build_context_instruction
+from cartoon_sub.translation.prompts import (
+    BASE_TRANSLATION_INSTRUCTION,
+    CONTEXT_RULES,
+    build_context_instruction,
+    editorial,
+    translation_prompt,
+)
+from cartoon_sub.translation.presets import STYLES
 from cartoon_sub.ui.tabs.translate_tab import build
 
 
@@ -52,8 +59,13 @@ class TranslationContextProfilesTests(unittest.TestCase):
             self.assertIn(PROFILES[key].prompt_instruction, instruction)
         self.assertIn("SPK_01 là hoàng đế.", instruction)
         self.assertIn("Xuanyi => Huyền Thiên", instruction)
-        self.assertIn("độ ưu tiên cao nhất", instruction)
+        self.assertIn("PRIORITY 1", instruction)
+        self.assertIn("PRIORITY 2", instruction)
+        self.assertLess(instruction.index("SPK_01 là hoàng đế."), instruction.index("Xuanyi => Huyền Thiên"))
+        self.assertLess(instruction.index("Xuanyi => Huyền Thiên"), instruction.index("Quy tắc tên riêng"))
         self.assertIn("Chỉ đổi tên riêng theo mapping", instruction)
+        self.assertIn("Primary genre", instruction)
+        self.assertIn("Secondary genres", instruction)
 
     def test_glossary_accepts_equals_arrow_comments_and_rejects_conflicts(self):
         value = parse_glossary("# names\nXuanyi = Huyền Nhất\nQingyun -> Thanh Vân\n")
@@ -94,6 +106,42 @@ class TranslationContextProfilesTests(unittest.TestCase):
         })
         self.assertEqual(phrase.translation_genres, ["modern", "transmigration"])
 
+    def test_full_context_workflow_state_survives_reopen(self):
+        project = Project(
+            "demo", "video.mp4",
+            translation_genres=["cultivation", "ancient"],
+            translation_preset="Natural Vietnamese",
+            proper_name_mode="sino_vietnamese",
+            translation_prompt="Không dùng mày/tao.",
+            glossary={"顾沉": "Cố Trầm"},
+            story_context={"summary": "Bản user đã duyệt"},
+            context_proposal={"summary": "Candidate AI mới"},
+            context_source_hash="source-approved",
+            context_proposal_hash="source-candidate",
+            context_approved_config_hash="config-approved",
+            context_proposal_config_hash="config-candidate",
+            context_status="proposal_ready",
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            ProjectManager().save(project, folder)
+            loaded = ProjectManager().load(folder)
+        self.assertEqual(loaded.translation_genres, ["cultivation", "ancient"])
+        self.assertEqual(loaded.translation_preset, "Natural Vietnamese")
+        self.assertEqual(loaded.proper_name_mode, "sino_vietnamese")
+        self.assertEqual(loaded.glossary, {"顾沉": "Cố Trầm"})
+        self.assertEqual(loaded.translation_prompt, "Không dùng mày/tao.")
+        self.assertEqual(loaded.story_context["summary"], "Bản user đã duyệt")
+        self.assertEqual(loaded.context_proposal["summary"], "Candidate AI mới")
+        self.assertEqual(loaded.context_approved_config_hash, "config-approved")
+        self.assertEqual(loaded.context_proposal_config_hash, "config-candidate")
+
+    def test_old_project_genres_are_clamped_to_three(self):
+        loaded = Project.from_dict({
+            "name": "old", "source_video_path": "video.mp4", "schema_version": 3,
+            "translation_genres": ["modern", "cultivation", "ancient", "comedy"],
+        })
+        self.assertEqual(loaded.translation_genres, ["modern", "cultivation", "ancient"])
+
     def test_ui_multi_select_shows_descriptions_and_name_modes(self):
         page = build()
         page.genres["ancient"].setChecked(True)
@@ -104,7 +152,64 @@ class TranslationContextProfilesTests(unittest.TestCase):
         self.assertIn(PROFILES["ancient"].description, shown)
         self.assertIn(PROFILES["transmigration"].description, shown)
         self.assertEqual(page.proper_name_mode.count(), 3)
-        self.assertTrue(page.apply_context_button.isEnabled())
+        self.assertFalse(hasattr(page, "apply_context_button"))
+        self.assertFalse(hasattr(page, "context_button"))
+        self.assertEqual(page.analyze_button.text(), "Phân tích ngữ cảnh bằng AI")
+        self.assertEqual(page.proposal_button.text(), "Duyệt & lưu ngữ cảnh AI")
+
+    def test_ui_enforces_three_genres_and_describes_style_and_name_rule(self):
+        page = build()
+        for key in ("modern", "transmigration", "ancient", "cultivation"):
+            page.genres[key].setChecked(True)
+        self.assertEqual(sum(check.isChecked() for check in page.genres.values()), 3)
+        self.assertFalse(page.genres["cultivation"].isChecked())
+        self.assertIn("tối đa 3", page.genre_status.text())
+        for index in range(page.preset.count()):
+            page.preset.setCurrentIndex(index)
+            self.assertEqual(page.style_description.text(), STYLES[page.preset.currentData()][1])
+        page.proper_name_mode.setCurrentIndex(page.proper_name_mode.findData("preserve_source"))
+        self.assertIn("Giữ nguyên tên", page.proper_name_description.text())
+
+    def test_empty_supplemental_is_omitted_and_approved_context_is_explicit(self):
+        project = Project("demo", "video.mp4", translation_genres=["cultivation"],
+                          glossary={"顾沉": "Cố Trầm"})
+        instruction = build_context_instruction(project)
+        self.assertNotIn("PRIORITY 1", instruction)
+        self.assertNotIn("None", instruction)
+        self.assertNotIn("null", instruction)
+        payload = editorial(project)
+        self.assertIn("approved_context", payload)
+        self.assertNotIn("context", payload)
+
+    def test_translation_prompt_is_natural_context_aware_and_id_scoped(self):
+        project = Project(
+            "demo", "video.mp4", translation_genres=["cultivation", "ancient"],
+            translation_prompt="Không dùng mày/tao.", glossary={"顾沉": "Cố Trầm"},
+            story_context={"summary": "顾沉 là sư huynh của SPK_02."},
+        )
+        prompt = translation_prompt(
+            project,
+            [{"id": 106, "speaker": "SPK_01", "zh": "你吃下它。"}],
+            [{"id": 105, "speaker": "SPK_02", "zh": "这是灵石。"}],
+            [{"id": 107, "speaker": "SPK_01", "zh": "也许能突破。"}],
+            [{"id": 105, "vi": "Đây là linh thạch."}],
+        )
+        self.assertIn("Tiếng Việt phải tự nhiên", prompt)
+        self.assertIn("không dịch từng chữ", prompt)
+        self.assertIn("bê cấu trúc tiếng Trung", prompt)
+        self.assertIn("Không dùng mày/tao.", prompt)
+        self.assertIn("顾沉 => Cố Trầm", prompt)
+        self.assertIn("顾沉 là sư huynh", prompt)
+        self.assertIn('"reference_before": [{"id": 105', prompt)
+        self.assertIn('"reference_after": [{"id": 107', prompt)
+        self.assertIn("chỉ dịch targets", prompt)
+        self.assertIn("mỗi ID đúng một lần", prompt)
+
+    def test_context_analysis_rules_are_structured_and_do_not_translate(self):
+        self.assertIn("transcript tiếng Trung thực tế", CONTEXT_RULES)
+        self.assertIn("chưa dịch subtitle", CONTEXT_RULES)
+        self.assertIn("Không thay đổi yêu cầu explicit", CONTEXT_RULES)
+        self.assertIn("Kết quả phải dễ duyệt", CONTEXT_RULES)
 
 
 if __name__ == "__main__":

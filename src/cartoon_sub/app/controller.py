@@ -150,16 +150,26 @@ class Controller:
     def update_translation_options(self, preset, custom_prompt, glossary_text, genres,
                                    proper_name_mode="sino_vietnamese"):
         from cartoon_sub.translation.presets import GENRES, STYLES
+        genres = list(dict.fromkeys(genres))
         if preset not in STYLES or any(g not in GENRES for g in genres):
             raise ValueError("Thể loại/văn phong không hợp lệ")
+        if len(genres) > 3:
+            raise ValueError("Chỉ nên chọn tối đa 3 thể loại chính")
         if proper_name_mode not in ("sino_vietnamese", "preserve_source", "user_mapping"):
             raise ValueError("Chế độ tên riêng không hợp lệ")
+        from cartoon_sub.translation.context_service import context_config_fingerprint
+        old_context_hash = context_config_fingerprint(self.project)
         glossary = parse_glossary(glossary_text)
         self.project.translation_preset = preset
         self.project.translation_prompt = custom_prompt
         self.project.glossary = glossary
-        self.project.translation_genres = sorted(set(genres))
+        self.project.translation_genres = genres
         self.project.proper_name_mode = proper_name_mode
+        if (self.project.context_source_hash
+                and self.project.context_approved_config_hash != context_config_fingerprint(self.project)):
+            self.project.context_status = "stale"
+        elif old_context_hash != context_config_fingerprint(self.project) and self.project.context_proposal:
+            self.project.context_status = "stale"
         mark_stale(self.project, self.settings_store.load())
 
     def analyze_context(self, **job):
@@ -167,8 +177,10 @@ class Controller:
         return self.context_service.analyze(self.project, self.directory, **job)
 
     def apply_context(self, context):
+        from cartoon_sub.translation.context_service import context_config_fingerprint
         self.project.story_context = StoryContext.from_dict(context, {s.id for s in self.project.segments}).to_dict()
         self.project.context_source_hash = source_fingerprint(self.project)
+        self.project.context_approved_config_hash = context_config_fingerprint(self.project)
         self.project.context_status = "applied"
         self.save()
 

@@ -11,7 +11,7 @@ from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.translation.context_models import StoryContext
-from cartoon_sub.translation.context_service import ContextService, source_fingerprint
+from cartoon_sub.translation.context_service import ContextService, source_fingerprint, context_config_fingerprint
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
 from cartoon_sub.translation.gemini_translator import validate_translation, validate_context, TranslationValidationError
 from cartoon_sub.translation.qc import review_translation
@@ -129,10 +129,17 @@ class Phase3Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project = make_project(205)
             project.story_context["narration"] = "Ngôi thứ nhất do người dùng chốt"
+            project.translation_genres = ["cultivation", "ancient"]
+            project.translation_preset = "Natural Vietnamese"
+            project.proper_name_mode = "sino_vietnamese"
+            project.glossary = {"顾沉": "Cố Trầm"}
+            project.translation_prompt = "Không dùng mày/tao."
             client = Mock()
             calls = []
+            payloads = []
             def proposal(system, prompt, *args, **kwargs):
                 data = parse_prompt(prompt)
+                payloads.append(data)
                 calls.extend(r["id"] for r in data["transcript"])
                 profile = StoryContext(summary=f"Đã đọc batch {data['batch']}").to_dict()
                 return profile
@@ -145,6 +152,13 @@ class Phase3Tests(unittest.TestCase):
             self.assertEqual(result.story_context, project.story_context)
             self.assertEqual(result.context_status, "proposal_ready")
             self.assertEqual(result.context_proposal["summary"], "Đã đọc batch 3")
+            analysis_editorial = payloads[0]["editorial"]
+            instruction = analysis_editorial["context_instruction"]
+            self.assertIn("Primary genre", instruction)
+            self.assertIn("Secondary genres", instruction)
+            self.assertIn("顾沉 => Cố Trầm", instruction)
+            self.assertIn("Không dùng mày/tao.", instruction)
+            self.assertEqual(payloads[0]["transcript"][0]["zh"], "第1句")
             factory.reset_mock()
             service.analyze(project, directory)
             factory.assert_not_called()
@@ -231,13 +245,47 @@ class Phase3Tests(unittest.TestCase):
             self.assertFalse(project.segments[30].vi)
             client.close.assert_called_once()
 
-    def test_requires_context_for_changed_transcript_before_any_api_call(self):
-        project = make_project()
-        project.segments[0].zh = "新文本"
-        factory = Mock()
-        with self.assertRaises(ValueError):
-            TranslationPipeline(store(), factory).run(project, "unused")
-        factory.assert_not_called()
+    def test_translation_works_without_approved_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = make_project(2)
+            project.story_context = StoryContext().to_dict()
+            project.context_source_hash = ""
+            project.context_approved_config_hash = ""
+            project.context_status = "not_started"
+            client = Mock()
+            client.generate_json.side_effect = translated_reply
+            result, _ = TranslationPipeline(store(), lambda key: client).run(project, directory)
+        self.assertEqual(result.translation_status, "completed")
+        self.assertTrue(all(row.vi for row in result.segments))
+
+    def test_candidate_does_not_overwrite_approved_and_config_hash_persists(self):
+        from cartoon_sub.app.controller import Controller
+        with tempfile.TemporaryDirectory() as directory:
+            project = make_project(2)
+            project.story_context["summary"] = "Approved cũ"
+            project.context_approved_config_hash = context_config_fingerprint(project)
+            controller = Controller()
+            controller.accept((project, Path(directory)))
+            candidate = StoryContext(summary="User đã sửa candidate").to_dict()
+            controller.project.context_proposal = StoryContext(summary="Raw AI").to_dict()
+            self.assertEqual(controller.project.story_context["summary"], "Approved cũ")
+            controller.apply_context(candidate)
+            loaded = ProjectManager().load(directory)
+        self.assertEqual(loaded.story_context["summary"], "User đã sửa candidate")
+        self.assertEqual(loaded.context_status, "applied")
+        self.assertEqual(loaded.context_approved_config_hash, context_config_fingerprint(loaded))
+
+    def test_approved_context_becomes_stale_when_user_config_changes(self):
+        from cartoon_sub.app.controller import Controller
+        with tempfile.TemporaryDirectory() as directory:
+            project = make_project(2)
+            project.context_approved_config_hash = context_config_fingerprint(project)
+            controller = Controller()
+            controller.accept((project, Path(directory)))
+            controller.update_translation_options("Light Classical", "Không dùng mày/tao.",
+                                                  "顾沉 = Cố Trầm", ["cultivation", "ancient"],
+                                                  "sino_vietnamese")
+        self.assertEqual(controller.project.context_status, "stale")
 
     def test_qc_does_not_modify_translation(self):
         project = make_project(1)

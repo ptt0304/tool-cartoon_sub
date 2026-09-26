@@ -9,11 +9,11 @@ class ContextDialog(QDialog):
         super().__init__(parent)
         self.valid_ids = valid_ids
         self.result_context = None
-        self.setWindowTitle("Duyệt đề xuất ngữ cảnh" if proposal else "Hồ sơ truyện đang áp dụng")
+        self.setWindowTitle("Duyệt & lưu ngữ cảnh AI" if proposal else "Ngữ cảnh AI đã duyệt")
         self.resize(1050, 720)
         layout = QVBoxLayout(self)
-        note = QLabel("Kiểm tra tên, quan hệ, thuật ngữ và xưng hô. Để trống điều chưa rõ; không cần điền đủ các bảng. "
-                      "ID bằng chứng là số dòng Transcript (ngăn bằng dấu phẩy). Chỉ bấm Áp dụng khi hồ sơ phù hợp truyện này.")
+        note = QLabel("Kiểm tra và sửa tên, quan hệ, thuật ngữ, xưng hô cùng mọi suy luận của AI. Để trống điều chưa rõ; "
+                      "ID bằng chứng là số dòng Transcript (ngăn bằng dấu phẩy). Bản được lưu sẽ là source-of-truth cho các lần dịch sau.")
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = QTabWidget()
@@ -59,7 +59,7 @@ class ContextDialog(QDialog):
             self.tables[key] = (table, keys)
             tabs.addTab(page, title)
         buttons = QHBoxLayout()
-        cancel, apply = QPushButton("Đóng, chưa áp dụng"), QPushButton("Áp dụng hồ sơ")
+        cancel, apply = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh đã duyệt")
         cancel.clicked.connect(self.reject)
         apply.clicked.connect(self.apply)
         buttons.addWidget(cancel)

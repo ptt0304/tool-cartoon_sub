@@ -11,7 +11,7 @@ from cartoon_sub.ui.worker import Worker
 from cartoon_sub.ui.no_wheel import NoWheelNumericFilter
 from cartoon_sub.ui.settings_dialog import SettingsDialog
 from cartoon_sub.ui.context_dialog import ContextDialog
-from cartoon_sub.translation.context_service import source_fingerprint
+from cartoon_sub.translation.context_service import source_fingerprint, context_config_fingerprint
 from cartoon_sub.speaker.service import review_complete, refresh_timeline
 from cartoon_sub.ui.speaker_dialog import SpeakerDialog
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
@@ -84,9 +84,7 @@ class MainWindow(QMainWindow):
         self.pages[1].export_transcript_button.clicked.connect(self.export_transcript_srt)
         self.pages[2].translate_button.clicked.connect(self.translate)
         self.pages[2].import_vi_button.clicked.connect(self.import_vi_srt)
-        self.pages[2].apply_context_button.clicked.connect(self.apply_translation_context)
         self.pages[2].analyze_button.clicked.connect(self.analyze_context)
-        self.pages[2].context_button.clicked.connect(lambda: self.edit_context(False))
         self.pages[2].proposal_button.clicked.connect(lambda: self.edit_context(True))
         self.pages[2].view.currentIndexChanged.connect(self.refresh_timeline_table)
         self.pages[2].edit_button.clicked.connect(self.edit_utterance)
@@ -659,13 +657,6 @@ class MainWindow(QMainWindow):
         self.controller.project.mask,self.controller.project.subtitle_style=self.pages[4].values()
         self.controller.project.logos,self.controller.project.watermark=self.pages[4].overlay_values()
 
-    def apply_translation_context(self):
-        try:
-            before=self._project_state();self.sync_options();self.controller.save();self._record_project_edit(before,"Edit translation context");self.refresh()
-            self.statusBar().showMessage("Đã áp dụng ngữ cảnh / văn phong dịch", 5000)
-        except Exception as exc:
-            self.error(exc)
-
     def save_project(self):
         try:
             self.sync_options()
@@ -772,8 +763,9 @@ class MainWindow(QMainWindow):
         try:
             before=self._project_state();self.sync_options()
             project = self.controller.project
-            if proposal and project.context_proposal_hash != source_fingerprint(project):
-                raise ValueError("Transcript đã đổi; hãy phân tích lại ngữ cảnh")
+            if proposal and (project.context_proposal_hash != source_fingerprint(project)
+                             or project.context_proposal_config_hash != context_config_fingerprint(project)):
+                raise ValueError("Transcript hoặc cấu hình đã đổi; hãy phân tích lại ngữ cảnh")
             context = project.context_proposal if proposal else project.story_context
             dialog = ContextDialog(context, {s.id for s in project.segments}, self, proposal)
             if dialog.exec() == dialog.DialogCode.Accepted:
@@ -802,17 +794,28 @@ class MainWindow(QMainWindow):
             check.setChecked(key in project.translation_genres)
         page.proper_name_mode.setCurrentIndex(max(0, page.proper_name_mode.findData(project.proper_name_mode)))
         page.update_context_description()
-        context_ready = bool(project.segments) and project.context_source_hash == source_fingerprint(project)
-        ready = context_ready and review_complete(project)
+        source_hash = source_fingerprint(project)
+        config_hash = context_config_fingerprint(project)
+        approved = bool(project.context_source_hash)
+        approved_fresh = (approved and project.context_source_hash == source_hash
+                          and project.context_approved_config_hash == config_hash)
+        candidate_ready = (bool(project.context_proposal)
+                           and project.context_proposal_hash == source_hash
+                           and project.context_proposal_config_hash == config_hash)
+        ready = bool(project.segments) and review_complete(project)
         page.translate_button.setEnabled(ready)
         page.analyze_button.setEnabled(bool(project.segments) and review_complete(project))
-        page.context_button.setEnabled(bool(project.segments))
-        page.proposal_button.setEnabled(bool(project.context_proposal))
+        page.proposal_button.setEnabled(candidate_ready)
         context = project.story_context
-        status = "Hồ sơ đã áp dụng cho transcript này" if ready else "Cần duyệt đề xuất hoặc tự nhập và áp dụng hồ sơ"
+        if not approved:
+            status = "Chưa có ngữ cảnh AI đã duyệt — bản dịch sẽ dùng trực tiếp ràng buộc user"
+        elif approved_fresh:
+            status = "Ngữ cảnh AI đã duyệt đang được dùng làm source-of-truth"
+        else:
+            status = "Ngữ cảnh AI đã duyệt có thể đã cũ so với cấu hình hoặc transcript hiện tại (STALE)"
         if not review_complete(project):status="Cần duyệt/gán speaker trong Transcript trước khi dịch. " + status
-        if project.context_status == "proposal_ready":
-            status += " • Có đề xuất AI mới đang chờ duyệt"
+        if candidate_ready:
+            status += " • Có candidate AI mới đang chờ duyệt & lưu"
         states = {"completed": "Hoàn tất", "not_started": "Chưa dịch", "stale": "Cần dịch cập nhật — cấu hình/nguồn đã đổi",
                   "running": "Đang dịch", "failed": "Lỗi — bấm tiếp tục", "cancelled": "Đã hủy — có thể tiếp tục"}
         page.summary.setText(f"{status}\nNhân vật: {len(context.get('characters', []))} • Thuật ngữ: {len(context.get('terms', []))} "

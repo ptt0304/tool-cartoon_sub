@@ -374,6 +374,8 @@ class Project:
     context_proposal: dict = field(default_factory=dict)
     context_source_hash: str = ""
     context_proposal_hash: str = ""
+    context_approved_config_hash: str = ""
+    context_proposal_config_hash: str = ""
     context_status: str = "not_started"
     translation_status: str = "not_started"
     translation_notes: dict = field(default_factory=dict)
@@ -449,7 +451,7 @@ class Project:
         from cartoon_sub.translation.context_profiles import normalize_context_ids
         legacy_context = data.pop("translation_context", "")
         raw_contexts = data.get("translation_genres", [])
-        data["translation_genres"] = normalize_context_ids(raw_contexts)
+        data["translation_genres"] = normalize_context_ids(raw_contexts)[:3]
         if isinstance(raw_contexts, str) and raw_contexts.strip() and not data["translation_genres"]:
             legacy_context = "\n".join(filter(None, (legacy_context, raw_contexts.strip())))
         elif isinstance(raw_contexts, list):
