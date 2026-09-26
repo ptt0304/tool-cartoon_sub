@@ -316,19 +316,15 @@ class Controller:
         }
 
     def fallback_deleted_tts_voice_mappings(self, voices, all_voice_ids):
-        if not self.project or not voices:
+        if not self.project:
             return []
         existing = set(all_voice_ids)
-        fallback_id = voices[0]["voice_id"]
-        changed = []
+        missing = []
         for speaker_id, speaker in self.project.speakers.items():
             saved = speaker.get("tts_voice_id")
             if saved and saved not in existing:
-                self.update_speaker_tts_voice(
-                    speaker_id, fallback_id, float(speaker.get("tts_speed", 1.0)),
-                )
-                changed.append(speaker_id)
-        return changed
+                missing.append(speaker_id)
+        return missing
 
     def set_local_tts_executable(self, path: str):
         settings = self.settings_store.load_local_tts()

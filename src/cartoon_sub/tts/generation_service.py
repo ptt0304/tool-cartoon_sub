@@ -88,6 +88,10 @@ class LocalTTSGenerationService:
             if raw is None:
                 raise ValueError(f"Không tìm thấy speaker {speaker_id}")
             speaker = Speaker(**raw)
+            logger.info(
+                "[AUDIO DEBUG] preflight speaker=%s stored_voice_id=%r runtime_voice_id=%r",
+                speaker_id, raw.get("tts_voice_id"), speaker.tts_voice_id,
+            )
             if not speaker.tts_voice_id:
                 raise ValueError(f"Speaker {speaker_id} chưa chọn Local_TTS voice")
             speakers[speaker_id] = speaker
@@ -102,6 +106,16 @@ class LocalTTSGenerationService:
         }
         for speaker in speakers.values():
             voice = voices.get(speaker.tts_voice_id)
+            logger.info(
+                "[AUDIO DEBUG] preflight speaker=%s runtime_voice_id=%r voice_exists=%s "
+                "registry_voice_id=%r engine=%r status=%r",
+                speaker.id,
+                speaker.tts_voice_id,
+                voice is not None,
+                voice.get("voice_id") if voice else None,
+                voice.get("engine") if voice else None,
+                voice.get("status") if voice else None,
+            )
             if voice is None:
                 raise ValueError(f"Local_TTS không có voice {speaker.tts_voice_id}")
             if voice.get("status") != "READY":

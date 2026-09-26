@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Signal
@@ -22,6 +23,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem
+
+
+logger = logging.getLogger(__name__)
 
 
 class AudioPage(QWidget):
@@ -307,11 +311,9 @@ class AudioPage(QWidget):
         self._add_disabled_combo_item(combo, "Tất cả giọng")
         for voice in voices:
             combo.addItem(self._voice_label(voice), voice["voice_id"])
-        if preserve_current and current_voice_id and current_voice_id not in available and not voices:
+        if preserve_current and current_voice_id and current_voice_id not in available:
             prefix = "Missing voice" if self._voices is not None else "Saved voice"
             combo.addItem(f"{prefix}: {current_voice_id}", current_voice_id)
-        if current_voice_id not in available and voices:
-            current_voice_id = voices[0]["voice_id"]
         found = combo.findData(current_voice_id)
         combo.setCurrentIndex(found if found >= 0 else 0)
         combo.blockSignals(False)
@@ -356,6 +358,18 @@ class AudioPage(QWidget):
                 "status", "READY" if selected_voice in ready else ("MISSING" if selected_voice else "—"),
             ))
             self.tts_table.setCellWidget(row_index, 6, status_lbl)
+            selected_metadata = ready.get(selected_voice, {})
+            logger.info(
+                "[AUDIO DEBUG] speaker=%s table_voice=%r stored_voice_id=%r "
+                "runtime_voice_id=%r voice_exists=%s engine=%r status=%s",
+                speaker_id,
+                combo.currentText(),
+                saved,
+                selected_voice,
+                selected_voice in ready if selected_voice else False,
+                selected_metadata.get("engine") or selected_metadata.get("source"),
+                status_lbl.text(),
+            )
 
             def changed(*_, sid=speaker_id, selector=combo, speed_box=speed, engine_label=engine, status_box=status_lbl):
                 vid = selector.currentData()

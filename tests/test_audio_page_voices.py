@@ -105,15 +105,34 @@ class AudioPageVoiceTests(unittest.TestCase):
                          ["voice_a", "voice_c", "voice_a", "voice_b", "voice_c"])
         self.assertEqual(project.speakers["SPK_02"]["tts_voice_id"], "voice_b")
 
-    def test_deleted_voice_disappears_and_selector_falls_back(self):
+    def test_deleted_voice_is_not_replaced_by_an_unrelated_ready_voice(self):
         project = project_with_mappings()
         page = AudioPage()
         page.populate(project, voices(a=True, b=True, c=True))
         remaining = [voice for voice in voices(a=True, b=True, c=True) if voice["voice_id"] != "voice_b"]
         page.populate(project, remaining)
         combo = page.tts_table.cellWidget(1, 3)
-        self.assertEqual(combo.currentData(), "voice_a")
+        self.assertEqual(combo.currentData(), "voice_b")
+        self.assertEqual(combo.currentText(), "Missing voice: voice_b")
+        self.assertEqual(page.tts_table.cellWidget(1, 4).text(), "—")
+        self.assertEqual(page.tts_table.cellWidget(1, 6).text(), "MISSING")
         self.assertNotIn("voice_b", combo_ids(page.batch_voice))
+
+    def test_unassigned_speaker_stays_unassigned_when_ready_voices_exist(self):
+        project = project_with_mappings()
+        page = AudioPage()
+        changes = []
+        page.mapping_changed.connect(lambda *args: changes.append(args))
+
+        page.populate(project, voices())
+
+        combo = page.tts_table.cellWidget(2, 3)
+        self.assertIsNone(combo.currentData())
+        self.assertEqual(combo.currentText(), "— Chưa chọn —")
+        self.assertEqual(page.tts_table.cellWidget(2, 4).text(), "—")
+        self.assertEqual(page.tts_table.cellWidget(2, 6).text(), "—")
+        self.assertIsNone(project.speakers["SPK_03"]["tts_voice_id"])
+        self.assertEqual(changes, [])
 
 
 if __name__ == "__main__":

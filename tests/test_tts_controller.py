@@ -95,17 +95,17 @@ class LocalTTSControllerTests(unittest.TestCase):
             self.assertEqual(result["all_voice_ids"], ["ready"])
             self.assertEqual(client_class.call_args.kwargs["request_timeout_seconds"], 2)
 
-    def test_deleted_voice_mapping_falls_back_to_first_api_voice(self):
+    def test_deleted_voice_mapping_is_not_replaced_by_first_api_voice(self):
         with tempfile.TemporaryDirectory() as directory:
             controller = Controller(SettingsStore(folder=Path(directory) / "settings", vault=Mock()))
             controller.project = self.project()
             controller.directory = Path(directory)
             controller.manager.save(controller.project, directory)
-            changed = controller.fallback_deleted_tts_voice_mappings(
+            missing = controller.fallback_deleted_tts_voice_mappings(
                 [{"voice_id": "ready", "status": "READY"}], ["ready"],
             )
-            self.assertEqual(changed, ["SPK_01"])
-            self.assertEqual(controller.project.speakers["SPK_01"]["tts_voice_id"], "ready")
+            self.assertEqual(missing, ["SPK_01"])
+            self.assertEqual(controller.project.speakers["SPK_01"]["tts_voice_id"], "gone")
 
 
 if __name__ == "__main__":
