@@ -3,6 +3,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.translation.modes import MODE_LABELS
+from cartoon_sub.subtitle.timestamps import format_srt_timestamp
+from cartoon_sub.ui.table_search import apply_table_search
 
 EDITABLE_COLUMNS = {1, 2, 4, 5, 7, 8}  # Start, End, Speaker, Chinese, VI Subtitle, VI Dubbing
 
@@ -114,8 +116,8 @@ def populate(table, project, view="both"):
             qc_notes.append(overlap_labels[s.overlap_type])
         values = [
             s.id,
-            f"{s.start:.3f}",
-            f"{s.end:.3f}",
+            format_srt_timestamp(s.start),
+            format_srt_timestamp(s.end),
             f"{s.duration:.3f}",
             f"{s.speaker_id} · {s.speaker_name}",
             s.zh,
@@ -150,3 +152,5 @@ def populate(table, project, view="both"):
     table.is_populating = False
     if callable(table.on_dirty_changed):
         table.on_dirty_changed(0)
+    if hasattr(table, "search_edit"):
+        apply_table_search(table)

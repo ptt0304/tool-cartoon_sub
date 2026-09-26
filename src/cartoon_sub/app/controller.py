@@ -535,13 +535,14 @@ class Controller:
             if s is None:
                 raise ValueError(f"Dòng {row_idx} (ID {uid}): Không tìm thấy trong project")
 
+            from cartoon_sub.subtitle.timestamps import parse_srt_timestamp
             try:
-                start = float(entry["start"])
+                start = parse_srt_timestamp(entry["start"])
             except (ValueError, TypeError):
                 raise ValueError(f"Dòng {row_idx} (ID {uid}): Start '{entry['start']}' không phải là số hợp lệ")
 
             try:
-                end = float(entry["end"])
+                end = parse_srt_timestamp(entry["end"])
             except (ValueError, TypeError):
                 raise ValueError(f"Dòng {row_idx} (ID {uid}): End '{entry['end']}' không phải là số hợp lệ")
 

@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QComboBox, QPlainTextEdit, QPushButton, QLabel, Q
     QGridLayout, QHBoxLayout, QVBoxLayout, QGroupBox, QScrollArea, QWidget, QTabWidget)
 from PySide6.QtCore import Qt
 from cartoon_sub.translation.presets import GENRES, STYLES
+from cartoon_sub.ui.table_search import add_table_search
 
 
 def build():
@@ -106,6 +107,7 @@ def build():
     toolbar.addStretch()
     timeline_layout.addLayout(toolbar)
     widget.table=create_table()
+    widget.search_edit, widget.search_clear = add_table_search(timeline_layout, widget.table, (0,4,5,7,8))
     def on_dirty_changed(count):
         widget.apply_edits_button.setEnabled(count > 0)
         widget.revert_edits_button.setEnabled(count > 0)

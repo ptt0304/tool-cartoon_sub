@@ -4,6 +4,7 @@ import re
 import textwrap
 from pathlib import Path
 import pysubs2
+from cartoon_sub.subtitle.canonical_timeline import canonical_timeline
 from cartoon_sub.subtitle.segmentation_service import presentation_segments
 
 
@@ -55,7 +56,6 @@ def save_ass(project, path, start=0, duration=None):
     SubtitleSegmentationService().sync_stale(project)
     width, height = (int(project.metadata[k]) for k in ('width','height'))
     style = project.subtitle_style
-    label_mode = getattr(style, 'speaker_label_mode', 'overlap_only')
     subs = pysubs2.SSAFile()
     subs.info.update(PlayResX=str(width), PlayResY=str(height), WrapStyle='2', ScaledBorderAndShadow='yes')
     subs.styles['Default'] = pysubs2.SSAStyle(fontname=style.font, fontsize=style.font_size,
@@ -69,63 +69,33 @@ def save_ass(project, path, start=0, duration=None):
             alignment=pysubs2.Alignment.TOP_LEFT, marginv=0, marginl=0, marginr=0)
     end = start + duration if duration is not None else float(project.metadata.get('duration', 0))
 
-    from cartoon_sub.speaker.service import resolve_subtitle_lanes
-    lane_map = resolve_subtitle_lanes(project.utterances)
-    group_lane_counts = {}
-    for u in project.utterances:
-        if u.overlap and u.overlap_group:
-            lane = lane_map.get(u.id, 0)
-            group_lane_counts[u.overlap_group] = max(group_lane_counts.get(u.overlap_group, 0), lane + 1)
-
-    line_height = int(style.font_size * 1.35)
-    lane_height = line_height * max(1, style.max_lines) + 8
-
-    for utterance in project.utterances:
-        lane = lane_map.get(utterance.id, 0)
-        group_lanes = group_lane_counts.get(utterance.overlap_group, 1) if utterance.overlap else 1
-
+    utterance_by_id = {row.id: row for row in project.utterances}
+    for entry in canonical_timeline(project.utterances):
         if style.center_in_mask:
             center_x = project.mask.x + project.mask.width // 2
             mid_y = project.mask.y + project.mask.height // 2
-            total_h = group_lanes * lane_height
-            bot_y = mid_y + total_h // 2
-            lane_y = bot_y - (lane + 0.5) * lane_height
-            position_tag = r'{\an5\pos(%d,%d)}' % (round(center_x), round(lane_y))
-        elif utterance.overlap and lane > 0:
-            center_x = width // 2
-            base_y = height - style.margin_bottom
-            lane_y = base_y - lane * lane_height
-            position_tag = r'{\an2\pos(%d,%d)}' % (round(center_x), round(lane_y))
+            position_tag = r'{\an5\pos(%d,%d)}' % (round(center_x), round(mid_y))
         else:
             position_tag = ''
-
-        raw_name = (utterance.speaker_name or '').strip()
-        spk_id = utterance.speaker_id or 'SPK_UNKNOWN'
-        display_name = spk_id if (not raw_name or raw_name.lower() == 'unknown') else raw_name
-
-        label_prefix = ''
-        if label_mode == 'overlap_only':
-            if utterance.overlap:
-                label_prefix = f"{display_name}: "
-        elif label_mode == 'always':
-            label_prefix = f"{display_name}: "
-
-        for row in presentation_segments(utterance):
-            if row.end <= start or row.start >= end:
+        if len(entry.source_utterance_ids) > 1:
+            render_rows = [(entry.start, entry.end, entry.vi_subtitle)]
+        else:
+            utterance = utterance_by_id[entry.source_utterance_ids[0]]
+            render_rows = [(row.start, row.end, row.vi_text) for row in presentation_segments(utterance)]
+        for row_start, row_end, row_text in render_rows:
+            if row_end <= start or row_start >= end:
                 continue
-            current_prefix = label_prefix
-            if label_mode == 'debug':
-                current_prefix = f"[{spk_id}|{row.start:.2f}-{row.end:.2f}] "
-            # Neutralize ASS control syntax; wrapping changes display only, never drops words.
-            text = re.sub(r'\s+', ' ', row.vi_text).strip().replace('\\','／').replace('{','(').replace('}',')')
-            full_text = current_prefix + text
+            # Speaker metadata remains internal and never becomes user-visible text.
+            text = re.sub(r'\s+', ' ', row_text).strip().replace('\\','／').replace('{','(').replace('}',')')
+            if not text:
+                continue
             columns = max(8, int((width-40)/(style.font_size*.55)))
-            lines = textwrap.wrap(full_text, columns, break_long_words=False, break_on_hyphens=False)
+            lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
             while len(lines) > style.max_lines:
                 columns += 1
-                lines = textwrap.wrap(full_text, columns, break_long_words=False, break_on_hyphens=False)
-            subs.events.append(pysubs2.SSAEvent(start=round((max(row.start,start)-start)*1000),
-                end=round((min(row.end,end)-start)*1000), text=position_tag + r'\N'.join(lines)))
+                lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
+            subs.events.append(pysubs2.SSAEvent(start=round((max(row_start,start)-start)*1000),
+                end=round((min(row_end,end)-start)*1000), text=position_tag + r'\N'.join(lines)))
     if watermark.text.strip():
         _add_moving_watermark(subs, watermark, width, height, start, end)
     subs.save(str(path), encoding='utf-8')

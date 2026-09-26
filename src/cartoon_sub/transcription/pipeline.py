@@ -12,7 +12,7 @@ from cartoon_sub.project.cache import atomic_json, file_hash, content_hash, chec
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.project.paths import ProjectPaths
 from cartoon_sub.subtitle.models import Project
-from cartoon_sub.subtitle.parser import export_srt
+from cartoon_sub.subtitle.parser import export_canonical_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
 from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.openai_transcription_client import OpenAITranscriptionClient
@@ -46,11 +46,19 @@ def save_subtitle_artifacts(project, directory):
     directory.mkdir(parents=True, exist_ok=True)
     temporary = directory / f"zh-{uuid4().hex}.srt"
     try:
-        export_srt(project.segments, temporary)
+        export_canonical_srt(project.segments, temporary, "zh")
         os.replace(temporary, directory / "zh.srt")
     finally:
         temporary.unlink(missing_ok=True)
     atomic_json(directory / "segments.json", [asdict(s) for s in project.segments])
+    live = Path(directory).parent / "exports" / "transcript"
+    live.mkdir(parents=True, exist_ok=True)
+    temporary = live / f"zh-{uuid4().hex}.srt"
+    try:
+        export_canonical_srt(project.segments, temporary, "zh")
+        os.replace(temporary, live / "zh_transcript.srt")
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class TranscriptionPipeline:

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 from cartoon_sub.project.paths import ProjectPaths
-from cartoon_sub.subtitle.parser import export_srt
+from cartoon_sub.subtitle.parser import export_canonical_srt
 
 
 EXPORT_KINDS = {
@@ -29,8 +29,8 @@ def export_current_srt(project, project_root, kind):
     rows = list(project.utterances)
     if not rows:
         raise ValueError("Project chưa có dữ liệu để export SRT")
-    language, use_presentation = EXPORT_KINDS[kind]
+    language, _use_presentation = EXPORT_KINDS[kind]
     output_dir = ProjectPaths(project_root).export_dir / kind
     path = next_export_path(output_dir, kind)
-    export_srt(rows, path, language, use_presentation=use_presentation)
+    export_canonical_srt(rows, path, language)
     return path

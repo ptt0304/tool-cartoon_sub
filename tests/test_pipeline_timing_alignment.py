@@ -71,15 +71,15 @@ class PipelineTimingAlignmentTests(unittest.TestCase):
             save_ass(project, ass_path)
             subs = pysubs2.load(str(ass_path))
 
-        # First two overlapping segments must have DIFFERENT pos tags so they don't draw over each other
+        # Overlap is one canonical subtitle event, centered once in the mask.
         event1 = next(e for e in subs if "Câu một" in e.text)
         event2 = next(e for e in subs if "Câu hai" in e.text)
         event3 = next(e for e in subs if "Câu ba" in e.text)
 
         self.assertIn(r"\pos(", event1.text)
-        self.assertIn(r"\pos(", event2.text)
-        # Verify event1 and event2 have distinct Y positions
-        self.assertNotEqual(event1.text[:event1.text.find("}")], event2.text[:event2.text.find("}")])
+        self.assertIs(event1, event2)
+        self.assertEqual(len(subs), 2)
+        self.assertIn("Câu một Câu hai", event1.text)
         # Non-overlapping event3 should be centered in mask (mask center Y is 500 + 80 = 580, center X is 100 + 540 = 640)
         self.assertIn(r"{\an5\pos(640,580)}", event3.text)
 
@@ -107,10 +107,11 @@ class PipelineTimingAlignmentTests(unittest.TestCase):
             e2 = next(e for e in subs if "Tôi là Bob" in e.text)
             e3 = next(e for e in subs if "Câu đơn" in e.text)
 
-            self.assertIn("Alice: Xin chào", e1.text)
-            # Unknown speaker displays SPK_02 instead of "Unknown:"
-            self.assertIn("SPK_02: Tôi là Bob", e2.text)
-            self.assertNotIn("Alice:", e3.text)  # Non-overlap has NO prefix in overlap_only mode
+            self.assertIs(e1, e2)
+            self.assertIn("Xin chào Tôi là Bob", e1.text)
+            self.assertNotIn("Alice:", e1.text)
+            self.assertNotIn("SPK_02:", e1.text)
+            self.assertNotIn("Alice:", e3.text)
 
             # TTS dubbing remains completely untouched
             self.assertEqual(u1.vi_dubbing, "Xin chào")
@@ -128,15 +129,16 @@ class PipelineTimingAlignmentTests(unittest.TestCase):
             p_always = make_proj("always")
             save_ass(p_always, Path(tmp) / "always.ass")
             subs_always = pysubs2.load(str(Path(tmp) / "always.ass"))
-            e3_always = next(e for e in subs_always if "Câu đơn" in e.text)
-            self.assertIn("Alice: Câu đơn", e3_always.text)
+            for event in subs_always:
+                self.assertNotIn("Alice:", event.text)
+                self.assertNotIn("SPK_02:", event.text)
 
             # 4. DEBUG
             p_debug = make_proj("debug")
             save_ass(p_debug, Path(tmp) / "debug.ass")
             subs_debug = pysubs2.load(str(Path(tmp) / "debug.ass"))
-            e1_debug = next(e for e in subs_debug if "Xin chào" in e.text)
-            self.assertIn("[SPK_01|1.00-4.00]", e1_debug.text)
+            for event in subs_debug:
+                self.assertNotIn("SPK_", event.text)
 
     def test_tts_alignment_diagnostics_and_no_drift(self):
         # Slot duration = 2.0s

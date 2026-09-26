@@ -41,12 +41,14 @@ class Phase5Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=save_ass(p,Path(tmp)/'test.ass',2,3)
             sub=pysubs2.load(str(path))
-            self.assertEqual([(s.start,s.end) for s in sub],[(0,2000),(1000,3000)])
+            self.assertEqual([(s.start,s.end) for s in sub],[(0,3000)])
+            self.assertIn("Chào bạn Xin chào", sub[0].plaintext)
             self.assertEqual(p.to_dict(),before)
             self.assertEqual(sub.info['PlayResX'],'320')
 
     def test_ass_uses_display_segments_when_they_exist(self):
         p = self.project()
+        p.segments[1].start, p.segments[1].end = 5, 7
         p.segments[0].set_display_segments([
             DisplaySegment("1.1", 1, 1, 2.5, "Chào", segmentation_reason="local"),
             DisplaySegment("1.2", 1, 2.5, 4, "bạn", segmentation_reason="local"),
@@ -54,7 +56,7 @@ class Phase5Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sub = pysubs2.load(str(save_ass(p, Path(tmp) / "display.ass")))
         self.assertEqual([(event.start, event.end, event.plaintext) for event in sub],
-            [(1000, 2500, "Chào"), (2500, 4000, "bạn"), (3000, 6000, "Xin chào")])
+            [(1000, 2500, "Chào"), (2500, 4000, "bạn"), (5000, 7000, "Xin chào")])
 
     def test_ass_centers_subtitles_in_enabled_mask(self):
         p = self.project()

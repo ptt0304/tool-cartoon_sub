@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QUndoStack
-from PySide6.QtWidgets import (QMainWindow, QTabWidget, QFileDialog, QMessageBox, QTableWidgetItem,
+from PySide6.QtWidgets import (QMainWindow, QTabWidget, QFileDialog, QMessageBox,
     QProgressBar, QPushButton, QInputDialog, QLabel, QScrollArea, QWidget, QHBoxLayout, QVBoxLayout)
 from cartoon_sub.app.controller import Controller
 from cartoon_sub.ui.worker import Worker
@@ -823,17 +823,7 @@ class MainWindow(QMainWindow):
             (" — model 2.5 có thể bị hạn chế; đổi trong Settings > AI." if "gemini-2.5-" in model else ""))
         self.pages[1].transcribe_button.setEnabled(project.transcription_status != "imported")
         self.pages[1].speaker_button.setEnabled(bool(project.segments))
-        table = self.pages[1].table
-        table.setRowCount(len(project.segments))
-        for row, s in enumerate(project.segments):
-            overlap_status = s.overlap_group or (s.overlap_type if s.overlap_type != "NONE" else "No")
-            values = [s.id, f"{s.start:.3f}", f"{s.end:.3f}", f"{s.duration:.3f}",
-                f"{s.speaker_id} · {s.speaker_name}", overlap_status, s.zh]
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                item.setToolTip(str(value))
-                table.setItem(row, col, item)
-        table.resizeRowsToContents()
+        transcript_tab.populate(self.pages[1], project)
         self.pages[3].load_project(project)
         audio = self.pages[5]
         audio.set_settings(self.controller.settings_store.load_local_tts())

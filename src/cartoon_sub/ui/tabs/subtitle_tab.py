@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabe
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+from cartoon_sub.subtitle.timestamps import format_srt_timestamp
+from cartoon_sub.ui.table_search import add_tree_search, apply_tree_search
 
 
 PROFILE_LABELS = {
@@ -56,6 +58,7 @@ class SubtitlePage(QWidget):
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.tree.header().sectionResized.connect(lambda *_:self.tree.doItemsLayout())
+        self.search_edit, self.search_clear = add_tree_search(layout, self.tree, (0,1,4), (0,1,4))
         layout.addWidget(self.tree,1)
         self.summary = QLabel(); self.summary.setWordWrap(True); layout.addWidget(self.summary)
         export_group = QGroupBox("EXPORT SUBTITLE")
@@ -94,14 +97,15 @@ class SubtitlePage(QWidget):
         rows = SubtitleSegmentationService().rows(project, self.warning_filter.currentData())
         self.tree.clear(); warning_count = 0
         for utterance, children in rows:
-            parent = QTreeWidgetItem([f"Utterance {utterance.id}", utterance.speaker_id, f"{utterance.start:.3f}", f"{utterance.end:.3f}", utterance.vi_subtitle, ""])
+            parent = QTreeWidgetItem([f"Utterance {utterance.id}", utterance.speaker_id, format_srt_timestamp(utterance.start), format_srt_timestamp(utterance.end), utterance.vi_subtitle, ""])
             parent.setData(0,Qt.ItemDataRole.UserRole,"utterance"); parent.setData(1,Qt.ItemDataRole.UserRole,utterance.id); self.tree.addTopLevelItem(parent)
             for segment, flags in children:
-                child = QTreeWidgetItem([segment.id, segment.speaker_id, f"{segment.start:.3f}", f"{segment.end:.3f}", segment.vi_text, " | ".join(flags)])
+                child = QTreeWidgetItem([segment.id, segment.speaker_id, format_srt_timestamp(segment.start), format_srt_timestamp(segment.end), segment.vi_text, " | ".join(flags)])
                 child.setData(0,Qt.ItemDataRole.UserRole,"display"); child.setData(1,Qt.ItemDataRole.UserRole,utterance.id); child.setData(2,Qt.ItemDataRole.UserRole,segment.id)
                 parent.addChild(child); warning_count += flags != ["OK"]
             parent.setExpanded(True)
         self.summary.setText(f"{len(rows)} utterance hiển thị • {warning_count} DisplaySegment có QC warning")
+        apply_tree_search(self.tree)
         self.tree.doItemsLayout()
 
     def selected_utterance_ids(self):
