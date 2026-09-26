@@ -104,9 +104,12 @@ def build():
     ai_layout.addWidget(widget.summary)
     layout.addWidget(ai_group)
     widget.translate_button = QPushButton("Dịch / tiếp tục bản Việt bằng Gemini")
+    widget.qa_button = QPushButton("QA/QC bản dịch")
+    widget.qa_button.setToolTip("Chạy local checks cho toàn bộ bản dịch; chỉ gọi AI cho dòng lỗi hoặc đáng nghi.")
     widget.import_vi_button = QPushButton("Import Vietnamese SRT")
     layout.addWidget(widget.import_vi_button)
     layout.addWidget(widget.translate_button)
+    layout.addWidget(widget.qa_button)
     note = QLabel("Không bắt buộc phân tích AI: khi chưa có ngữ cảnh đã duyệt, bản dịch dùng trực tiếp lựa chọn và yêu cầu của user. "
                   "Dịch dùng cache khi dữ liệu không đổi. Đổi hồ sơ/glossary/model sẽ cần cập nhật bản dịch. "
                   "Hoàn tất tự lưu subtitle/vi.srt; cảnh báo cần biên tập không tự sửa nội dung.")

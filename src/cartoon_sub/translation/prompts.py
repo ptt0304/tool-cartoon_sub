@@ -102,6 +102,41 @@ def translation_prompt(project, targets, before, after, previous_vi):
             "nghi vấn phải cụ thể (tên ASR, người nói, đa nghĩa), không tự chấm điểm chắc chắn.\n"
             + json.dumps(payload, ensure_ascii=False))
 
+
+def translation_retry_prompt(project, target, before, after, rejected_translation, issues, attempt):
+    payload = {
+        "editorial": editorial(project),
+        "qa_retry_attempt": attempt,
+        "previous_qa_issues": issues,
+        "reference_before": before,
+        "reference_after": after,
+        "rejected_translation": rejected_translation,
+        "targets": [target],
+    }
+    return (
+        "Bản dịch trước đã FAIL QA/QC. Dịch lại hoàn chỉnh từ Chinese source trong targets, không vá hoặc dùng "
+        "rejected_translation làm source. Không để lại chữ Trung trừ đúng giá trị được mapping/context khóa; giữ đầy đủ ý, "
+        "tên và thuật ngữ đã duyệt; dùng tiếng Việt tự nhiên, không dịch từng chữ. Chỉ trả đúng một ID target, không đổi "
+        "ID/timestamp/speaker. Trả translations gồm id, vi, review_note, meaning_preservation, compressed theo schema.\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+
+def semantic_qa_prompt(project, target, current_vi, before, after):
+    payload = {
+        "editorial": editorial(project),
+        "reference_before": before,
+        "reference_after": after,
+        "target": target,
+        "current_vietnamese": current_vi,
+    }
+    return (
+        "Chỉ QA bản dịch hiện tại, không creative rewrite. Kiểm tra bỏ sót ý, sai nghĩa nghiêm trọng, Chinese chưa dịch, "
+        "mapping/tên/thuật ngữ, độ tự nhiên và cấu trúc Trung-Việt cứng. Nếu đúng thì PASS và không đề xuất viết lại. "
+        "Nếu có lỗi thật thì FAIL với issues cụ thể. Trả JSON đúng schema.\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
 MODE_FILES={"faithful":"faithful","balanced_dubbing":"balanced","syllable_match":"syllable",
             "strict_iso_syllabic":"strict","time_fit":"timefit","subtitle_natural":"subtitle","short_dub":"short"}
 

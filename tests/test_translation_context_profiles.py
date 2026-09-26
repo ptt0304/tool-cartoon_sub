@@ -156,6 +156,7 @@ class TranslationContextProfilesTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "context_button"))
         self.assertEqual(page.analyze_button.text(), "Phân tích ngữ cảnh bằng AI")
         self.assertEqual(page.proposal_button.text(), "Duyệt & lưu ngữ cảnh AI")
+        self.assertEqual(page.qa_button.text(), "QA/QC bản dịch")
 
     def test_ui_enforces_three_genres_and_describes_style_and_name_rule(self):
         page = build()

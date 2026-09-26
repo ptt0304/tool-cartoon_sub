@@ -379,6 +379,7 @@ class Project:
     context_status: str = "not_started"
     translation_status: str = "not_started"
     translation_notes: dict = field(default_factory=dict)
+    translation_qa: dict = field(default_factory=dict)
 
     speakers: dict = field(default_factory=dict)
     speaker_review_hash: str = ""
@@ -468,6 +469,8 @@ class Project:
         if mode not in ("sino_vietnamese", "preserve_source", "user_mapping"):
             mode = "sino_vietnamese"
         data["proper_name_mode"] = mode
+        if not isinstance(data.get("translation_qa", {}), dict):
+            data["translation_qa"] = {}
         from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings
         profile=SegmentationProfile(data.get("segmentation_profile", "BALANCED"))
         data["segmentation_profile"]=profile.value

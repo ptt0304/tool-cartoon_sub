@@ -217,6 +217,78 @@ def _runtime_timeline_ui(project_path, result_path):
     return exit_code
 
 
+def _runtime_translation_qa(project_path, result_path):
+    """Inject one mixed-script row and exercise targeted QA from a frozen build."""
+    from cartoon_sub.app.settings import SettingsStore
+    from cartoon_sub.project.project_manager import ProjectManager
+    from cartoon_sub.translation.qa_service import TranslationQAService
+    from cartoon_sub.translation.qc import local_translation_qa
+
+    source = "他还有一件中品法器, 流云笠。"
+    bad_target = "Hắn còn có một kiện trung phẩm pháp khí là Lưu Vân L笠."
+    fixed_target = "Hắn còn có một kiện pháp khí trung phẩm tên là Lưu Vân Lạp."
+    result_file = Path(result_path)
+    result = {"build": BUILD_MARKER, "project": str(Path(project_path).resolve())}
+    try:
+        directory = Path(project_path).parent
+        project = ProjectManager().load(directory)
+        segment = project.segments[0]
+        identity = [segment.id, segment.start, segment.end, segment.speaker_id]
+        segment.zh = source
+        segment.vi = bad_target
+        before = local_translation_qa(project, segment)
+
+        class RuntimeStore:
+            def __init__(self):
+                self.real = SettingsStore()
+
+            def load(self):
+                return self.real.load()
+
+            @staticmethod
+            def get_key(_provider):
+                return "runtime-test-key"
+
+        class RuntimeClient:
+            @staticmethod
+            def generate_json(_system, prompt, _schema, _model, **_kwargs):
+                payload = json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])[0]
+                return {"translations": [{
+                    "id": payload["targets"][0]["id"], "vi": fixed_target,
+                    "review_note": "", "meaning_preservation": "high", "compressed": False,
+                }]}
+
+            @staticmethod
+            def close():
+                pass
+
+        completed, _ = TranslationQAService(RuntimeStore(), lambda _key: RuntimeClient()).run(
+            project, directory, ids=[segment.id],
+        )
+        updated = completed.segments[0]
+        after = local_translation_qa(completed, updated)
+        live_srt = (directory / "exports" / "translate" / "vi_subtitle.srt").read_text(encoding="utf-8-sig")
+        result.update(
+            status="completed",
+            detected=before["status"] == "FAIL",
+            issues=[item["type"] for item in before["issues"]],
+            retry_translation=updated.vi_subtitle,
+            qa_after_retry=after["status"],
+            qa_status=completed.translation_qa[str(updated.id)]["status"],
+            identity_preserved=identity == [updated.id, updated.start, updated.end, updated.speaker_id],
+            live_srt_synced=fixed_target in live_srt and "笠" not in live_srt,
+        )
+        exit_code = 0
+    except Exception as exc:
+        result.update(status="failed", error=str(exc), exception=type(exc).__name__,
+                      traceback=traceback.format_exc())
+        logging.getLogger(__name__).exception("[RUNTIME TRANSLATION QA] failed")
+        exit_code = 2
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return exit_code
+
+
 def main():
     configure_logging()
     logging.getLogger(__name__).info("[BUILD] %s", BUILD_MARKER)
@@ -247,6 +319,15 @@ def main():
         except (ValueError, IndexError):
             raise SystemExit("Cần --runtime-timeline-project <project.json> --runtime-result <result.json>")
         return _runtime_timeline_ui(project_path, result_path)
+    if "--runtime-translation-qa-project" in sys.argv:
+        index = sys.argv.index("--runtime-translation-qa-project")
+        try:
+            project_path = sys.argv[index + 1]
+            result_index = sys.argv.index("--runtime-result")
+            result_path = sys.argv[result_index + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Cần --runtime-translation-qa-project <project.json> --runtime-result <result.json>")
+        return _runtime_translation_qa(project_path, result_path)
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PhamThanhTung.CartoonSub")

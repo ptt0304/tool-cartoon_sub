@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self.pages[1].speaker_button.clicked.connect(self.edit_speakers)
         self.pages[1].export_transcript_button.clicked.connect(self.export_transcript_srt)
         self.pages[2].translate_button.clicked.connect(self.translate)
+        self.pages[2].qa_button.clicked.connect(self.qa_translation)
         self.pages[2].import_vi_button.clicked.connect(self.import_vi_srt)
         self.pages[2].analyze_button.clicked.connect(self.analyze_context)
         self.pages[2].proposal_button.clicked.connect(lambda: self.edit_context(True))
@@ -751,6 +752,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error(exc)
 
+    def qa_translation(self):
+        try:
+            self.sync_options()
+            self.controller.save()
+            self.start_job(self.controller.qa_translation, self.accept_project)
+        except Exception as exc:
+            self.error(exc)
+
     def analyze_context(self):
         try:
             self.sync_options()
@@ -804,6 +813,7 @@ class MainWindow(QMainWindow):
                            and project.context_proposal_config_hash == config_hash)
         ready = bool(project.segments) and review_complete(project)
         page.translate_button.setEnabled(ready)
+        page.qa_button.setEnabled(any(segment.vi_subtitle.strip() for segment in project.segments))
         page.analyze_button.setEnabled(bool(project.segments) and review_complete(project))
         page.proposal_button.setEnabled(candidate_ready)
         context = project.story_context
@@ -818,9 +828,13 @@ class MainWindow(QMainWindow):
             status += " • Có candidate AI mới đang chờ duyệt & lưu"
         states = {"completed": "Hoàn tất", "not_started": "Chưa dịch", "stale": "Cần dịch cập nhật — cấu hình/nguồn đã đổi",
                   "running": "Đang dịch", "failed": "Lỗi — bấm tiếp tục", "cancelled": "Đã hủy — có thể tiếp tục"}
+        qa_counts = {}
+        for qa in project.translation_qa.values():
+            qa_counts[qa.get("status", "UNKNOWN")] = qa_counts.get(qa.get("status", "UNKNOWN"), 0) + 1
+        qa_summary = ", ".join(f"{key}: {value}" for key, value in sorted(qa_counts.items())) or "chưa chạy"
         page.summary.setText(f"{status}\nNhân vật: {len(context.get('characters', []))} • Thuật ngữ: {len(context.get('terms', []))} "
             f"• Quy tắc xưng hô: {len(context.get('address_rules', []))} • Nghi vấn ngữ cảnh: {len(context.get('uncertainties', []))}\n"
-            f"Bản dịch: {states.get(project.translation_status, project.translation_status)}")
+            f"Bản dịch: {states.get(project.translation_status, project.translation_status)} • QA/QC: {qa_summary}")
         model = self.controller.settings_store.load().translation_model
         page.summary.setText(page.summary.text() + f"\nModel dịch/ngữ cảnh: {model}" +
             (" — model 2.5 có thể bị hạn chế; đổi trong Settings > AI." if "gemini-2.5-" in model else ""))

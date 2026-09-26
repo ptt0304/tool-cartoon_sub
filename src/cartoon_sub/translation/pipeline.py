@@ -7,6 +7,7 @@ from cartoon_sub.speaker.service import refresh_timeline, review_complete
 from .gemini_translator import TRANSLATION_SCHEMA, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
+from .qa_service import TranslationQAService
 from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.project.cache import check_cancel, content_hash
@@ -33,6 +34,7 @@ def mark_stale(project, settings):
 class TranslationPipeline:
     def __init__(self, store, client_factory=GeminiClient):
         self.store, self.factory = store, client_factory
+        self.qa_service = TranslationQAService(store, client_factory)
 
     def run(self, project, directory, *, cancel=None, progress=None):
         refresh_timeline(project)
@@ -122,6 +124,10 @@ class TranslationPipeline:
         finally:
             requests.close()
         save_translation_artifacts(project, directory)
+        qa_ids = [segment.id for segment in project.segments if segment.id not in imported_ids]
+        project, output_directory = self.qa_service.run(
+            project, directory, ids=qa_ids, cancel=cancel, progress=progress,
+        )
         if progress:
-            progress(f"Đã dịch {len(translated)} dòng; xem Subtitle và subtitle/vi.srt")
-        return project, Path(directory)
+            progress(f"Đã dịch và QA/QC {len(translated)} dòng; xem Subtitle và subtitle/vi.srt")
+        return project, output_directory

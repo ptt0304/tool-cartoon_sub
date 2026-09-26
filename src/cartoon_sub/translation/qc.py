@@ -1,6 +1,132 @@
 import re
 import unicodedata
+from cartoon_sub.project.cache import content_hash
 from cartoon_sub.syllable.target import DubbingSettings, allowed_delta
+
+
+HAN_PATTERN = re.compile(
+    r"[\u3400-\u4DBF\u4E00-\u9FFF\U00020000-\U0002FA1F]"
+)
+HAN_RUN_PATTERN = re.compile(
+    r"[\u3400-\u4DBF\u4E00-\u9FFF\U00020000-\U0002FA1F]{2,}"
+)
+VIETNAMESE_LETTER = r"A-Za-zÀ-ỹ"
+TRUNCATED_END = re.compile(r"\b(là|của|và|với|để|nhưng|hoặc|rằng)\s*[.!?…]*$", re.IGNORECASE)
+PLACEHOLDER = re.compile(r"(?:\\u[0-9a-fA-F]{4}|\b(?:TODO|FIXME|undefined|null)\b|<[^>]{1,40}>)")
+
+
+def _issue(issue_type, detail, severity="FAIL"):
+    return {"type": issue_type, "detail": detail, "severity": severity}
+
+
+def translation_qa_fingerprint(segment):
+    return {
+        "source_hash": content_hash(segment.zh),
+        "target_hash": content_hash(segment.vi_subtitle),
+    }
+
+
+def qa_entry_is_current(segment, entry):
+    fingerprint = translation_qa_fingerprint(segment)
+    return (isinstance(entry, dict)
+            and entry.get("source_hash") == fingerprint["source_hash"]
+            and entry.get("target_hash") == fingerprint["target_hash"])
+
+
+def store_qa_result(project, segment, status, issues=None, attempts=0, last_failed_reason=""):
+    entry = {"status": status, "issues": list(issues or []), "attempts": int(attempts),
+             "last_failed_reason": str(last_failed_reason)}
+    entry.update(translation_qa_fingerprint(segment))
+    project.translation_qa[str(segment.id)] = entry
+    return entry
+
+
+def invalidate_qa(project, segment):
+    return store_qa_result(project, segment, "UNKNOWN", [], 0, "Source Chinese đã thay đổi")
+
+
+def _allowed_han_values(project):
+    values = [value for value in project.glossary.values() if isinstance(value, str) and HAN_PATTERN.search(value)]
+    context_rows = project.story_context.get("characters", []) + project.story_context.get("terms", [])
+    values.extend(row.get("target", "") for row in context_rows
+                  if isinstance(row, dict) and isinstance(row.get("target"), str)
+                  and HAN_PATTERN.search(row["target"]))
+    return sorted(set(filter(None, values)), key=len, reverse=True)
+
+
+def _mask_allowed(text, allowed):
+    for value in allowed:
+        text = text.replace(value, "")
+    return text
+
+
+def local_translation_qa(project, segment):
+    """Fast deterministic QA. It never mutates translation text or project state."""
+    source = unicodedata.normalize("NFC", segment.zh or "").strip()
+    target = unicodedata.normalize("NFC", segment.vi_subtitle or "").strip()
+    issues = []
+    if source and not target:
+        return {"status": "FAIL", "issues": [
+            _issue("EMPTY_TRANSLATION", "Source có nội dung nhưng bản dịch tiếng Việt đang rỗng")
+        ]}
+    if not source:
+        return {"status": "PASS", "issues": []}
+
+    if "\ufffd" in target or any(unicodedata.category(ch) == "Cc" and ch not in "\n\t" for ch in target):
+        issues.append(_issue("INVALID_UNICODE", "Bản dịch chứa ký tự Unicode/control bất thường"))
+    if PLACEHOLDER.search(target):
+        issues.append(_issue("MALFORMED_OUTPUT", "Bản dịch chứa escape, placeholder hoặc artifact không hợp lệ"))
+
+    # Preserve-source is an explicit user decision. Otherwise only exact locked
+    # mapping/context targets may retain Han characters.
+    inspect_target = target
+    if project.proper_name_mode == "preserve_source":
+        inspect_target = ""
+    else:
+        inspect_target = _mask_allowed(inspect_target, _allowed_han_values(project))
+    han = "".join(dict.fromkeys(HAN_PATTERN.findall(inspect_target)))
+    if han:
+        issues.append(_issue("UNTRANSLATED_HAN", f"Còn ký tự Trung Quốc trong bản dịch: {han}"))
+        if (re.search(rf"[{VIETNAMESE_LETTER}]{{1,}}\s*{HAN_PATTERN.pattern}", inspect_target)
+                or re.search(rf"{HAN_PATTERN.pattern}\s*[{VIETNAMESE_LETTER}]{{1,}}", inspect_target)):
+            issues.append(_issue("MIXED_SCRIPT", "Bản dịch chứa chuỗi Trung–Việt bất thường"))
+
+    if project.proper_name_mode != "preserve_source":
+        masked_target = _mask_allowed(target, _allowed_han_values(project))
+        fragments = [fragment for fragment in HAN_RUN_PATTERN.findall(masked_target) if fragment in source]
+        if fragments:
+            issues.append(_issue("UNTRANSLATED_SOURCE_FRAGMENT",
+                                 "Còn nguyên cụm Chinese từ source: " + ", ".join(dict.fromkeys(fragments))))
+
+    terms = dict(project.glossary)
+    for row in project.story_context.get("characters", []) + project.story_context.get("terms", []):
+        if isinstance(row, dict) and row.get("source") and row.get("target"):
+            terms.setdefault(row["source"], row["target"])
+    folded_target = target.casefold()
+    for term_source, term_target in terms.items():
+        if term_source in source and str(term_target).strip() and str(term_target).casefold() not in folded_target:
+            issues.append(_issue("TERM_MISMATCH", f"Thuật ngữ chưa theo mapping/context: {term_source} → {term_target}"))
+
+    suspect = []
+    bracket_pairs = (("(", ")"), ("[", "]"), ("{", "}"), ("“", "”"), ("‘", "’"))
+    if any(target.count(left) != target.count(right) for left, right in bracket_pairs) or target.count('"') % 2:
+        suspect.append(_issue("SUSPECT_TRUNCATION", "Câu có dấu ngoặc hoặc dấu nháy chưa khép", "SUSPECT"))
+    if len(HAN_PATTERN.findall(source)) >= 20 and TRUNCATED_END.search(target):
+        suspect.append(_issue("SUSPECT_TRUNCATION", "Câu có dấu hiệu bị cắt giữa chừng", "SUSPECT"))
+    if len(HAN_PATTERN.findall(source)) >= 30 and len(re.findall(r"\w+", target, re.UNICODE)) <= 3:
+        suspect.append(_issue("SUSPECT_OMISSION", "Bản dịch có thể thiếu ý so với câu gốc", "SUSPECT"))
+
+    unique = []
+    seen = set()
+    for item in issues + suspect:
+        if item["type"] not in seen:
+            unique.append(item)
+            seen.add(item["type"])
+    if any(item["severity"] == "FAIL" for item in unique):
+        return {"status": "FAIL", "issues": unique}
+    if unique:
+        return {"status": "SUSPECT", "issues": unique}
+    return {"status": "PASS", "issues": []}
 
 
 def review_translation(project):
@@ -11,9 +137,16 @@ def review_translation(project):
             terms.setdefault(row["source"], row["target"])
     for segment in project.segments:
         notes = []
-        if not segment.vi.strip():
-            notes.append("Chưa có bản dịch")
-        if re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\U00020000-\U0002fa1f]", segment.vi):
+        saved = project.translation_qa.get(str(segment.id), {})
+        if qa_entry_is_current(segment, saved):
+            qa_status, qa_issues = saved.get("status", "UNKNOWN"), saved.get("issues", [])
+        else:
+            current = local_translation_qa(project, segment)
+            qa_status = "UNKNOWN" if current["status"] == "PASS" else current["status"]
+            qa_issues = current["issues"]
+        notes.append("QA: " + qa_status)
+        notes.extend(f"{item.get('type', 'QA')}: {item.get('detail', '')}" for item in qa_issues)
+        if any(item.get("type") == "UNTRANSLATED_HAN" for item in qa_issues):
             notes.append("Còn chữ Trung")
         if len(segment.vi) > 100:
             notes.append("Dòng dài >100 ký tự")

@@ -18,6 +18,7 @@ from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import ProviderModelClient, TextProviderClient
 from cartoon_sub.translation.context_service import ContextService, source_fingerprint
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
+from cartoon_sub.translation.qa_service import TranslationQAService
 from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
@@ -41,6 +42,7 @@ class Controller:
         self.pipeline = TranscriptionPipeline(self.settings_store)
         self.context_service = ContextService(self.settings_store)
         self.translation_pipeline = TranslationPipeline(self.settings_store)
+        self.translation_qa_service = TranslationQAService(self.settings_store)
         self.dubbing_service=DubbingService(self.settings_store)
         self.segmentation_service=SubtitleSegmentationService(SemanticSegmentationService(self.settings_store))
         self.audio_timing_refiner=AudioTimingRefiner(self.settings_store)
@@ -93,6 +95,7 @@ class Controller:
         self.project.transcription_status = "imported"
         self.project.translation_status = "not_started"
         self.project.translation_notes = {}
+        self.project.translation_qa = {}
         self.project.segmentation_cache = {}
         self.project.cache_hashes.pop("translation", None)
         self.project.chunk_states.pop("translation", None)
@@ -135,6 +138,7 @@ class Controller:
             if not best.vi_dubbing.strip() or best.translation_source != "imported_srt":
                 best.vi_dubbing = best.vi_subtitle
             best.translation_source = "imported_srt"
+            self.project.translation_qa.pop(str(best.id), None)
             best.dubbing_optimized = False
             best.dubbing_status = "not_started"
             best.recalculate()
@@ -186,6 +190,9 @@ class Controller:
 
     def translate(self, **job):
         return self.translation_pipeline.run(self.project, self.directory, **job)
+
+    def qa_translation(self, **job):
+        return self.translation_qa_service.run(self.project, self.directory, **job)
 
     def transcribe(self, **job):
         return self.pipeline.run(self.project, self.directory, **job)
@@ -530,6 +537,12 @@ class Controller:
             s.tts_error = ""
         if subtitle_changed:
             self.segmentation_service.sync_utterance(self.project, s)
+            from cartoon_sub.translation.qc import local_translation_qa, store_qa_result
+            result = local_translation_qa(self.project, s)
+            status = "MANUAL_FIXED" if result["status"] == "PASS" else (
+                "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
+            store_qa_result(self.project, s, status, result["issues"], 0,
+                            ", ".join(item["type"] for item in result["issues"]))
         self.save()
 
     def apply_manual_edits(self, dirty_rows: list[dict]):
@@ -659,6 +672,16 @@ class Controller:
                 s.overlap_diagnostics = []
 
             s.recalculate()
+            if zh_changed:
+                from cartoon_sub.translation.qc import invalidate_qa
+                invalidate_qa(self.project, s)
+            elif sub_changed:
+                from cartoon_sub.translation.qc import local_translation_qa, store_qa_result
+                result = local_translation_qa(self.project, s)
+                status = "MANUAL_FIXED" if result["status"] == "PASS" else (
+                    "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
+                store_qa_result(self.project, s, status, result["issues"], 0,
+                                ", ".join(item["type"] for item in result["issues"]))
 
         if timing_or_spk_changed:
             from cartoon_sub.speaker.service import refresh_timeline
