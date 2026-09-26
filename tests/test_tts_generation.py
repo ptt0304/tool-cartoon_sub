@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 import wave
@@ -33,9 +34,9 @@ class FakeLocalTTSClient:
         self.metadata_duration = 1.25
         self.wav_seconds = 0.1
         self.voices = [
-            {"voice_id": "voice_a", "display_name": "A", "status": "READY"},
-            {"voice_id": "voice_b", "display_name": "B", "status": "READY"},
-            {"voice_id": "pending", "display_name": "Pending", "status": "REQUIRES_REFERENCE"},
+            {"voice_id": "voice_a", "display_name": "A", "engine": "piper", "status": "READY"},
+            {"voice_id": "voice_b", "display_name": "B", "engine": "vieneu", "status": "READY"},
+            {"voice_id": "pending", "display_name": "Pending", "engine": "vieneu", "status": "REQUIRES_REFERENCE"},
         ]
 
     def health(self):
@@ -99,7 +100,7 @@ class TTSGenerationTests(unittest.TestCase):
             row = ProjectManager().load(directory).utterances[0]
             self.assertEqual(row.tts_generation_status, "generated")
             self.assertTrue(row.tts_fingerprint)
-            self.assertTrue(row.tts_segment_id.startswith("utt_000031_"))
+            self.assertEqual(row.tts_segment_id, f"utt_{row.tts_cache_key}")
             self.assertFalse(Path(row.tts_audio_path).is_absolute())
             self.assertTrue((Path(directory) / row.tts_audio_path).is_file())
             self.assertAlmostEqual(row.tts_duration, 0.1, places=3)
@@ -130,11 +131,127 @@ class TTSGenerationTests(unittest.TestCase):
                 service = LocalTTSGenerationService(client)
                 service.generate(project, directory)
                 first_id = project.utterances[0].tts_segment_id
+                first_fingerprint = project.utterances[0].tts_fingerprint
                 client.generate_calls.clear()
                 mutate(project)
                 service.generate(project, directory)
                 self.assertEqual(len(client.generate_calls), 1)
-                self.assertNotEqual(project.utterances[0].tts_segment_id, first_id)
+                self.assertEqual(project.utterances[0].tts_segment_id, first_id)
+                self.assertNotEqual(project.utterances[0].tts_fingerprint, first_fingerprint)
+
+    def test_manifest_uses_stable_cache_key_and_renumbering_is_a_hit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            row = project.utterances[0]
+            stable_key = row.tts_cache_key
+            original_path = row.tts_audio_path
+            manifest_path = Path(directory) / "audio" / "tts" / "tts_cache.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["version"], 1)
+            self.assertIn(stable_key, manifest["segments"])
+
+            row.id = 99
+            approve_review(project)
+            client.generate_calls.clear()
+            result = service.generate(project, directory)
+
+            self.assertEqual(result.cached, 1)
+            self.assertEqual(client.generate_calls, [])
+            self.assertEqual(row.tts_cache_key, stable_key)
+            self.assertEqual(row.tts_audio_path, original_path)
+
+    def test_new_and_deleted_utterance_only_touch_owned_segment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            original = project.utterances[0]
+            original_key = original.tts_cache_key
+            original_path = Path(directory) / original.tts_audio_path
+
+            project.utterances.append(Segment(
+                32, 3.1, 4.5, "新增", vi_subtitle="Câu mới",
+                vi_dubbing="Câu mới", speaker_id="SPK_01", speaker_name="Một",
+            ))
+            approve_review(project)
+            client.generate_calls.clear()
+            added = service.generate(project, directory)
+            self.assertEqual(added.new, 1)
+            self.assertEqual(added.cached, 1)
+            self.assertEqual(len(client.generate_calls), 1)
+            remaining_path = Path(directory) / project.utterances[1].tts_audio_path
+
+            project.utterances.pop(0)
+            approve_review(project)
+            client.generate_calls.clear()
+            deleted = service.generate(project, directory)
+            manifest = json.loads(
+                (Path(directory) / "audio" / "tts" / "tts_cache.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(deleted.deleted, 1)
+            self.assertFalse(original_path.exists())
+            self.assertTrue(remaining_path.exists())
+            self.assertNotIn(original_key, manifest["segments"])
+            self.assertEqual(client.generate_calls, [])
+
+    def test_voice_change_regenerates_only_affected_speaker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory, two=True)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            client.generate_calls.clear()
+
+            project.speakers["SPK_01"]["tts_voice_id"] = "voice_b"
+            result = service.generate(project, directory)
+
+            self.assertEqual(result.changed, 1)
+            self.assertEqual(result.cached, 1)
+            self.assertEqual(
+                [call["speaker_id"] for call in client.generate_calls], ["SPK_01"],
+            )
+
+    def test_missing_file_regenerates_only_that_utterance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory, two=True)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            (Path(directory) / project.utterances[0].tts_audio_path).unlink()
+            client.generate_calls.clear()
+
+            result = service.generate(project, directory)
+
+            self.assertEqual(result.missing_file, 1)
+            self.assertEqual(result.cached, 1)
+            self.assertEqual(len(client.generate_calls), 1)
+            self.assertEqual(client.generate_calls[0]["speaker_id"], "SPK_01")
+
+    def test_cancel_resume_reuses_every_successfully_persisted_segment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory, two=True)
+            client = FakeLocalTTSClient()
+            cancel = Event()
+
+            def cancel_after_first_success(message):
+                if str(message).startswith("TTS saved 1/"):
+                    cancel.set()
+
+            with self.assertRaises(CancelledError):
+                LocalTTSGenerationService(client).generate(
+                    project, directory, cancel=cancel, progress=cancel_after_first_success,
+                )
+            self.assertEqual(len(client.generate_calls), 1)
+
+            client.generate_calls.clear()
+            resumed = LocalTTSGenerationService(client).generate(project, directory)
+            self.assertEqual(resumed.cached, 1)
+            self.assertEqual(resumed.generated, 1)
+            self.assertEqual(len(client.generate_calls), 1)
 
     def test_failure_persists_and_resume_only_regenerates_failed_cue(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -172,6 +289,36 @@ class TTSGenerationTests(unittest.TestCase):
             remote.generate(project, directory)
             self.assertEqual(len(client.generate_calls), 1)
             self.assertNotEqual(project.utterances[0].tts_fingerprint, local_fingerprint)
+
+    def test_timing_change_does_not_invalidate_raw_tts_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            project.utterances[0].start += 0.25
+            project.utterances[0].end += 0.25
+            approve_review(project)
+            client.generate_calls.clear()
+
+            result = service.generate(project, directory)
+
+            self.assertEqual(result.cached, 1)
+            self.assertEqual(client.generate_calls, [])
+
+    def test_engine_change_with_same_voice_id_invalidates_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            client = FakeLocalTTSClient()
+            service = LocalTTSGenerationService(client)
+            service.generate(project, directory)
+            client.voices[0]["engine"] = "piper_v2"
+            client.generate_calls.clear()
+
+            result = service.generate(project, directory)
+
+            self.assertEqual(result.changed, 1)
+            self.assertEqual(len(client.generate_calls), 1)
 
     def test_downloaded_wav_duration_is_source_of_truth(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -27,6 +27,7 @@ def normalize_local_tts_base_url(base_url: str) -> str:
 
 
 def build_tts_fingerprint(utterance, speaker, server_base_url: str) -> str:
+    """Legacy v2 fingerprint retained for safe migration of existing segment WAVs."""
     value = {
         "version": 2,
         "server": normalize_local_tts_base_url(server_base_url),
@@ -44,3 +45,38 @@ def build_tts_fingerprint(utterance, speaker, server_base_url: str) -> str:
 
 def build_tts_segment_id(utterance, fingerprint: str) -> str:
     return f"utt_{utterance.id:06d}_{fingerprint[:12]}"
+
+
+def normalize_tts_text(text: str) -> str:
+    if not isinstance(text, str):
+        raise ValueError("TTS text must be text")
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+_VOICE_IDENTITY_FIELDS = (
+    "voice_id", "engine", "backend", "model_id", "model", "version",
+    "voice_version", "revision", "reference_id", "reference_hash", "source_hash",
+)
+
+
+def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metadata=None) -> str:
+    """Hash only inputs that can change the raw waveform; timing/row number are excluded."""
+    metadata = voice_metadata if isinstance(voice_metadata, dict) else {}
+    voice_identity = {field: metadata.get(field) for field in _VOICE_IDENTITY_FIELDS}
+    voice_identity["voice_id"] = speaker.tts_voice_id
+    value = {
+        "version": 1,
+        "server": normalize_local_tts_base_url(server_base_url),
+        "language": "vi",
+        "text": normalize_tts_text(utterance.vi_dubbing),
+        "voice": voice_identity,
+        "speed": float(speaker.tts_speed),
+    }
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_cached_segment_id(utterance) -> str:
+    return f"utt_{utterance.tts_cache_key}"

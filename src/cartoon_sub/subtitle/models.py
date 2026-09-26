@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field, asdict
+from uuid import uuid4
 from cartoon_sub.translation.context_models import StoryContext
 
 
@@ -89,6 +90,7 @@ class Utterance:
     id: int
     start: float
     end: float
+    tts_cache_key: str = field(default_factory=lambda: uuid4().hex)
     zh: str = ""
     vi_subtitle: str = ""
     vi_dubbing: str = ""
@@ -167,6 +169,8 @@ class Utterance:
         if self.tts_audio_path is not None and not isinstance(self.tts_audio_path,str): raise ValueError("TTS path must be a string")
         if self.tts_segment_id is not None and (not isinstance(self.tts_segment_id, str) or not self.tts_segment_id.strip()):
             raise ValueError("TTS segment ID must be a non-empty string or null")
+        if not isinstance(self.tts_cache_key, str) or not self.tts_cache_key.strip():
+            raise ValueError("TTS cache key must be non-empty text")
         if not isinstance(self.tts_fingerprint, str) or not isinstance(self.tts_error, str) or not isinstance(self.tts_alignment_diagnostic, str):
             raise ValueError("TTS metadata must be text")
         if self.tts_generation_status not in TTS_GENERATION_STATUSES:

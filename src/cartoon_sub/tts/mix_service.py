@@ -12,7 +12,12 @@ from cartoon_sub.media.process import run_process
 from cartoon_sub.project.cache import check_cancel
 from cartoon_sub.speaker.models import Speaker
 from cartoon_sub.subtitle.models import Project
-from cartoon_sub.tts.cache_identity import build_tts_fingerprint, build_tts_segment_id
+from cartoon_sub.tts.cache_identity import (
+    build_tts_fingerprint,
+    build_tts_segment_id,
+    normalize_tts_text,
+)
+from cartoon_sub.tts.cache_manifest import load_manifest, project_audio_path
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,7 @@ class TTSTimelineMixService:
         duration = float(duration)
         if not project.utterances:
             raise ValueError("Project không có Utterance để mix")
+        cache_manifest, cache_state = load_manifest(root)
 
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
         false_overlaps = [(left, right) for left, right in zip(ordered, ordered[1:])
@@ -131,29 +137,48 @@ class TTSTimelineMixService:
             check_cancel(cancel)
             phase_started = perf_counter()
             raw_speaker = project.speakers.get(utterance.speaker_id)
-            try:
-                speaker = Speaker(**raw_speaker) if raw_speaker else None
-                current_fingerprint = (
-                    build_tts_fingerprint(utterance, speaker, server_base_url)
-                    if speaker and speaker.tts_voice_id
-                    else ""
+            speaker = Speaker(**raw_speaker) if raw_speaker else None
+            current = False
+            if cache_state == "valid" and speaker and speaker.tts_voice_id:
+                entry = cache_manifest["segments"].get(utterance.tts_cache_key)
+                try:
+                    entry_path = project_audio_path(root, entry.get("file", "")) if entry else None
+                    stored_path = (root / utterance.tts_audio_path).resolve() if utterance.tts_audio_path else None
+                except (TypeError, ValueError, OSError):
+                    entry_path = stored_path = None
+                current = bool(
+                    entry
+                    and utterance.tts_generation_status in {"generated", "cached"}
+                    and utterance.tts_fingerprint == entry.get("signature")
+                    and utterance.tts_segment_id == entry.get("segment_id")
+                    and entry.get("voice_id") == speaker.tts_voice_id
+                    and entry.get("text") == normalize_tts_text(utterance.vi_dubbing)
+                    and float(entry.get("speed", -1)) == float(speaker.tts_speed)
+                    and entry_path == stored_path
                 )
-                expected_segment_id = (
-                    build_tts_segment_id(utterance, current_fingerprint)
-                    if current_fingerprint
-                    else ""
+            elif cache_state == "missing":
+                try:
+                    current_fingerprint = (
+                        build_tts_fingerprint(utterance, speaker, server_base_url)
+                        if speaker and speaker.tts_voice_id
+                        else ""
+                    )
+                    expected_segment_id = (
+                        build_tts_segment_id(utterance, current_fingerprint)
+                        if current_fingerprint
+                        else ""
+                    )
+                except (TypeError, ValueError):
+                    current_fingerprint = ""
+                    expected_segment_id = ""
+                current = (
+                    utterance.tts_generation_status in {"generated", "cached"}
+                    and bool(utterance.tts_audio_path)
+                    and bool(utterance.tts_fingerprint)
+                    and bool(utterance.tts_segment_id)
+                    and utterance.tts_fingerprint == current_fingerprint
+                    and utterance.tts_segment_id == expected_segment_id
                 )
-            except (TypeError, ValueError):
-                current_fingerprint = ""
-                expected_segment_id = ""
-            current = (
-                utterance.tts_generation_status in {"generated", "cached"}
-                and bool(utterance.tts_audio_path)
-                and bool(utterance.tts_fingerprint)
-                and bool(utterance.tts_segment_id)
-                and utterance.tts_fingerprint == current_fingerprint
-                and utterance.tts_segment_id == expected_segment_id
-            )
             if not current:
                 raise ValueError(
                     f"TTS_AUDIO_STALE: Utterance {utterance.id} must be regenerated before mixing."

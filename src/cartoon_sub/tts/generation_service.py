@@ -13,7 +13,18 @@ from cartoon_sub.media.process import CancelledError
 from cartoon_sub.speaker.models import Speaker
 from cartoon_sub.speaker.service import review_complete
 from cartoon_sub.subtitle.models import Project, Utterance
-from cartoon_sub.tts.cache_identity import build_tts_fingerprint, build_tts_segment_id
+from cartoon_sub.tts.cache_identity import (
+    build_cached_segment_id,
+    build_tts_fingerprint,
+    compute_tts_signature,
+    normalize_tts_text,
+)
+from cartoon_sub.tts.cache_manifest import (
+    load_manifest,
+    manifest_file_for_project,
+    project_audio_path,
+    save_manifest,
+)
 from cartoon_sub.tts.local_tts_client import LocalTTSClient, LocalTTSError
 
 
@@ -25,8 +36,33 @@ class TTSGenerationResult:
     total: int
     generated: int = 0
     cached: int = 0
+    needed: int = 0
+    new: int = 0
+    changed: int = 0
+    missing_file: int = 0
+    deleted: int = 0
     failed_ids: list[int] = field(default_factory=list)
     warnings: int = 0
+
+
+@dataclass
+class PlannedSegment:
+    utterance: Utterance
+    speaker: Speaker
+    voice: dict
+    signature: str
+    reason: str
+    entry: dict | None = None
+
+
+@dataclass
+class TTSCachePlan:
+    manifest: dict
+    manifest_state: str
+    cached: list[PlannedSegment] = field(default_factory=list)
+    actions: list[PlannedSegment] = field(default_factory=list)
+    deleted: list[tuple[str, dict]] = field(default_factory=list)
+    migrated: bool = False
 
 
 class LocalTTSGenerationService:
@@ -43,12 +79,17 @@ class LocalTTSGenerationService:
             raise ValueError("Local_TTS server base URL is required for cache identity")
         self.server_base_url = configured_url
 
-    def fingerprint(self, utterance: Utterance, speaker: Speaker) -> str:
-        return build_tts_fingerprint(utterance, speaker, self.server_base_url)
+        self._voice_registry: dict[str, dict] = {}
+
+    def fingerprint(self, utterance: Utterance, speaker: Speaker, voice=None) -> str:
+        return compute_tts_signature(
+            utterance, speaker, self.server_base_url,
+            voice if voice is not None else self._voice_registry.get(speaker.tts_voice_id),
+        )
 
     @staticmethod
-    def segment_id(utterance: Utterance, fingerprint: str) -> str:
-        return build_tts_segment_id(utterance, fingerprint)
+    def segment_id(utterance: Utterance, fingerprint: str = "") -> str:
+        return build_cached_segment_id(utterance)
 
     @staticmethod
     def _valid_wav(path: Path) -> bool:
@@ -61,8 +102,13 @@ class LocalTTSGenerationService:
             return False
 
     @classmethod
-    def _cache_hit(cls, project_dir: Path, utterance: Utterance, fingerprint: str, segment_id: str) -> bool:
-        if utterance.tts_fingerprint != fingerprint or utterance.tts_segment_id != segment_id or not utterance.tts_audio_path:
+    def _legacy_cache_hit(
+        cls, project_dir: Path, utterance: Utterance, speaker: Speaker, server_base_url: str,
+    ) -> bool:
+        if not utterance.tts_audio_path or not utterance.tts_fingerprint:
+            return False
+        legacy = build_tts_fingerprint(utterance, speaker, server_base_url)
+        if utterance.tts_fingerprint != legacy:
             return False
         path = (project_dir / utterance.tts_audio_path).resolve()
         try:
@@ -70,6 +116,110 @@ class LocalTTSGenerationService:
         except ValueError:
             return False
         return cls._valid_wav(path)
+
+    @staticmethod
+    def _manifest_entry(utterance, speaker, voice, signature, file_name, duration, segment_id):
+        return {
+            "signature": signature,
+            "file": file_name,
+            "segment_id": segment_id,
+            "text": normalize_tts_text(utterance.vi_dubbing),
+            "speaker_id": utterance.speaker_id,
+            "voice_id": speaker.tts_voice_id,
+            "engine": voice.get("engine") or voice.get("backend") or voice.get("source"),
+            "speed": float(speaker.tts_speed),
+            "duration": duration,
+        }
+
+    def _bootstrap_entry(self, root, utterance, speaker, voice, signature):
+        if not utterance.tts_audio_path:
+            return None
+        path = (root / utterance.tts_audio_path).resolve()
+        try:
+            file_name = manifest_file_for_project(root, utterance.tts_audio_path)
+        except (ValueError, OSError):
+            return None
+        current_signature = utterance.tts_fingerprint == signature
+        legacy_signature = self._legacy_cache_hit(root, utterance, speaker, self.server_base_url)
+        if not (current_signature or legacy_signature) or not self._valid_wav(path):
+            return None
+        duration = utterance.tts_duration or self._wav_duration(path)
+        segment_id = utterance.tts_segment_id or path.stem
+        utterance.tts_fingerprint = signature
+        utterance.tts_generation_status = "cached"
+        utterance.tts_error = ""
+        return self._manifest_entry(
+            utterance, speaker, voice, signature, file_name, duration, segment_id,
+        )
+
+    def _plan(self, project: Project, root: Path, speakers: dict[str, Speaker]) -> TTSCachePlan:
+        manifest, state = load_manifest(root)
+        plan = TTSCachePlan(manifest=manifest, manifest_state=state)
+        entries = manifest["segments"]
+        current_keys = {row.tts_cache_key for row in project.utterances}
+        if state == "valid":
+            plan.deleted = [
+                (key, entry) for key, entry in entries.items() if key not in current_keys
+            ]
+
+        for utterance in project.utterances:
+            speaker = speakers[utterance.speaker_id]
+            voice = self._voice_registry[speaker.tts_voice_id]
+            signature = self.fingerprint(utterance, speaker, voice)
+            entry = entries.get(utterance.tts_cache_key)
+            if entry is None and state != "invalid":
+                entry = self._bootstrap_entry(root, utterance, speaker, voice, signature)
+                if entry is not None:
+                    entries[utterance.tts_cache_key] = entry
+                    plan.migrated = True
+
+            reason = "CACHED"
+            if entry is None:
+                reason = "CHANGED" if utterance.tts_audio_path else "NEW"
+            elif entry.get("signature") != signature:
+                reason = "CHANGED"
+            else:
+                try:
+                    cached_file = project_audio_path(root, entry.get("file", ""))
+                except (ValueError, OSError, TypeError):
+                    cached_file = None
+                if cached_file is None or not self._valid_wav(cached_file):
+                    reason = "MISSING_FILE"
+
+            item = PlannedSegment(utterance, speaker, voice, signature, reason, entry)
+            if reason == "CACHED":
+                plan.cached.append(item)
+            else:
+                plan.actions.append(item)
+        return plan
+
+    @staticmethod
+    def _remove_deleted(root: Path, plan: TTSCachePlan) -> int:
+        if plan.manifest_state != "valid" or not plan.deleted:
+            return 0
+        entries = plan.manifest["segments"]
+        current_files = {
+            entry.get("file") for key, entry in entries.items()
+            if key not in {deleted_key for deleted_key, _ in plan.deleted}
+        }
+        removed = 0
+        for cache_key, entry in plan.deleted:
+            file_name = entry.get("file")
+            delete_entry = True
+            if isinstance(file_name, str) and file_name not in current_files:
+                try:
+                    relative = Path(file_name)
+                    if relative.parts and relative.parts[0] == "segments":
+                        path = project_audio_path(root, file_name)
+                        path.unlink(missing_ok=True)
+                        logger.info("[TTS CACHE DELETE] uuid=%s file=%s", cache_key, file_name)
+                except (OSError, ValueError):
+                    logger.warning("[TTS CACHE] Could not remove orphan %s", file_name)
+                    delete_entry = False
+            if delete_entry:
+                entries.pop(cache_key, None)
+                removed += 1
+        return removed
 
     def _preflight(self, project: Project, project_dir: Path) -> dict[str, Speaker]:
         if not isinstance(project, Project) or not (project_dir / "project.json").is_file():
@@ -104,6 +254,7 @@ class LocalTTSGenerationService:
             for voice in self.client.list_voices()
             if isinstance(voice.get("voice_id"), str)
         }
+        self._voice_registry = voices
         for speaker in speakers.values():
             voice = voices.get(speaker.tts_voice_id)
             logger.info(
@@ -121,13 +272,6 @@ class LocalTTSGenerationService:
             if voice.get("status") != "READY":
                 raise ValueError(f"Local_TTS voice chưa READY: {speaker.tts_voice_id}")
         return speakers
-
-    @staticmethod
-    def _clear_audio_metadata(utterance: Utterance) -> None:
-        utterance.tts_audio_path = None
-        utterance.tts_duration = None
-        utterance.tts_speed_factor = None
-        utterance.tts_alignment_status = "not_imported"
 
     @staticmethod
     def _wav_duration(path: Path) -> float:
@@ -159,42 +303,76 @@ class LocalTTSGenerationService:
     def generate(self, project: Project, project_dir, cancel=None, progress=None) -> TTSGenerationResult:
         root = Path(project_dir).resolve()
         speakers = self._preflight(project, root)
-        result = TTSGenerationResult(total=len(project.utterances))
+        plan = self._plan(project, root, speakers)
+        result = TTSGenerationResult(
+            total=len(project.utterances),
+            cached=len(plan.cached),
+            needed=len(plan.actions),
+            new=sum(item.reason == "NEW" for item in plan.actions),
+            changed=sum(item.reason == "CHANGED" for item in plan.actions),
+            missing_file=sum(item.reason == "MISSING_FILE" for item in plan.actions),
+        )
         segments_dir = root / "audio" / "tts" / "segments"
+        result.deleted = self._remove_deleted(root, plan)
+        logger.info(
+            "[TTS CACHE] Total current: %d Cached/reuse: %d Changed: %d New: %d "
+            "Missing file: %d Deleted/orphan: %d Need generate: %d",
+            result.total, result.cached, result.changed, result.new,
+            result.missing_file, result.deleted, result.needed,
+        )
+        if progress:
+            progress(
+                f"TTS cache: {result.cached} reused • {result.needed} to generate "
+                f"({result.changed} changed, {result.new} new, "
+                f"{result.missing_file} missing, {result.deleted} deleted)"
+            )
 
-        for index, utterance in enumerate(project.utterances, 1):
+        for item in plan.cached:
+            utterance = item.utterance
+            entry = item.entry
+            cached_file = project_audio_path(root, entry["file"])
+            utterance.tts_audio_path = cached_file.relative_to(root).as_posix()
+            utterance.tts_duration = entry.get("duration") or self._wav_duration(cached_file)
+            utterance.tts_segment_id = entry.get("segment_id") or cached_file.stem
+            utterance.tts_fingerprint = item.signature
+            utterance.tts_generation_status = "cached"
+            utterance.tts_error = ""
+            utterance.recalculate()
+            result.warnings += utterance.tts_alignment_status == "warning"
+            logger.debug("[TTS CACHE HIT] %s", utterance.tts_cache_key)
+
+        if plan.migrated or result.deleted or plan.manifest_state != "valid":
+            save_manifest(root, plan.manifest)
+        self.manager.save(project, root)
+
+        for index, item in enumerate(plan.actions, 1):
             check_cancel(cancel)
-            speaker = speakers[utterance.speaker_id]
-            fingerprint = self.fingerprint(utterance, speaker)
-            segment_id = self.segment_id(utterance, fingerprint)
+            utterance = item.utterance
+            speaker = item.speaker
+            signature = item.signature
+            existing_file = item.entry.get("file") if item.entry else None
+            if existing_file:
+                try:
+                    destination = project_audio_path(root, existing_file)
+                except (ValueError, OSError, TypeError):
+                    destination = segments_dir / f"{self.segment_id(utterance)}.wav"
+            else:
+                destination = segments_dir / f"{self.segment_id(utterance)}.wav"
+            segment_id = destination.stem
             if progress:
                 progress(
-                    f"TTS {index}/{result.total} | {utterance.speaker_id} | "
+                    f"TTS {index}/{result.needed} | {utterance.speaker_id} | "
                     f"Utterance {utterance.id} | {speaker.tts_voice_id}"
                 )
-
-            if self._cache_hit(root, utterance, fingerprint, segment_id):
-                utterance.tts_generation_status = "cached"
-                utterance.tts_error = ""
-                utterance.recalculate()
-                result.cached += 1
-                result.warnings += utterance.tts_alignment_status == "warning"
-                self.manager.save(project, root)
-                continue
-
-            utterance.tts_segment_id = segment_id
-            utterance.tts_fingerprint = fingerprint
-            self._clear_audio_metadata(utterance)
             utterance.tts_generation_status = "generating"
             utterance.tts_error = ""
-            destination = segments_dir / f"{segment_id}.wav"
             try:
                 check_cancel(cancel)
                 metadata = self.client.generate(
                     segment_id,
                     utterance.speaker_id,
                     speaker.tts_voice_id,
-                    utterance.vi_dubbing,
+                    normalize_tts_text(utterance.vi_dubbing),
                     float(speaker.tts_speed),
                 )
                 check_cancel(cancel)
@@ -228,20 +406,34 @@ class LocalTTSGenerationService:
                     )
                 utterance.tts_audio_path = destination.relative_to(root).as_posix()
                 utterance.tts_duration = actual_duration
+                utterance.tts_segment_id = segment_id
+                utterance.tts_fingerprint = signature
                 utterance.tts_generation_status = "generated"
                 utterance.tts_error = ""
                 utterance.recalculate()
                 result.generated += 1
                 result.warnings += utterance.tts_alignment_status == "warning"
-                self.manager.save(project, root)
+                plan.manifest["segments"][utterance.tts_cache_key] = self._manifest_entry(
+                    utterance,
+                    speaker,
+                    item.voice,
+                    signature,
+                    manifest_file_for_project(root, utterance.tts_audio_path),
+                    actual_duration,
+                    segment_id,
+                )
+                save_manifest(root, plan.manifest)
+                if progress:
+                    progress(f"TTS saved {index}/{result.needed} | {utterance.tts_cache_key}")
+                check_cancel(cancel)
             except CancelledError:
+                self.manager.save(project, root)
                 raise
             except Exception as exc:
-                self._clear_audio_metadata(utterance)
                 utterance.tts_generation_status = "failed"
                 utterance.tts_error = str(exc) or exc.__class__.__name__
                 utterance.recalculate()
                 result.failed_ids.append(utterance.id)
-                self.manager.save(project, root)
 
+        self.manager.save(project, root)
         return result

@@ -525,7 +525,12 @@ class MainWindow(QMainWindow):
     def accept_tts_generation(self, result):
         self.controller.accept(self.controller.load(self.controller.directory / "project.json"))
         self.refresh()
-        message = f"Generated {result.generated}, cached {result.cached}"
+        message = (
+            f"TTS cache: {result.cached} reused • "
+            f"{result.generated}/{result.needed} generated"
+        )
+        if result.deleted:
+            message += f" • {result.deleted} orphan deleted"
         if result.failed_ids:
             message += f"; failed: {', '.join(map(str, result.failed_ids))}"
         self.statusBar().showMessage(message, 10000)

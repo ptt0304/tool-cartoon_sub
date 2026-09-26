@@ -51,7 +51,12 @@ class ProjectManager:
         if path.is_dir():
             path = path / "project.json"
         paths = ProjectPaths(path.parent).ensure()
-        project = Project.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        migrated_tts_cache_keys = any(
+            not isinstance(row.get("tts_cache_key"), str) or not row.get("tts_cache_key", "").strip()
+            for row in payload.get("master_timeline", payload.get("segments", []))
+        )
+        project = Project.from_dict(payload)
         migrated_speaker_baseline = False
         if not project.speaker_review_initial_state:
             from cartoon_sub.speaker.service import capture_initial_speaker_state
@@ -77,6 +82,6 @@ class ProjectManager:
                 except ValueError:
                     utterance.tts_audio_path = None
                     utterance.tts_generation_status = "stale"
-        if migrated_speaker_baseline:
+        if migrated_speaker_baseline or migrated_tts_cache_keys:
             self.save(project, paths.root)
         return project
