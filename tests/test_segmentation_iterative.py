@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from cartoon_sub.subtitle.models import Project, Utterance
+from cartoon_sub.subtitle.models import DisplaySegment, Project, Utterance
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
 from cartoon_sub.syllable.vietnamese import count_syllables
@@ -59,6 +59,38 @@ class IterativeSegmentationTests(unittest.TestCase):
         self.assertEqual((changed, skipped), ([], []))
         self.assertEqual(snapshots[10], [[(child.vi_text, child.start, child.end)
                                           for child in row.display_segments] for row in project.utterances])
+
+    def test_matching_cache_does_not_skip_an_auto_child_that_still_fails_hard_limits(self):
+        service = SubtitleSegmentationService(Mock())
+        project = self.project()
+        service.update_settings(project, SegmentationProfile.CUSTOM, settings())
+        utterance = project.utterances[0]
+        utterance.set_display_segments([
+            DisplaySegment("65.1", 65, utterance.start, utterance.end, utterance.vi_dubbing,
+                           segmentation_reason="utterance_source")
+        ])
+        profile, active = service.settings_for(project)
+        project.segmentation_cache["65"] = {
+            "fingerprint": service._fingerprint(project, utterance, profile, active),
+            "manual": False,
+            "source_type": "vi_dubbing",
+        }
+        changed, skipped = service.auto_segment(project, [65])
+        self.assertEqual((changed, skipped), ([65], []))
+        self.assertGreater(len(utterance.display_segments), 1)
+        self.assertTrue(all(not service._requires_hard_split(child, active)
+                            for child in utterance.display_segments))
+
+    def test_duration_only_warning_does_not_fragment_short_readable_text(self):
+        service = SubtitleSegmentationService(Mock())
+        text = "Gâu gâu gâu, to, to, to, to, kêu kêu kêu."
+        utterance = Utterance(101, 0, 5.1, "原文", vi_subtitle=text, vi_dubbing=text)
+        project = Project("duration-only", "source.mp4", segments=[utterance],
+                          subtitle_text_source="vi_dubbing")
+        service.update_settings(project, SegmentationProfile.CUSTOM, settings())
+        service.auto_segment(project)
+        self.assertEqual([child.vi_text for child in utterance.display_segments], [text])
+        self.assertEqual(utterance.display_segments[0].qc_flags, ["TOO_LONG"])
 
 
 if __name__ == "__main__":

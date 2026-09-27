@@ -53,7 +53,7 @@ class SemanticSegmentationTests(unittest.TestCase):
         client.generate_json.assert_not_called()
 
     def test_unbreakable_text_never_calls_gemini_and_is_marked_for_review(self):
-        unbreakable = "mộtchuỗirấtdàikhônghềcókhoảngtrắngđểtách"
+        unbreakable = "mộtchuỗirấtdàikhônghềcókhoảngtrắngđểtách" * 3
         client = Mock()
         semantic = SemanticSegmentationService(store(), lambda key: client)
         service = SubtitleSegmentationService(semantic)

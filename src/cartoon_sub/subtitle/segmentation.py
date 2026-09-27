@@ -147,7 +147,11 @@ def _raw_candidates(text):
         if char in STRONG_PUNCTUATION:
             # Treat an ellipsis/punctuation run as one boundary at its end.
             if index + 1 == len(text) or text[index + 1] not in STRONG_PUNCTUATION:
-                found[index + 1] = "sentence_boundary"
+                run_start = index
+                while run_start > 0 and text[run_start - 1] in STRONG_PUNCTUATION:
+                    run_start -= 1
+                run = text[run_start:index + 1]
+                found[index + 1] = "pause_boundary" if len(run) > 1 and set(run) <= {".", "…"} else "sentence_boundary"
         elif char in SOFT_PUNCTUATION:
             found[index + 1] = "comma_boundary"
     phrase_pattern = r"(?<!\w)(?:" + "|".join(re.escape(item) for item in SEMANTIC_PHRASES) + r")(?!\w)"
@@ -167,8 +171,9 @@ def _projected_duration(text, total_text, total_duration):
 def _part_is_acceptable(text, duration, settings):
     syllables = count_syllables(text)
     visual_capacity = settings.hard_max_chars_per_line * settings.max_lines
-    return (duration <= settings.max_duration and syllables <= settings.max_syllables and
-            len(normalize_text(text)) <= visual_capacity)
+    # Duration alone is not a reason to fragment short, readable dialogue.
+    # It remains a scoring signal once a hard text-density limit requires a split.
+    return syllables <= settings.max_syllables and len(normalize_text(text)) <= visual_capacity
 
 
 def _duration_fit(duration, settings):
@@ -205,9 +210,9 @@ def _candidate_score(text, position, kind, duration, settings):
     if _inside_protected(position, protected_spans(text)):
         return -1000.0
     punctuation = {"sentence_boundary": 12.0, "comma_boundary": 7.0,
-                   "semantic_boundary": 9.0, "whitespace_boundary": 0.0}[kind]
+                   "pause_boundary": 5.0, "semantic_boundary": 9.0, "whitespace_boundary": 0.0}[kind]
     semantic = {"sentence_boundary": 7.0, "comma_boundary": 3.0,
-                "semantic_boundary": 8.0, "whitespace_boundary": 0.0}[kind]
+                "pause_boundary": 2.0, "semantic_boundary": 8.0, "whitespace_boundary": 0.0}[kind]
     left_duration = _projected_duration(left, text, duration)
     right_duration = _projected_duration(right, text, duration)
     score = punctuation + semantic
@@ -245,7 +250,8 @@ class LocalSegmentationEngine:
                 for position, kind in _raw_candidates(text)]
 
     def _split(self, text, duration, candidates):
-        priority = ("sentence_boundary", "comma_boundary", "semantic_boundary", "whitespace_boundary")
+        priority = ("sentence_boundary", "comma_boundary", "pause_boundary",
+                    "semantic_boundary", "whitespace_boundary")
 
         def recurse(start, end, depth=0):
             fragment = text[start:end]

@@ -13,7 +13,7 @@ from cartoon_sub.subtitle.segmentation_timing import allocate_display_segments
 from cartoon_sub.syllable.vietnamese import count_syllables
 
 
-SEGMENTATION_VERSION = "local-segmentation-v2"
+SEGMENTATION_VERSION = "local-segmentation-v4"
 SYLLABLE_COUNTER_VERSION = "vietnamese-local-v1"
 SUBTITLE_TEXT_SOURCES = ("vi_subtitle", "vi_dubbing")
 log = logging.getLogger(__name__)
@@ -201,10 +201,18 @@ class SubtitleSegmentationService:
             source_utterance = self.source_utterance(project, utterance)
             cache_key = self._fingerprint(project, utterance, profile, settings)
             state = project.segmentation_cache.get(str(utterance.id), {})
+            log.info("[AUTOSEG] ID=%s source=%s before_children=%s effective_max_syllables=%s "
+                     "effective_max_lines=%s effective_hard_chars=%s source_hash=%s preview=%r",
+                     utterance.id, getattr(project, "subtitle_text_source", "vi_subtitle"),
+                     len(utterance.display_segments), settings.max_syllables, settings.max_lines,
+                     settings.hard_max_chars_per_line, content_hash(source_text)[:12], source_text[:80])
             if state.get("manual") and not force:
                 skipped.append(utterance.id)
                 continue
-            if state.get("fingerprint") == cache_key and utterance.display_segments and not force:
+            hard_failures = [segment for segment in utterance.display_segments
+                             if self._requires_hard_split(segment, settings)]
+            if (state.get("fingerprint") == cache_key and utterance.display_segments and not force
+                    and (not hard_failures or state.get("hard_split_exhausted") is True)):
                 continue
             plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
             allocated = allocate_display_segments(source_utterance, plan, settings)
@@ -215,11 +223,27 @@ class SubtitleSegmentationService:
                          "duration=%.3f QC=%s", utterance.id, segment.id, segment.vi_text,
                          count_syllables(segment.vi_text), settings.max_syllables, segment.duration,
                          "|".join(segment.qc_flags))
+            remaining_hard = [segment for segment in utterance.display_segments
+                              if self._requires_hard_split(segment, settings)]
             project.segmentation_cache[str(utterance.id)] = {"fingerprint": cache_key, "manual": False,
                 "timing_source": allocated.timing_source,
-                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle")}
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle"),
+                "hard_split_exhausted": bool(remaining_hard and "MANUAL_REVIEW" in plan.qc_flags)}
+            log.info("[AUTOSEG RESULT] ID=%s children=%s max_syllables=%s max_chars=%s remaining_hard=%s",
+                     utterance.id, len(utterance.display_segments),
+                     max(count_syllables(item.vi_text) for item in utterance.display_segments),
+                     max(max((len(normalize_text(line)) for line in item.vi_text.splitlines()), default=0)
+                         for item in utterance.display_segments),
+                     [item.id for item in remaining_hard])
             changed.append(utterance.id)
         return changed, skipped
+
+    @staticmethod
+    def _requires_hard_split(segment, settings):
+        lines = segment.vi_text.splitlines() or [segment.vi_text]
+        return (count_syllables(segment.vi_text) > settings.max_syllables
+                or len(lines) > settings.max_lines
+                or any(len(normalize_text(line)) > settings.hard_max_chars_per_line for line in lines))
 
     def sync_utterance(self, project, utterance):
         profile, settings = self.settings_for(project)

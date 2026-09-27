@@ -11,6 +11,59 @@ from cartoon_sub.ui.main_window import MainWindow
 BUILD_MARKER = "normalized-timeline-search-v1"
 
 
+def _runtime_subtitle_autosegment(project_path, result_path):
+    """Exercise the Auto Segment All controller path from a frozen build."""
+    from cartoon_sub.app.controller import Controller
+    from cartoon_sub.subtitle.segmentation_qc import review_display_segment
+    from cartoon_sub.syllable.vietnamese import count_syllables
+
+    result_file = Path(result_path)
+    result = {"build": BUILD_MARKER, "project": str(Path(project_path).resolve())}
+    try:
+        controller = Controller()
+        controller.accept(controller.load(project_path))
+        controller.auto_segment()
+        first = [(row.id, [(item.id, item.start, item.end, item.vi_text) for item in row.display_segments])
+                 for row in controller.project.utterances]
+        controller.auto_segment()
+        second = [(row.id, [(item.id, item.start, item.end, item.vi_text) for item in row.display_segments])
+                  for row in controller.project.utterances]
+        controller.accept(controller.load(project_path))
+        project = controller.project
+        service = controller.segmentation_service
+        _, settings = service.settings_for(project)
+        rows = {}
+        for utterance in project.utterances:
+            if utterance.id not in (33, 53, 65, 101):
+                continue
+            flags = [review_display_segment(item, settings, service.source_text(project, utterance))
+                     for item in utterance.display_segments]
+            rows[str(utterance.id)] = {
+                "children": len(utterance.display_segments),
+                "max_syllables": max(count_syllables(item.vi_text) for item in utterance.display_segments),
+                "max_chars": max(max((len(line.strip()) for line in item.vi_text.splitlines()), default=0)
+                                 for item in utterance.display_segments),
+                "qc": sorted({flag for group in flags for flag in group}),
+            }
+        result.update(status="completed", subtitle_source=project.subtitle_text_source,
+                      settings={"preferred_syllables": settings.preferred_syllables_max,
+                                "max_syllables": settings.max_syllables,
+                                "max_lines": settings.max_lines,
+                                "preferred_chars": settings.preferred_chars_per_line,
+                                "hard_chars": settings.hard_max_chars_per_line,
+                                "max_duration": settings.max_duration},
+                      rows=rows, second_run_idempotent=first == second)
+        exit_code = 0
+    except Exception as exc:
+        result.update(status="failed", error=str(exc), exception=type(exc).__name__,
+                      traceback=traceback.format_exc())
+        logging.getLogger(__name__).exception("[RUNTIME SUBTITLE AUTOSEGMENT] failed")
+        exit_code = 2
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return exit_code
+
+
 def _runtime_transcribe(project_path, result_path):
     """Exercise the same controller action as the Transcript button from a frozen build."""
     from cartoon_sub.app.controller import Controller
@@ -292,6 +345,15 @@ def _runtime_translation_qa(project_path, result_path):
 def main():
     configure_logging()
     logging.getLogger(__name__).info("[BUILD] %s", BUILD_MARKER)
+    if "--runtime-subtitle-autosegment-project" in sys.argv:
+        index = sys.argv.index("--runtime-subtitle-autosegment-project")
+        try:
+            project_path = sys.argv[index + 1]
+            result_index = sys.argv.index("--runtime-result")
+            result_path = sys.argv[result_index + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Cần --runtime-subtitle-autosegment-project <project.json> --runtime-result <result.json>")
+        return _runtime_subtitle_autosegment(project_path, result_path)
     if "--runtime-transcribe-project" in sys.argv:
         index = sys.argv.index("--runtime-transcribe-project")
         try:
