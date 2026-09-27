@@ -249,6 +249,7 @@ class VisualTranslationContextTests(unittest.TestCase):
             "confidence": 0.9, "evidence_ids": [1],
         }]
         dialog = ContextDialog(candidate, {1}, proposal=True, visual_ready=True)
+        self.assertEqual(dialog.apply_button.text(), "Lưu ngữ cảnh")
         self.assertEqual(dialog.tables["character_profiles"][0].item(0, 7).text(), "0.9")
         dialog.visual_json.setPlainText("[{broken]")
         with patch("cartoon_sub.ui.context_dialog.QMessageBox.warning") as warning:
@@ -274,6 +275,43 @@ class VisualTranslationContextTests(unittest.TestCase):
             reopened = ProjectManager().load(root)
             self.assertEqual(reopened.visual_context_status, "applied")
             self.assertEqual(reopened.story_context["visual_contexts"][0]["id"], 1)
+
+    def test_all_review_tables_serialize_and_localize_without_changing_schema(self):
+        visual = visual_row(1, "SPK_01", "CHAR_01", "", status="NEED_REVIEW")
+        candidate = context([visual])
+        candidate.update({
+            "characters": [{"source": "妖女", "target": "CHAR_03", "notes": "Nữ yêu trong cảnh", "evidence_ids": [1]}],
+            "terms": [{"source": "中品灵石", "target": "TERM_01", "notes": "Thuật ngữ tu luyện", "evidence_ids": [1]}],
+            "address_rules": [{"speaker": "SPK_01", "listener": "CHAR_03", "self_term": "ta",
+                               "address_term": "nàng", "condition": "Khi đối thoại trực tiếp", "evidence_ids": [1]}],
+            "character_profiles": [{"character_id": "CHAR_01", "name": "", "role": "Nhân vật chính",
+                                    "gender_context": "male", "relationships": ["Đối thủ CHAR_03"],
+                                    "visual_description": "Nam tu mặc áo tối màu", "associated_speakers": ["SPK_01"],
+                                    "confidence": 0.8, "evidence_ids": [1]}],
+            "speaker_character_mappings": [{"spk_id": "SPK_01", "character_id": "CHAR_01",
+                                            "confidence": 0.8, "evidence_ids": [1], "notes": "Khớp khẩu hình"}],
+        })
+        dialog = ContextDialog(candidate, {1}, proposal=True, visual_ready=True)
+        self.assertEqual(dialog.tables["characters"][0].item(0, 1).text(), "Chưa xác định")
+        self.assertEqual(dialog.tables["terms"][0].item(0, 1).text(), "Chưa xác định")
+        self.assertEqual(dialog.tables["character_profiles"][0].item(0, 3).text(), "Nam")
+        saved = dialog.values()
+        self.assertEqual(saved["character_profiles"][0]["gender_context"], "male")
+        self.assertEqual(saved["visual_contexts"][0]["analysis_status"], "NEED_REVIEW")
+        self.assertEqual(saved["characters"][0]["source"], "妖女")
+
+    def test_visual_prompt_requires_vietnamese_review_text_and_preserves_machine_fields(self):
+        from cartoon_sub.translation.visual_context import VISUAL_CONTEXT_SYSTEM
+        self.assertIn("natural Vietnamese", VISUAL_CONTEXT_SYSTEM)
+        self.assertIn("Keep Chinese source names and terms unchanged", VISUAL_CONTEXT_SYSTEM)
+        self.assertIn("Keep machine schema keys", VISUAL_CONTEXT_SYSTEM)
+
+    def test_all_review_statuses_can_be_saved(self):
+        for status in ("ANALYZED", "LOW_CONFIDENCE", "NEED_REVIEW"):
+            with self.subTest(status=status):
+                candidate = context([visual_row(1, "SPK_01", "", "", status=status)])
+                dialog = ContextDialog(candidate, {1}, proposal=True, visual_ready=True)
+                self.assertEqual(dialog.values()["visual_contexts"][0]["analysis_status"], status)
 
 
 if __name__ == "__main__":

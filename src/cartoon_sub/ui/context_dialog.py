@@ -6,6 +6,8 @@ from cartoon_sub.translation.context_models import StoryContext
 
 
 logger = logging.getLogger(__name__)
+GENDER_DISPLAY = {"male": "Nam", "female": "Nữ", "unknown": "Chưa xác định"}
+GENDER_CANONICAL = {value.casefold(): key for key, value in GENDER_DISPLAY.items()}
 
 
 class ContextDialog(QDialog):
@@ -18,7 +20,7 @@ class ContextDialog(QDialog):
         self.resize(1050, 720)
         layout = QVBoxLayout(self)
         note = QLabel("Kiểm tra và sửa tên, quan hệ, thuật ngữ, xưng hô cùng mọi suy luận của AI. Để trống điều chưa rõ; "
-                      "ID bằng chứng là số dòng Transcript (ngăn bằng dấu phẩy). Bản được lưu sẽ là source-of-truth cho các lần dịch sau.")
+                      "ID bằng chứng là số dòng Transcript (ngăn bằng dấu phẩy). Bản được lưu sẽ là nguồn ngữ cảnh chính cho các lần dịch sau.")
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = QTabWidget()
@@ -42,9 +44,9 @@ class ContextDialog(QDialog):
                  ("address_rules", "Xưng hô", ["speaker", "listener", "self_term", "address_term", "condition", "evidence_ids"],
                   ["Người nói", "Người nghe", "Xưng", "Gọi", "Tình huống / thời điểm", "ID bằng chứng"]),
                  ("character_profiles", "Nhân vật từ video", ["character_id", "name", "role", "gender_context", "relationships", "visual_description", "associated_speakers", "confidence", "evidence_ids"],
-                  ["Character ID", "Tên", "Vai trò", "Gender context", "Quan hệ", "Mô tả hình ảnh", "SPK liên kết", "Confidence", "ID bằng chứng"]),
+                  ["ID nhân vật", "Tên / biệt danh", "Vai trò", "Giới tính theo ngữ cảnh", "Quan hệ", "Mô tả hình ảnh", "SPK liên kết", "Độ tin cậy", "ID bằng chứng"]),
                  ("speaker_character_mappings", "SPK → nhân vật", ["spk_id", "character_id", "confidence", "evidence_ids", "notes"],
-                  ["SPK", "Character ID", "Confidence", "ID bằng chứng", "Ghi chú"])]
+                  ["SPK", "ID nhân vật", "Độ tin cậy", "ID bằng chứng", "Ghi chú"])]
         for key, title, keys, labels in specs:
             page = QWidget()
             box = QVBoxLayout(page)
@@ -55,7 +57,13 @@ class ContextDialog(QDialog):
                 index = table.rowCount()
                 table.insertRow(index)
                 for col, name in enumerate(keys):
-                    value = row[name]
+                    value = row.get(name, "")
+                    if key == "characters" and name == "target" and str(value).startswith("CHAR_"):
+                        value = "Chưa xác định"
+                    if key == "terms" and name == "target" and str(value).startswith("TERM_"):
+                        value = "Chưa xác định"
+                    if name == "gender_context":
+                        value = GENDER_DISPLAY.get(str(value), value)
                     shown = ", ".join(map(str, value)) if isinstance(value, list) else str(value)
                     table.setItem(index, col, QTableWidgetItem(shown))
             box.addWidget(table)
@@ -66,12 +74,14 @@ class ContextDialog(QDialog):
             buttons.addWidget(add)
             buttons.addWidget(remove)
             box.addLayout(buttons)
-            list_fields = {"relationships", "associated_speakers"}
+            list_fields = {name for name in ("relationships", "associated_speakers") if name in keys}
             self.tables[key] = (table, keys, list_fields)
             tabs.addTab(page, title)
         visual_page = QWidget()
         visual_layout = QVBoxLayout(visual_page)
-        visual_help = QLabel("Visual context theo từng ID. Có thể sửa speaker/addressee/referent/visible character, scene mode, confidence và status dưới dạng JSON. UNKNOWN được ưu tiên khi chưa chắc.")
+        visual_help = QLabel("Ngữ cảnh hình ảnh theo từng ID. Có thể sửa người nói, người nghe, đối tượng được nhắc tới, "
+                             "nhân vật xuất hiện, chế độ cảnh, độ tin cậy và trạng thái trong JSON. "
+                             "Giữ nguyên tên khóa và enum nội bộ; dùng UNKNOWN khi chưa đủ bằng chứng.")
         visual_help.setWordWrap(True)
         self.visual_json = QPlainTextEdit()
         self.visual_json.setPlainText(json.dumps(context.get("visual_contexts", []), ensure_ascii=False, indent=2))
@@ -79,7 +89,7 @@ class ContextDialog(QDialog):
         visual_layout.addWidget(self.visual_json)
         tabs.addTab(visual_page, "Visual theo ID")
         buttons = QHBoxLayout()
-        cancel, self.apply_button = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh đã duyệt")
+        cancel, self.apply_button = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh")
         cancel.clicked.connect(self.reject)
         self.apply_button.clicked.connect(self.apply)
         buttons.addWidget(cancel)
@@ -108,6 +118,10 @@ class ContextDialog(QDialog):
                         raise ValueError(f"ID bằng chứng ở dòng {index + 1} phải là số, ngăn bằng dấu phẩy") from None
                 for field in list_fields:
                     row[field] = [value.strip() for value in row[field].split(",") if value.strip()]
+                if "gender_context" in row:
+                    row["gender_context"] = GENDER_CANONICAL.get(
+                        row["gender_context"].casefold(), row["gender_context"].casefold()
+                    )
                 if "confidence" in row:
                     try:
                         row["confidence"] = float(row["confidence"])

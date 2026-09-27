@@ -30,6 +30,11 @@ FLASHBACK/MEMORY/IMAGINED/NARRATION_VISUAL footage may show a referenced charact
 For offscreen speech, reuse a high-confidence accumulated SPK mapping; otherwise return unknown.
 Do not hallucinate a sword, pill, ring, artifact, gender, relationship, or identity from genre alone.
 If evidence is uncertain, use UNKNOWN/unknown, low confidence, and NEED_REVIEW rather than inventing a fact.
+Return all human-readable descriptions, summaries, notes, roles, relationships, terminology explanations,
+addressing explanations, conditions, uncertainties, and review text in natural Vietnamese.
+Keep Chinese source names and terms unchanged in source fields. Keep machine schema keys, SPK/CHAR IDs,
+and enum values exactly as defined. Never put a CHAR_* ID into a Vietnamese name/target field and never put
+a TERM_* placeholder into a Vietnamese translation field; leave it empty or say "Chưa xác định" instead.
 Return one visual_contexts row for every target transcript ID. Candidate output never overrides user-approved context.
 """
 
