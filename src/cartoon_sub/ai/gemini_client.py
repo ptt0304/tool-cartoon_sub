@@ -190,3 +190,33 @@ class GeminiClient:
         if not response.text:
             raise GeminiError("Gemini không trả JSON cho bản dịch.")
         return response.text
+
+    def generate_video_json(self, system, prompt, video_bytes, mime_type, schema, model,
+                            cancel=None, progress=None):
+        """Structured multimodal request used only by cached visual-context analysis."""
+        from google.genai import types
+        check_cancel(cancel)
+        if not isinstance(video_bytes, bytes) or not video_bytes:
+            raise ValueError("Video context proxy rỗng")
+        contents = [prompt, types.Part.from_bytes(data=video_bytes, mime_type=mime_type)]
+        response = self._request(lambda: self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=0.1,
+                max_output_tokens=16384,
+            ),
+        ), cancel, progress)
+        check_cancel(cancel)
+        candidates = response.candidates or []
+        if not candidates:
+            raise GeminiError("Gemini không trả visual context.")
+        reason = getattr(candidates[0].finish_reason, "value", candidates[0].finish_reason)
+        if reason != "STOP":
+            raise GeminiError("Gemini visual context chưa hoàn tất hoặc bị chặn.", retryable=reason == "MAX_TOKENS")
+        if not response.text:
+            raise GeminiError("Gemini không trả JSON visual context.")
+        return response.text

@@ -84,15 +84,24 @@ def build_context_instruction(project):
     return "\n".join(lines)
 
 
-def editorial(project):
+def editorial(project, utterance_ids=None):
+    approved = dict(project.story_context)
+    if utterance_ids is not None:
+        wanted = set(utterance_ids)
+        approved["visual_contexts"] = [row for row in approved.get("visual_contexts", [])
+                                       if row.get("id") in wanted]
     return {"context_instruction": build_context_instruction(project),
             "style": STYLES.get(project.translation_preset, STYLES["Natural Vietnamese"])[1],
             "style_safety": "Văn phong không được thay đổi nghĩa, sự kiện, quan hệ, tên riêng hoặc thuật ngữ bắt buộc.",
-            "approved_context": project.story_context, "speakers": project.speakers}
+            "approved_context": approved, "visual_context_status": project.visual_context_status,
+            "context_priority": ["user_requirements", "user_mappings", "user_approved_corrections",
+                                 "approved_visual_context", "approved_transcript_context", "genre", "style", "fallback"],
+            "speakers": project.speakers}
 
 
 def translation_prompt(project, targets, before, after, previous_vi):
-    payload = {"editorial": editorial(project), "reference_before": before, "reference_after": after,
+    ids = [row["id"] for row in [*before, *targets, *after]]
+    payload = {"editorial": editorial(project, ids), "reference_before": before, "reference_after": after,
                "previous_translation": previous_vi, "targets": targets}
     return ("Dịch bản VI SUBTITLE tự nhiên và đầy đủ nghĩa; đây chưa phải bước tối ưu VI DUBBING. "
             "Không rút gọn nghĩa để ép ngân sách dubbing. Dùng approved_context và reference trước/sau để xử lý câu ngắn, "
@@ -100,12 +109,17 @@ def translation_prompt(project, targets, before, after, previous_vi):
             "không tự gán lại người nói. Dịch CHỈ targets, mỗi ID đúng một lần; không trả ID tham chiếu, không thêm timestamp. "
             "Trả translations gồm id, vi, review_note, meaning_preservation (high/medium/low/unknown), compressed (boolean). review_note rỗng nếu không có nghi vấn; "
             "nghi vấn phải cụ thể (tên ASR, người nói, đa nghĩa), không tự chấm điểm chắc chắn.\n"
+            "The Chinese transcript is the source of spoken content. The approved visual context is authoritative for "
+            "speaker, addressee, referent and scene mode when confidence is high. Do not assume the visible character "
+            "is the speaker. Do not assume 他 means male when approved evidence identifies a female referent. If evidence "
+            "is uncertain, preserve ambiguity rather than inventing gender. Resolve Vietnamese pronouns naturally from "
+            "relationship, genre, scene and approved user choices; do not mechanically replace words.\n"
             + json.dumps(payload, ensure_ascii=False))
 
 
 def translation_retry_prompt(project, target, before, after, rejected_translation, issues, attempt):
     payload = {
-        "editorial": editorial(project),
+        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
         "qa_retry_attempt": attempt,
         "previous_qa_issues": issues,
         "reference_before": before,
@@ -124,7 +138,7 @@ def translation_retry_prompt(project, target, before, after, rejected_translatio
 
 def semantic_qa_prompt(project, target, current_vi, before, after):
     payload = {
-        "editorial": editorial(project),
+        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
         "reference_before": before,
         "reference_after": after,
         "target": target,
@@ -143,7 +157,7 @@ MODE_FILES={"faithful":"faithful","balanced_dubbing":"balanced","syllable_match"
 def dubbing_prompt(project, targets, before, after):
     modes={r["translation_mode"]:read(f"translation_{MODE_FILES[r['translation_mode']]}_v1.txt") for r in targets}
     return json.dumps({"task":"Optimize ONLY the selected dubbing text. Never output or change subtitle text, IDs, speakers or times.",
-        "editorial":editorial(project),"modes":modes,"budget_settings":project.dubbing_settings,
+        "editorial":editorial(project, [row["id"] for row in [*before, *targets, *after]]),"modes":modes,"budget_settings":project.dubbing_settings,
         "reference_before":before,"reference_after":after,"targets":targets},ensure_ascii=False)
 
 def dubbing_system():
@@ -165,7 +179,7 @@ def duration_rewrite_prompt(project, target, before, after):
             "remove only optional fillers or context that is already unambiguous. Never change subtitle text, ID, speaker, "
             "or canonical timestamps."
         ),
-        "editorial": editorial(project),
+        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
         "reference_before": before,
         "reference_after": after,
         "target": target,

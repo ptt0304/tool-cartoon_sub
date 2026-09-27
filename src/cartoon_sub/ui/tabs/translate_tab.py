@@ -24,7 +24,7 @@ def build():
     layout = QVBoxLayout(body)
     scroll.setWidget(body)
     intro = QLabel("1. Chọn thể loại & văn phong → 2. Phân tích, duyệt hồ sơ truyện → 3. Dịch → kiểm tra tại Subtitle. "
-                   "Gemini chỉ nhận transcript văn bản. Phân tích ngữ cảnh và dịch là các request riêng có dùng quota API.")
+                   "Phân tích ngữ cảnh đối chiếu transcript với video theo chunk; dịch dùng visual context đã cache và không upload lại video.")
     intro.setWordWrap(True)
     layout.addWidget(intro)
     group = QGroupBox("Thể loại chính — chọn tối đa 3")
@@ -93,6 +93,7 @@ def build():
     ai_layout = QVBoxLayout(ai_group)
     row = QHBoxLayout()
     widget.analyze_button = QPushButton("Phân tích ngữ cảnh bằng AI")
+    widget.analyze_button.setToolTip("Đối chiếu transcript với video để xác định nhân vật, người nói, người được nhắc tới, quan hệ, đại từ và bối cảnh cảnh quay.")
     widget.proposal_button = QPushButton("Duyệt & lưu ngữ cảnh AI")
     for control in (widget.analyze_button, widget.proposal_button):
         row.addWidget(control)
@@ -110,7 +111,7 @@ def build():
     layout.addWidget(widget.import_vi_button)
     layout.addWidget(widget.translate_button)
     layout.addWidget(widget.qa_button)
-    note = QLabel("Không bắt buộc phân tích AI: khi chưa có ngữ cảnh đã duyệt, bản dịch dùng trực tiếp lựa chọn và yêu cầu của user. "
+    note = QLabel("Nếu visual context không khả dụng, bản dịch fallback ngữ cảnh transcript đã duyệt và các đại từ mơ hồ được đánh dấu cần kiểm tra. "
                   "Dịch dùng cache khi dữ liệu không đổi. Đổi hồ sơ/glossary/model sẽ cần cập nhật bản dịch. "
                   "Hoàn tất tự lưu subtitle/vi.srt; cảnh báo cần biên tập không tự sửa nội dung.")
     note.setWordWrap(True)

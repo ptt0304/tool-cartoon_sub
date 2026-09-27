@@ -92,7 +92,7 @@ class TranslationQAService:
                 result = local_translation_qa(project, segment)
                 previous = project.translation_qa.get(str(segment.id), {})
                 if result["status"] == "PASS":
-                    status = previous.get("status") if qa_entry_is_current(segment, previous) else "PASS"
+                    status = previous.get("status") if qa_entry_is_current(segment, previous, project) else "PASS"
                     if status not in {"AUTO_FIXED", "MANUAL_FIXED"}:
                         status = "PASS"
                     store_qa_result(project, segment, status, [], previous.get("attempts", 0))

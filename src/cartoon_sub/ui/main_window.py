@@ -775,6 +775,10 @@ class MainWindow(QMainWindow):
             if proposal and (project.context_proposal_hash != source_fingerprint(project)
                              or project.context_proposal_config_hash != context_config_fingerprint(project)):
                 raise ValueError("Transcript hoặc cấu hình đã đổi; hãy phân tích lại ngữ cảnh")
+            if proposal and project.visual_context_status == "proposal_ready":
+                from cartoon_sub.translation.visual_context import visual_source_signature
+                if project.visual_context_signature != visual_source_signature(project):
+                    raise ValueError("Video hoặc timeline đã đổi; hãy phân tích lại visual context")
             context = project.context_proposal if proposal else project.story_context
             dialog = ContextDialog(context, {s.id for s in project.segments}, self, proposal)
             if dialog.exec() == dialog.DialogCode.Accepted:
@@ -811,6 +815,12 @@ class MainWindow(QMainWindow):
         candidate_ready = (bool(project.context_proposal)
                            and project.context_proposal_hash == source_hash
                            and project.context_proposal_config_hash == config_hash)
+        if candidate_ready and project.visual_context_status == "proposal_ready":
+            try:
+                from cartoon_sub.translation.visual_context import visual_source_signature
+                candidate_ready = project.visual_context_signature == visual_source_signature(project)
+            except (OSError, ValueError):
+                candidate_ready = False
         ready = bool(project.segments) and review_complete(project)
         page.translate_button.setEnabled(ready)
         page.qa_button.setEnabled(any(segment.vi_subtitle.strip() for segment in project.segments))
@@ -833,7 +843,8 @@ class MainWindow(QMainWindow):
             qa_counts[qa.get("status", "UNKNOWN")] = qa_counts.get(qa.get("status", "UNKNOWN"), 0) + 1
         qa_summary = ", ".join(f"{key}: {value}" for key, value in sorted(qa_counts.items())) or "chưa chạy"
         page.summary.setText(f"{status}\nNhân vật: {len(context.get('characters', []))} • Thuật ngữ: {len(context.get('terms', []))} "
-            f"• Quy tắc xưng hô: {len(context.get('address_rules', []))} • Nghi vấn ngữ cảnh: {len(context.get('uncertainties', []))}\n"
+            f"• Quy tắc xưng hô: {len(context.get('address_rules', []))} • Visual theo ID: {len(context.get('visual_contexts', []))} "
+            f"• Visual status: {project.visual_context_status} • Nghi vấn ngữ cảnh: {len(context.get('uncertainties', []))}\n"
             f"Bản dịch: {states.get(project.translation_status, project.translation_status)} • QA/QC: {qa_summary}")
         model = self.controller.settings_store.load().translation_model
         page.summary.setText(page.summary.text() + f"\nModel dịch/ngữ cảnh: {model}" +

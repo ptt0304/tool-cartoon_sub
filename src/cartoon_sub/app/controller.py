@@ -188,6 +188,17 @@ class Controller:
         self.project.context_source_hash = source_fingerprint(self.project)
         self.project.context_approved_config_hash = context_config_fingerprint(self.project)
         self.project.context_status = "applied"
+        self.project.visual_context_status = (
+            "applied" if self.project.story_context.get("visual_contexts")
+            else "VISUAL_CONTEXT_UNAVAILABLE"
+        )
+        if self.project.story_context.get("visual_contexts"):
+            from cartoon_sub.translation.visual_context import visual_source_signature
+            try:
+                self.project.visual_context_signature = visual_source_signature(self.project)
+            except (OSError, ValueError):
+                self.project.visual_context_status = "VISUAL_CONTEXT_UNAVAILABLE"
+                self.project.visual_context_signature = ""
         self.save()
 
     def translate(self, **job):

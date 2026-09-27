@@ -43,6 +43,13 @@ class TranslationPipeline:
         if not project.segments or any(not s.zh.strip() for s in project.segments):
             raise ValueError("Cần transcript tiếng Trung không rỗng để dịch")
         StoryContext.from_dict(project.story_context, {s.id for s in project.segments})
+        if project.story_context.get("visual_contexts") and project.visual_context_status == "applied":
+            from pathlib import Path as _Path
+            if _Path(project.source_video_path).is_file():
+                from .visual_context import visual_source_signature
+                if project.visual_context_signature != visual_source_signature(project):
+                    project.visual_context_status = "stale"
+                    raise ValueError("Video hoặc timeline đã đổi; hãy Phân tích ngữ cảnh bằng AI và duyệt lại")
         project = Project.from_dict(project.to_dict())
         settings = self.store.load()
         imported_ids = {s.id for s in project.segments if s.translation_source == "imported_srt"}
