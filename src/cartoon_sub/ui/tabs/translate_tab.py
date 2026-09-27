@@ -170,7 +170,7 @@ def build():
     widget.view=QComboBox()
     for label,key in [("Both","both"),("Subtitle","subtitle"),("Dubbing","dubbing")]: widget.view.addItem(label,key)
     widget.edit_button=QPushButton("Sửa câu chọn / mode / target")
-    widget.optimize_button=QPushButton("Optimize selected for dubbing")
+    widget.optimize_button=QPushButton("Tối ưu dubbing đã chọn")
     widget.revert_optimize_button=QPushButton("Revert selected dubbing optimization")
     widget.revert_optimize_button.setToolTip("Khôi phục VI Subtitle và VI Dubbing về trước lần Optimize for dubbing đầu tiên.")
     widget.apply_edits_button=QPushButton("Áp dụng bản sửa tay")

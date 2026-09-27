@@ -10,7 +10,8 @@ from cartoon_sub.syllable.chinese import count as count_zh
 from cartoon_sub.syllable.vietnamese import count as count_vi
 from cartoon_sub.syllable.target import DubbingSettings, target_syllables, allowed_delta
 from cartoon_sub.project.project_manager import ProjectManager
-from cartoon_sub.translation.dubbing_service import DubbingService
+from cartoon_sub.translation.dubbing_service import DubbingService, eligible_dubbing_ids, parse_dubbing_threshold
+from cartoon_sub.ui.timeline_table import delta_target_color
 from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.translation.context_service import source_fingerprint
 from cartoon_sub.translation.pipeline import translation_fingerprint
@@ -40,6 +41,60 @@ def reply(text,compressed=False):
 
 
 class MasterTimelineTests(unittest.TestCase):
+    def test_dubbing_threshold_parser_and_filter_boundaries(self):
+        self.assertEqual(parse_dubbing_threshold("3"), 3)
+        self.assertEqual(parse_dubbing_threshold("+3"), 3)
+        for invalid in ("", "0", "+0", "-1", "abc"):
+            with self.assertRaisesRegex(ValueError, "số nguyên dương"):
+                parse_dubbing_threshold(invalid)
+
+        project = Project("threshold", "missing.mp4", segments=[
+            Segment(270, 0, 1, "甲", vi="một hai ba bốn", target_override=1),
+            Segment(271, 1, 2, "乙", vi="một hai ba bốn năm", target_override=1),
+            Segment(272, 2, 3, "丙", vi="một hai ba", target_override=1),
+        ])
+        self.assertEqual([row.syllable_delta for row in project.segments], [3, 4, 2])
+        self.assertEqual(eligible_dubbing_ids(project, [270, 271, 272], 4), [271])
+        self.assertEqual(delta_target_color(0), "#d7f2da")
+        self.assertEqual(delta_target_color(-1), "#d7f2da")
+        self.assertEqual(delta_target_color(1), "#fff0be")
+        self.assertEqual(delta_target_color(3), "#fff0be")
+        self.assertEqual(delta_target_color(4), "#ffd0d0")
+
+    def test_threshold_five_sends_only_eligible_row_and_preserves_subtitle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Project("threshold", "missing.mp4", segments=[
+                Segment(1, 0, 2, "甲", vi="một hai ba bốn năm sáu bảy", speaker_id="SPK_01", target_override=2),
+                Segment(2, 2, 4, "乙", vi="một hai", speaker_id="SPK_01", target_override=2),
+                Segment(3, 4, 6, "丙", vi="một", speaker_id="SPK_01", target_override=2),
+            ])
+            approve_review(project)
+            project.context_source_hash = source_fingerprint(project)
+            before = [row.vi_subtitle for row in project.segments]
+            client = Mock()
+            client.generate_json.return_value = {
+                "translations": [{"id": 1, "vi": "một hai", "review_note": "", "meaning_preservation": "high", "compressed": True}]
+            }
+            result, _ = DubbingService(store(), lambda key: client).optimize(
+                project, directory, [1, 2, 3], threshold=5,
+            )
+            self.assertEqual(client.generate_json.call_count, 1)
+            self.assertIn('"id": 1', client.generate_json.call_args.args[1])
+            self.assertNotIn('"id": 2', client.generate_json.call_args.args[1])
+            self.assertEqual([row.vi_subtitle for row in result.segments], before)
+            self.assertEqual(result.segments[0].vi_dubbing, "một hai")
+            self.assertEqual(result.segments[0].vi_syllables, 2)
+            self.assertEqual(result.segments[0].syllable_delta, 0)
+
+    def test_no_threshold_eligible_rows_makes_no_ai_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = ready_project()
+            project.segments[0].target_override = project.segments[0].vi_syllables
+            project.segments[0].recalculate()
+            service = DubbingService(store(), Mock(side_effect=AssertionError("AI must not be called")))
+            result, _ = service.optimize(project, directory, [1], threshold=5)
+            self.assertEqual(result.segments[0].vi_dubbing, project.segments[0].vi_dubbing)
+
     def test_revert_selected_dubbing_optimization_restores_snapshot_only(self):
         with tempfile.TemporaryDirectory() as directory:
             project = ready_project()
@@ -167,7 +222,7 @@ class MasterTimelineTests(unittest.TestCase):
             self.assertEqual(s.dubbing_status,"completed")
             self.assertEqual(client.generate_json.call_count,2)
             self.assertIn('"actual_syllables": 7',client.generate_json.call_args.args[1])
-            self.assertIn('"required_exactly": 5',client.generate_json.call_args.args[1])
+            self.assertIn('"target_at_most": 5',client.generate_json.call_args.args[1])
             service.factory=Mock(side_effect=AssertionError("repeat unchanged must use cache"))
             service.optimize(result,directory,[1])
 
@@ -176,7 +231,7 @@ class MasterTimelineTests(unittest.TestCase):
             project=ready_project("strict_iso_syllabic");project.segments[0].target_override=5
             client=Mock();client.generate_json.return_value=reply("Chuyện này không liên quan đến cô")
             result,_=DubbingService(store(),lambda key:client).optimize(project,directory,[1])
-            self.assertEqual(client.generate_json.call_count,4)
+            self.assertEqual(client.generate_json.call_count,3)
             self.assertEqual(result.segments[0].dubbing_status,"failed")
             self.assertTrue(any("QC FAILED" in note for note in review_translation(result)["1"]))
 

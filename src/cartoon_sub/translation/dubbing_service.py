@@ -24,6 +24,24 @@ from cartoon_sub.tts.local_tts_client import LocalTTSClient
 logger = logging.getLogger(__name__)
 
 
+def parse_dubbing_threshold(value):
+    raw = str(value).strip()
+    if not re.fullmatch(r"\+?[1-9]\d*", raw):
+        raise ValueError("Ngưỡng Δ target phải là số nguyên dương, ví dụ +5")
+    return int(raw.lstrip("+"))
+
+
+def eligible_dubbing_ids(project, ids, threshold):
+    if type(threshold) is not int or threshold <= 0:
+        raise ValueError("Ngưỡng Δ target phải là số nguyên dương, ví dụ +5")
+    selected = set(ids)
+    return [
+        segment.id for segment in project.segments
+        if segment.id in selected and segment.syllable_delta > 0
+        and segment.syllable_delta >= threshold
+    ]
+
+
 class DubbingService:
     def __init__(self, store, client_factory=GeminiClient):
         self.store,self.factory=store,client_factory
@@ -77,14 +95,16 @@ class DubbingService:
             )
             row.recalculate(budget)
 
-    def optimize(self, project, directory, ids, *, cancel=None, progress=None):
+    def optimize(self, project, directory, ids, *, threshold=1, cancel=None, progress=None):
         project=Project.from_dict(project.to_dict())
         refresh_timeline(project)
         if not review_complete(project): raise ValueError("Cần duyệt speaker trước khi tối ưu dubbing")
         if project.context_source_hash != source_fingerprint(project):
             raise ValueError("Hãy kiểm tra và áp dụng hồ sơ ngữ cảnh cho transcript hiện tại")
         StoryContext.from_dict(project.story_context, {s.id for s in project.segments})
-        chosen=set(ids)
+        chosen=set(eligible_dubbing_ids(project, ids, threshold))
+        if not chosen:
+            return project,Path(directory)
         if not chosen or not chosen.issubset({s.id for s in project.segments}): raise ValueError("Chọn các câu cần tối ưu")
         if any(not s.vi_subtitle.strip() for s in project.segments if s.id in chosen):
             raise ValueError("Hãy dịch bản subtitle trước khi tối ưu dubbing")
@@ -111,19 +131,20 @@ class DubbingService:
                 prompt=dubbing_prompt(project,targets,before,after)
                 result,key=requests.request(dubbing_system(),prompt,TRANSLATION_SCHEMA,
                     lambda p:validate_translation(p,target_ids),f"Tối ưu dubbing ID {target_ids[0]}–{target_ids[-1]}")
-                for attempt in range(budget.strict_retry):
-                    failed=[r for r in result if by_id[r["id"]].translation_mode=="strict_iso_syllabic"
-                            and count_syllables(r["vi"])!=by_id[r["id"]].target_syllables]
+                for attempt in range(2):
+                    failed=[r for r in result
+                            if count_syllables(r["vi"])>by_id[r["id"]].target_syllables]
                     if not failed: break
                     retry_ids=[r["id"] for r in failed]
                     import json
                     feedback=[{"id":r["id"],"previous_vi":r["vi"],"actual_syllables":count_syllables(r["vi"]),
-                               "required_exactly":by_id[r["id"]].target_syllables} for r in failed]
-                    correction=(prompt+"\nSTRICT REWRITE: return ONLY these failed IDs. Local counts are authoritative. "
-                                "Rewrite with exactly the required count; never reverse meaning. "
+                               "target_at_most":by_id[r["id"]].target_syllables} for r in failed]
+                    correction=(prompt+"\nSHORTENING RETRY: return ONLY these failed IDs. Local counts are authoritative. "
+                                "Rewrite at or below the required target; never reverse meaning, negation, names, "
+                                "numbers, terminology, actors, or cause/result. "
                                 +json.dumps(feedback,ensure_ascii=False)+f"\nRewrite pass {attempt+1}")
                     revised,_=requests.request(dubbing_system(),correction,TRANSLATION_SCHEMA,
-                        lambda p:validate_translation(p,retry_ids),f"Strict rewrite {attempt+1}/{budget.strict_retry}")
+                        lambda p:validate_translation(p,retry_ids),f"Rút gọn lại {attempt+1}/2")
                     replacements={r["id"]:r for r in revised}
                     result=[replacements.get(r["id"],r) for r in result]
                 check_cancel(cancel)
@@ -138,7 +159,6 @@ class DubbingService:
                     segment.dubbing_optimized=True
                     segment.semantic_compression=row["compressed"] or segment.translation_mode=="short_dub"
                     segment.meaning_preservation=row["meaning_preservation"]
-                    if not budget.separate_texts: segment.vi_subtitle=row["vi"]
                     segment.recalculate(budget)
                     segment.dubbing_status=("failed" if segment.translation_mode=="strict_iso_syllabic" and segment.syllable_delta!=0 else "completed")
                     segment.dubbing_fingerprint=fingerprint(segment)

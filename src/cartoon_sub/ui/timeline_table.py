@@ -9,6 +9,19 @@ from cartoon_sub.ui.table_search import apply_table_search
 EDITABLE_COLUMNS = {1, 2, 4, 5, 7, 8}  # Start, End, Speaker, Chinese, VI Subtitle, VI Dubbing
 
 
+def delta_target(segment):
+    """Return the same VI Dubbing syllable delta displayed by the timeline."""
+    return segment.vi_syllables - segment.target_syllables
+
+
+def delta_target_color(delta):
+    if delta <= 0:
+        return "#d7f2da"
+    if delta <= 3:
+        return "#fff0be"
+    return "#ffd0d0"
+
+
 def create_table():
     table = QTableWidget(0, 14)
     table.setHorizontalHeaderLabels([
@@ -140,10 +153,7 @@ def populate(table, project, view="both"):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                 table.original_values[(s.id, col)] = str(value)
             if col in (9, 10, 11):
-                color = "#d7f2da" if delta == 0 else "#fff0be" if abs(delta) <= max(1, int(s.target_syllables * .15)) else "#ffd0d0"
-                if s.translation_mode == "strict_iso_syllabic" and delta:
-                    color = "#ffd0d0"
-                item.setBackground(QColor(color))
+                item.setBackground(QColor(delta_target_color(delta)))
                 item.setForeground(QColor("#171717"))
             table.setItem(row, col, item)
     table.setColumnHidden(7, view == "dubbing")

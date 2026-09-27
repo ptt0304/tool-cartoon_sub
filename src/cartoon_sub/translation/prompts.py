@@ -156,7 +156,11 @@ MODE_FILES={"faithful":"faithful","balanced_dubbing":"balanced","syllable_match"
 
 def dubbing_prompt(project, targets, before, after):
     modes={r["translation_mode"]:read(f"translation_{MODE_FILES[r['translation_mode']]}_v1.txt") for r in targets}
-    return json.dumps({"task":"Optimize ONLY the selected dubbing text. Never output or change subtitle text, IDs, speakers or times.",
+    return json.dumps({"task":(
+        "Shorten ONLY the selected VI Dubbing text to at most target_syllables. Never output or change VI Subtitle, "
+        "Chinese source, IDs, speakers, timestamps, targets, or modes. Preserve meaning, negation, proper names, "
+        "numbers, approved terminology, actors, and cause/result relationships; remove only dispensable wording."
+    ),
         "editorial":editorial(project, [row["id"] for row in [*before, *targets, *after]]),"modes":modes,"budget_settings":project.dubbing_settings,
         "reference_before":before,"reference_after":after,"targets":targets},ensure_ascii=False)
 
@@ -164,7 +168,7 @@ def dubbing_system():
     return EDITORIAL_RULES.replace("Không sáng tác nội dung, không thêm hook, không rút gọn thành tóm tắt, không sửa cốt truyện.",
         "Không sáng tác nội dung, thêm hook hoặc đảo nghĩa. Chỉ bản dubbing được nén chi tiết/sắc thái nếu translation mode cho phép.") + (
         "\nThis is the DUBBING pass, not the screen subtitle pass. Follow each target's mode and target_syllables. "
-        "Target syllable count is approximate. Semantic completeness and natural Vietnamese are more important. "
+        "For selected over-target rows, shorten VI Dubbing to at most target_syllables while preserving meaning. "
         "Prefer concise spoken Vietnamese. Do not force unnatural abbreviation merely to hit the number. "
         "Return translations with id, vi, review_note, meaning_preservation (self-assessment, not calibrated), compressed. "
         "Local syllable counts are authoritative. Never reverse intent, negation or actor to meet a number.")

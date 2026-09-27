@@ -18,6 +18,7 @@ from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
 from cartoon_sub.ui.utterance_dialog import UtteranceDialog
 from cartoon_sub.ui.docs_dialog import DocsWindow
 from cartoon_sub.ui.timeline_table import populate, selected_ids, get_dirty_rows
+from cartoon_sub.translation.dubbing_service import eligible_dubbing_ids, parse_dubbing_threshold
 from cartoon_sub.ui.undo import AppliedValueCommand
 from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.ui.tabs import video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, audio_tab, export_tab
@@ -237,8 +238,25 @@ class MainWindow(QMainWindow):
         try:
             ids=selected_ids(self.pages[2].table)
             if not ids:raise ValueError("Chọn một hoặc nhiều câu trong bảng")
+            dialog = QInputDialog(self)
+            dialog.setWindowTitle("Tối ưu VI Dubbing")
+            dialog.setLabelText("Ngưỡng Δ target tối thiểu")
+            dialog.setInputMode(QInputDialog.InputMode.TextInput)
+            dialog.setTextValue("+5")
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return
+            threshold = parse_dubbing_threshold(dialog.textValue())
             self.sync_options();self.controller.save()
-            self.start_job(lambda **job:self.controller.optimize_dubbing(ids,**job),self.accept_project)
+            eligible = eligible_dubbing_ids(self.controller.project, ids, threshold)
+            if not eligible:
+                self.statusBar().showMessage(
+                    f"Không có câu đã chọn nào có Δ target từ +{threshold} trở lên; không gọi AI.", 7000,
+                )
+                return
+            self.start_job(
+                lambda **job:self.controller.optimize_dubbing(eligible, threshold=threshold, **job),
+                self.accept_project,
+            )
         except Exception as exc:self.error(exc)
 
     def revert_dubbing_optimization(self):

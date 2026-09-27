@@ -251,8 +251,8 @@ class Controller:
         approve_review(self.project)
         self.save()
 
-    def optimize_dubbing(self, ids, **job):
-        return self.dubbing_service.optimize(self.project,self.directory,ids,**job)
+    def optimize_dubbing(self, ids, threshold=1, **job):
+        return self.dubbing_service.optimize(self.project,self.directory,ids,threshold=threshold,**job)
 
     def revert_dubbing_optimization(self, ids):
         chosen = set(ids)
