@@ -215,6 +215,10 @@ class Controller:
     def qa_translation(self, **job):
         return self.translation_qa_service.run(self.project, self.directory, **job)
 
+    def qa_selected_translation(self, ids, **job):
+        return self.translation_qa_service.run_selected_manual(
+            self.project, self.directory, ids, **job)
+
     def transcribe(self, **job):
         return self.pipeline.run(self.project, self.directory, **job)
 

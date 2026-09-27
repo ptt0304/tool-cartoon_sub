@@ -381,9 +381,69 @@ def _runtime_translation_qa_scan(project_path, result_path):
     return exit_code
 
 
+def _runtime_ui_zoom(result_path):
+    """Exercise all editor tabs and global zoom levels from a frozen build."""
+    from PySide6.QtWidgets import QApplication
+    from cartoon_sub.ui.main_window import MainWindow
+
+    result_file = Path(result_path)
+    result = {"build": BUILD_MARKER}
+    application = QApplication.instance() or QApplication([])
+    window = None
+    try:
+        window = MainWindow()
+        for index in range(window.tabs.count()):
+            window.tabs.setTabEnabled(index, True)
+        window.show()
+        application.processEvents()
+        levels = {}
+        for percent in (0, 25, 50, 75, 100):
+            window.ui_zoom_manager.set_percent(percent)
+            visible_tabs = []
+            for index in range(window.tabs.count()):
+                window.tabs.setCurrentIndex(index)
+                application.processEvents()
+                visible_tabs.append(window.tabs.tabText(index))
+            levels[str(percent)] = {
+                "actual_scale": window.ui_zoom_manager.actual_scale,
+                "font_points": application.font().pointSizeF(),
+                "timeline_row_height": window.pages[2].table.verticalHeader().defaultSectionSize(),
+                "tabs": visible_tabs,
+            }
+        result.update(
+            status="completed",
+            levels=levels,
+            manual_qa_button=window.pages[2].manual_qa_button.text(),
+            extended_selection=window.pages[2].table.selectionMode().name == "ExtendedSelection",
+            shortcuts=len(window.zoom_shortcuts),
+        )
+        exit_code = 0
+    except Exception as exc:
+        result.update(status="failed", error=str(exc), exception=type(exc).__name__,
+                      traceback=traceback.format_exc())
+        logging.getLogger(__name__).exception("[RUNTIME UI ZOOM] failed")
+        exit_code = 2
+    finally:
+        if window is not None:
+            window.voice_sync_timer.stop()
+            window.hide()
+            window.deleteLater()
+        application.processEvents()
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return exit_code
+
+
 def main():
     configure_logging()
     logging.getLogger(__name__).info("[BUILD] %s", BUILD_MARKER)
+    if "--runtime-ui-zoom" in sys.argv:
+        try:
+            result_index = sys.argv.index("--runtime-result")
+            result_path = sys.argv[result_index + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Cần --runtime-ui-zoom --runtime-result <result.json>")
+        return _runtime_ui_zoom(result_path)
     if "--runtime-translation-qa-scan-project" in sys.argv:
         index = sys.argv.index("--runtime-translation-qa-scan-project")
         try:

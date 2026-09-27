@@ -153,7 +153,8 @@ class SettingsDialog(QDialog):
         return AISettings(transcription_model=transcription[1], translation_model=translation[1],
             translation_chunk_size=self.chunk.value(), retry_count=self.retry.value(),
             translation_provider=translation[0], api_key_file=self.key_file.text(),
-            provider_filter=self.provider.currentData(), transcription_provider=transcription[0]).validate()
+            provider_filter=self.provider.currentData(), transcription_provider=transcription[0],
+            ui_zoom_percent=self.saved_settings.ui_zoom_percent).validate()
 
     def save(self):
         try:

@@ -153,6 +153,31 @@ def semantic_qa_prompt(project, target, current_vi, before, after):
         + json.dumps(payload, ensure_ascii=False)
     )
 
+
+def manual_translation_qa_prompt(project, target, before, after, current_subtitle,
+                                 current_dubbing, attempt, previous_issues=None):
+    payload = {
+        "editorial": editorial(project, [target["id"]]),
+        "qa_attempt": attempt,
+        "previous_issues": list(previous_issues or []),
+        "reference_before": before,
+        "reference_after": after,
+        "target": {
+            **target,
+            "current_vi_subtitle": current_subtitle,
+            "current_vi_dubbing": current_dubbing,
+        },
+    }
+    return (
+        "QA thủ công CHỈ target được gửi. So sánh Chinese source gốc với current_vi_subtitle và approved context. "
+        "Kiểm tra chữ Hán sót/mixed script, thiếu hoặc thêm ý, sai nghĩa/phủ định, nhân vật, speaker/addressee/"
+        "referent/đại từ, visual context, mapping, thuật ngữ và câu Việt máy móc khó hiểu. Nếu hoàn toàn đạt thì "
+        "status PASS, issues rỗng, corrected_vi_subtitle là chuỗi rỗng và tuyệt đối không rewrite. Nếu FAIL, "
+        "fresh-translate lại toàn câu từ Chinese source và context; current text chỉ là rejected reference, không vá chữ. "
+        "Chỉ trả đúng ID target, không sửa reference, ID, speaker hay timestamp. reason ngắn gọn.\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
 MODE_FILES={"faithful":"faithful","balanced_dubbing":"balanced","syllable_match":"syllable",
             "strict_iso_syllabic":"strict","time_fit":"timefit","subtitle_natural":"subtitle","short_dub":"short"}
 

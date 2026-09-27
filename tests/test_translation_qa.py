@@ -7,7 +7,9 @@ from unittest.mock import Mock
 from cartoon_sub.app.settings import AISettings
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project, Segment
-from cartoon_sub.translation.qa_service import SEMANTIC_QA_SCHEMA, TranslationQAService
+from cartoon_sub.translation.qa_service import (
+    MANUAL_QA_SCHEMA, SEMANTIC_QA_SCHEMA, TranslationQAService,
+)
 from cartoon_sub.translation.prompts import translation_retry_prompt
 from cartoon_sub.translation.qc import (
     local_dubbing_qa,
@@ -216,6 +218,70 @@ class TranslationQATests(unittest.TestCase):
         self.assertEqual(updated.vi_dubbing, "Lồng tiếng còn 甘堕落.")
         self.assertEqual(updated.dubbing_status, "stale")
         self.assertEqual(result.translation_qa["133"]["dubbing_status"], "FAIL")
+
+    def test_manual_qa_calls_ai_only_for_selected_and_keeps_pass_row(self):
+        rows = [Segment(index, index, index + 0.8, f"第{index}句", vi=f"Bản dịch {index}.")
+                for index in range(1, 7)]
+        rows[1].zh = SOURCE
+        rows[1].vi = BAD_TARGET
+        project = Project("qa", "video.mp4", segments=rows, story_context={
+            "visual_contexts": [{
+                "id": 2, "scene_mode": "PRESENT",
+                "speaker": {"spk_id": rows[1].speaker_id, "character_id": "", "confidence": 0.95},
+                "addressee": {"character_id": "", "confidence": 0.5},
+                "visible_characters": [], "referents": [], "visible_objects": [], "notes": "",
+                "confidence": 0.95, "analysis_status": "ANALYZED",
+            }]
+        })
+        client = Mock()
+        payloads = []
+
+        def generate(_system, prompt, schema, _model, **_kwargs):
+            self.assertEqual(schema, MANUAL_QA_SCHEMA)
+            payload = prompt_payload(prompt)
+            payloads.append(payload)
+            uid = payload["target"]["id"]
+            if uid == 2:
+                return {"id": 2, "status": "FAIL", "issues": [{
+                    "type": "UNTRANSLATED_HAN", "detail": "Còn chữ Trung",
+                }], "corrected_vi_subtitle": FIXED_TARGET, "reason": "Dịch lại từ source"}
+            return {"id": uid, "status": "PASS", "issues": [],
+                    "corrected_vi_subtitle": "", "reason": "Đạt"}
+
+        client.generate_json.side_effect = generate
+        original = {row.id: row.to_dict() for row in project.segments}
+        with tempfile.TemporaryDirectory() as directory:
+            result, _ = TranslationQAService(settings_store(), lambda _key: client).run_selected_manual(
+                project, directory, [2, 4])
+        self.assertEqual(client.generate_json.call_count, 2)
+        self.assertEqual([payload["target"]["id"] for payload in payloads], [2, 4])
+        self.assertEqual(result.segments[1].vi_subtitle, FIXED_TARGET)
+        self.assertEqual(result.segments[1].vi_dubbing, FIXED_TARGET)
+        self.assertEqual(result.segments[3].to_dict(), original[4])
+        self.assertTrue(all(row.to_dict() == original[row.id]
+                            for row in result.segments if row.id not in {2, 4}))
+        self.assertEqual([row["id"] for row in payloads[0]["reference_before"]], [1])
+        self.assertEqual([row["id"] for row in payloads[0]["reference_after"]], [3, 4, 5])
+        self.assertEqual([row["id"] for row in payloads[0]["editorial"]["approved_context"]["visual_contexts"]], [2])
+        self.assertEqual((result.segments[1].id, result.segments[1].start, result.segments[1].end),
+                         (2, original[2]["start"], original[2]["end"]))
+
+    def test_manual_qa_retries_at_most_twice_after_local_failure(self):
+        segment = Segment(34, 0, 1, SOURCE, vi=BAD_TARGET)
+        project = Project("qa", "video.mp4", segments=[segment])
+        client = Mock()
+        client.generate_json.side_effect = [
+            {"id": 34, "status": "FAIL", "issues": [{"type": "UNTRANSLATED_HAN", "detail": "Lỗi"}],
+             "corrected_vi_subtitle": BAD_TARGET, "reason": "Thử một"},
+            {"id": 34, "status": "FAIL", "issues": [{"type": "UNTRANSLATED_HAN", "detail": "Lỗi"}],
+             "corrected_vi_subtitle": FIXED_TARGET, "reason": "Thử hai"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            result, _ = TranslationQAService(settings_store(), lambda _key: client).run_selected_manual(
+                project, directory, [34])
+        self.assertEqual(client.generate_json.call_count, 2)
+        self.assertEqual(result.segments[0].vi_subtitle, FIXED_TARGET)
+        self.assertEqual(result.translation_qa["34"]["status"], "MANUAL_FIXED")
 
 
 if __name__ == "__main__":

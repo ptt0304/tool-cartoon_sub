@@ -19,12 +19,12 @@ class CachedRequests:
         if self.client:
             self.client.close()
 
-    def request(self, system, prompt, schema, validate, label):
+    def request(self, system, prompt, schema, validate, label, *, force=False):
         check_cancel(self.cancel)
         key = content_hash({"version": PROMPT_VERSION, "provider": self.provider, "model": self.model, "system": system,
                             "prompt": prompt, "schema": schema})
         path = self.directory / f"{key}.json"
-        if path.exists():
+        if path.exists() and not force:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if data.get("status") == "completed":

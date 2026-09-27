@@ -46,6 +46,7 @@ class AISettings:
     api_key_file: str = ""
     provider_filter: str = "all"
     transcription_provider: str = "gemini"
+    ui_zoom_percent: int = 100
 
     def validate(self):
         for model in (self.transcription_model, self.translation_model):
@@ -55,6 +56,8 @@ class AISettings:
             raise ValueError("Translation chunk size phải từ 30 đến 50")
         if type(self.retry_count) is not int or not 0 <= self.retry_count <= 5:
             raise ValueError("Retry count phải từ 0 đến 5")
+        if type(self.ui_zoom_percent) is not int or not 0 <= self.ui_zoom_percent <= 100:
+            raise ValueError("Thu phóng giao diện phải từ 0 đến 100%")
         from cartoon_sub.ai.text_client import PROVIDER_CATALOG
         if self.translation_provider not in PROVIDER_CATALOG:
             raise ValueError("Provider dịch không hợp lệ")
@@ -137,6 +140,11 @@ class SettingsStore:
             except Exception:
                 raise RuntimeError("Không lưu được translation API key vào OS keyring.") from None
         atomic_json(self.folder / "settings.json", asdict(settings))
+
+    def save_ui_zoom(self, percent):
+        settings = self.load()
+        settings.ui_zoom_percent = int(percent)
+        atomic_json(self.folder / "settings.json", asdict(settings.validate()))
 
     def get_key(self, provider="gemini"):
         settings = self.load()

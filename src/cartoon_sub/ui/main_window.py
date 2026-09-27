@@ -3,7 +3,7 @@ import logging
 import re
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QKeySequence, QUndoStack
+from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QFileDialog, QMessageBox,
     QProgressBar, QPushButton, QInputDialog, QLabel, QScrollArea, QWidget, QHBoxLayout, QVBoxLayout)
 from cartoon_sub.app.controller import Controller
@@ -17,6 +17,8 @@ from cartoon_sub.ui.speaker_dialog import SpeakerDialog
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
 from cartoon_sub.ui.utterance_dialog import UtteranceDialog
 from cartoon_sub.ui.docs_dialog import DocsWindow
+from cartoon_sub.ui.zoom import UIZoomManager
+from cartoon_sub.ui.zoom_dialog import ZoomDialog
 from cartoon_sub.ui.timeline_table import populate, selected_ids, get_dirty_rows
 from cartoon_sub.translation.dubbing_service import eligible_dubbing_ids, parse_dubbing_threshold
 from cartoon_sub.ui.undo import AppliedValueCommand
@@ -27,8 +29,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.controller = Controller()
-        self.no_wheel_filter = NoWheelNumericFilter(self)
         from PySide6.QtWidgets import QApplication
+        self.ui_zoom_manager = UIZoomManager(QApplication.instance())
+        try:
+            self.ui_zoom_manager.set_percent(self.controller.settings_store.load().ui_zoom_percent)
+        except (OSError, ValueError, TypeError):
+            self.ui_zoom_manager.set_percent(100)
+        self.no_wheel_filter = NoWheelNumericFilter(self)
         QApplication.instance().installEventFilter(self.no_wheel_filter)
         self.worker = None
         self.undo_stack = QUndoStack(self)
@@ -73,11 +80,23 @@ class MainWindow(QMainWindow):
         self.settings_menu = self.menuBar().addMenu("Settings")
         self.settings_menu.addAction("AI…", self.open_settings)
         self.settings_menu.addAction("Translation / Dubbing…", self.open_dubbing_settings)
+        self.settings_menu.addAction("Giao diện…", self.open_zoom_settings)
+        self.zoom_shortcuts = []
+        for sequence, callback in (
+            ("Ctrl++", lambda: self.change_ui_zoom(5)),
+            ("Ctrl+=", lambda: self.change_ui_zoom(5)),
+            ("Ctrl+-", lambda: self.change_ui_zoom(-5)),
+            ("Ctrl+0", lambda: self.set_ui_zoom(100)),
+        ):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(callback)
+            self.zoom_shortcuts.append(shortcut)
         self.docs_button = QPushButton("Docs")
         self.docs_button.clicked.connect(self.show_docs)
         self.menuBar().setCornerWidget(self.docs_button, Qt.Corner.TopRightCorner)
         self.copyright_label = QLabel("© PHẠM THANH TÙNG - 0866891380")
         self.statusBar().addPermanentWidget(self.copyright_label)
+        QTimer.singleShot(0, self.ui_zoom_manager.apply)
         self.pages[0].open_button.clicked.connect(self.open_video)
         self.pages[1].import_button.clicked.connect(self.import_srt)
         self.pages[1].transcribe_button.clicked.connect(self.transcribe)
@@ -91,6 +110,7 @@ class MainWindow(QMainWindow):
         self.pages[2].view.currentIndexChanged.connect(self.refresh_timeline_table)
         self.pages[2].edit_button.clicked.connect(self.edit_utterance)
         self.pages[2].optimize_button.clicked.connect(self.optimize_dubbing)
+        self.pages[2].manual_qa_button.clicked.connect(self.qa_selected_translation)
         self.pages[2].revert_optimize_button.clicked.connect(self.revert_dubbing_optimization)
         self.pages[2].apply_edits_button.clicked.connect(self.apply_manual_edits)
         self.pages[2].revert_edits_button.clicked.connect(self.revert_manual_edits)
@@ -798,11 +818,53 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error(exc)
 
+    def open_zoom_settings(self):
+        ZoomDialog(self.ui_zoom_manager, self.set_ui_zoom, self).exec()
+
+    def set_ui_zoom(self, percent):
+        self.ui_zoom_manager.set_percent(percent)
+        self.controller.settings_store.save_ui_zoom(self.ui_zoom_manager.percent)
+
+    def change_ui_zoom(self, delta):
+        self.set_ui_zoom(self.ui_zoom_manager.percent + delta)
+
     def qa_translation(self):
         try:
             self.sync_options()
             self.controller.save()
             self.start_job(self.controller.qa_translation, self.accept_project)
+        except Exception as exc:
+            self.error(exc)
+
+    def qa_selected_translation(self):
+        try:
+            page = self.pages[2]
+            ids = selected_ids(page.table)
+            if not ids:
+                self.statusBar().showMessage("Vui lòng chọn ít nhất một dòng để QA/QC.", 5000)
+                return
+            if get_dirty_rows(page.table):
+                self.statusBar().showMessage(
+                    "Hãy áp dụng hoặc hoàn tác các sửa tay trước khi QA/QC AI.", 6000)
+                return
+            self.sync_options()
+            self.controller.save()
+            before = {segment.id: segment.vi_subtitle for segment in self.controller.project.segments
+                      if segment.id in ids}
+
+            def accept(result):
+                self.accept_project(result)
+                fixed = sum(
+                    next(segment for segment in self.controller.project.segments
+                         if segment.id == uid).vi_subtitle != text
+                    for uid, text in before.items()
+                )
+                self.statusBar().showMessage(
+                    f"QA/QC hoàn tất: {len(ids)} dòng • {fixed} dòng được sửa • "
+                    f"{len(ids) - fixed} dòng giữ nguyên.", 10000)
+
+            self.start_job(
+                lambda **job: self.controller.qa_selected_translation(ids, **job), accept)
         except Exception as exc:
             self.error(exc)
 

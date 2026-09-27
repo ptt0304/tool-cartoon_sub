@@ -9,7 +9,12 @@ from cartoon_sub.subtitle.models import Project, Utterance
 
 from .chunker import source_rows
 from .gemini_translator import TRANSLATION_SCHEMA, TranslationValidationError, read_json, validate_translation
-from .prompts import EDITORIAL_RULES, semantic_qa_prompt, translation_retry_prompt
+from .prompts import (
+    EDITORIAL_RULES,
+    manual_translation_qa_prompt,
+    semantic_qa_prompt,
+    translation_retry_prompt,
+)
 from .qc import (
     local_dubbing_qa,
     local_translation_qa,
@@ -40,6 +45,22 @@ SEMANTIC_QA_SCHEMA = {
     "required": ["id", "status", "issues"],
 }
 
+MANUAL_QA_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "id": {"type": "INTEGER"},
+        "status": {"type": "STRING", "enum": ["PASS", "FAIL"]},
+        "issues": {"type": "ARRAY", "items": {
+            "type": "OBJECT",
+            "properties": {"type": {"type": "STRING"}, "detail": {"type": "STRING"}},
+            "required": ["type", "detail"],
+        }},
+        "corrected_vi_subtitle": {"type": "STRING"},
+        "reason": {"type": "STRING"},
+    },
+    "required": ["id", "status", "issues", "corrected_vi_subtitle", "reason"],
+}
+
 
 def validate_semantic_qa(payload, expected_id):
     data = read_json(payload)
@@ -58,6 +79,34 @@ def validate_semantic_qa(payload, expected_id):
     if data["status"] == "FAIL" and not issues:
         raise TranslationValidationError("QA FAIL phải có issue")
     return {"id": expected_id, "status": data["status"], "issues": issues}
+
+
+def validate_manual_qa(payload, expected_id):
+    data = read_json(payload)
+    required = {"id", "status", "issues", "corrected_vi_subtitle", "reason"}
+    if not isinstance(data, dict) or set(data) != required:
+        raise TranslationValidationError("Manual QA response thiếu/sai trường")
+    if data["id"] != expected_id or data["status"] not in {"PASS", "FAIL"}:
+        raise TranslationValidationError("Manual QA response sai ID/status")
+    if not isinstance(data["issues"], list) or not isinstance(data["reason"], str):
+        raise TranslationValidationError("Manual QA issues/reason sai kiểu")
+    issues = []
+    for issue in data["issues"]:
+        if (not isinstance(issue, dict) or set(issue) != {"type", "detail"}
+                or not all(isinstance(issue[key], str) and issue[key].strip()
+                           for key in ("type", "detail"))):
+            raise TranslationValidationError("Manual QA issue không đúng schema")
+        issues.append({"type": issue["type"].strip(), "detail": issue["detail"].strip(),
+                       "severity": "FAIL"})
+    corrected = data["corrected_vi_subtitle"]
+    if not isinstance(corrected, str):
+        raise TranslationValidationError("Manual QA corrected_vi_subtitle sai kiểu")
+    if data["status"] == "PASS" and (issues or corrected.strip()):
+        raise TranslationValidationError("Manual QA PASS không được rewrite")
+    if data["status"] == "FAIL" and (not issues or not corrected.strip()):
+        raise TranslationValidationError("Manual QA FAIL phải có issue và bản dịch mới")
+    return {"id": expected_id, "status": data["status"], "issues": issues,
+            "corrected_vi_subtitle": corrected.strip(), "reason": data["reason"].strip()}
 
 
 class TranslationQAService:
@@ -126,6 +175,95 @@ class TranslationQAService:
             manager.save(project, directory)
             from .artifacts import save_translation_artifacts
             save_translation_artifacts(project, directory)
+            return project, Path(directory)
+        except CancelledError:
+            manager.save(project, directory)
+            raise
+        finally:
+            requests.close()
+
+    def run_selected_manual(self, project, directory, ids, *, cancel=None, progress=None):
+        """Always AI-review selected VI Subtitle rows; never scans unrelated rows."""
+        project = Project.from_dict(project.to_dict())
+        selected_ids = list(dict.fromkeys(int(value) for value in ids))
+        by_id = {segment.id: segment for segment in project.segments}
+        missing = [value for value in selected_ids if value not in by_id]
+        if not selected_ids:
+            raise ValueError("Vui lòng chọn ít nhất một dòng để QA/QC.")
+        if missing:
+            raise ValueError("Không tìm thấy ID đã chọn: " + ", ".join(map(str, missing)))
+        settings = self.store.load()
+        factory = self.factory if self.factory is not GeminiClient else (
+            GeminiClient if settings.translation_provider == "gemini"
+            else text_client_factory(settings.translation_provider)
+        )
+        requests = CachedRequests(
+            self.store, Path(directory) / "cache" / "manual_translation_qa",
+            settings.translation_model, 0, cancel, progress, factory,
+            settings.translation_provider,
+        )
+        rows = source_rows(project.segments)
+        indexes = {row["id"]: index for index, row in enumerate(rows)}
+        report = progress or (lambda _message: None)
+        manager = ProjectManager()
+        fixed = kept = review = 0
+        try:
+            for position, segment_id in enumerate(selected_ids, 1):
+                check_cancel(cancel)
+                segment = by_id[segment_id]
+                index = indexes[segment_id]
+                before = rows[max(0, index - 3):index]
+                after = rows[index + 1:index + 4]
+                latest_issues = []
+                completed = False
+                for attempt in range(1, 3):
+                    report(f"QA/QC AI {position}/{len(selected_ids)} | ID {segment_id} | lần {attempt}/2")
+                    prompt = manual_translation_qa_prompt(
+                        project, rows[index], before, after, segment.vi_subtitle,
+                        segment.vi_dubbing, attempt, latest_issues,
+                    )
+                    try:
+                        verdict, _ = requests.request(
+                            SEMANTIC_QA_RULES, prompt, MANUAL_QA_SCHEMA,
+                            lambda payload, uid=segment_id: validate_manual_qa(payload, uid),
+                            f"Manual QA ID {segment_id} lần {attempt}", force=True,
+                        )
+                    except GeminiError as exc:
+                        latest_issues = [{"type": "AI_QA_ERROR", "detail": str(exc),
+                                          "severity": "FAIL"}]
+                        continue
+                    if verdict["status"] == "PASS":
+                        local = local_translation_qa(project, segment)
+                        if local["status"] != "FAIL":
+                            store_qa_result(project, segment, "PASS", [], attempt)
+                            kept += 1
+                            completed = True
+                            break
+                        latest_issues = local["issues"]
+                        continue
+                    candidate = Utterance.from_dict(segment.to_dict())
+                    candidate.vi = verdict["corrected_vi_subtitle"]
+                    local = local_translation_qa(project, candidate)
+                    if local["status"] != "FAIL":
+                        segment.vi = verdict["corrected_vi_subtitle"]
+                        project.translation_notes[str(segment.id)] = verdict["reason"]
+                        store_qa_result(project, segment, "MANUAL_FIXED", [], attempt)
+                        fixed += 1
+                        completed = True
+                        break
+                    latest_issues = local["issues"]
+                if not completed:
+                    store_qa_result(
+                        project, segment, "NEED_REVIEW", latest_issues, 2,
+                        ", ".join(item["type"] for item in latest_issues),
+                    )
+                    review += 1
+                store_dubbing_qa_result(project, segment, local_dubbing_qa(project, segment))
+                manager.save(project, directory)
+            from .artifacts import save_translation_artifacts
+            save_translation_artifacts(project, directory)
+            report(f"QA/QC hoàn tất: {len(selected_ids)} dòng • {fixed} dòng được sửa • "
+                   f"{kept} dòng giữ nguyên • {review} dòng cần xem lại.")
             return project, Path(directory)
         except CancelledError:
             manager.save(project, directory)
