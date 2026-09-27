@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import Mock
 
-from cartoon_sub.ai.gemini_client import GeminiError
 from cartoon_sub.app.settings import AISettings
 from cartoon_sub.subtitle.models import DisplaySegment, Project, Utterance
 from cartoon_sub.subtitle.semantic_segmentation import (SemanticSegmentationService,
@@ -41,40 +40,33 @@ class SemanticSegmentationTests(unittest.TestCase):
         client_factory.assert_not_called()
         self.assertEqual(len(project.segments[0].display_segments), 1)
 
-    def test_unresolved_local_text_uses_valid_gemini_boundaries_only(self):
+    def test_unresolved_local_text_uses_local_whitespace_fallback_only(self):
         client = Mock()
-        client.generate_json.return_value = {"parts": list(PARTS)}
         semantic = SemanticSegmentationService(store(), lambda key: client)
         service = SubtitleSegmentationService(semantic)
         utterance = Utterance(1, 0, 6, "中文", vi=TEXT, speaker_id="SPK_02")
         project = Project("p", "source.mp4", segments=[utterance])
         service.auto_segment(project)
-        self.assertEqual(tuple(item.vi_text for item in utterance.display_segments), PARTS)
-        self.assertTrue(all(item.segmentation_reason == "gemini_semantic" or item.id.endswith(".2")
-            for item in utterance.display_segments))
         self.assertEqual("".join(item.vi_text for item in utterance.display_segments), TEXT)
         self.assertTrue(all(item.speaker_id == "SPK_02" for item in utterance.display_segments))
-        client.generate_json.assert_called_once()
+        self.assertTrue(all(item.vi_syllables <= 14 for item in utterance.display_segments))
+        client.generate_json.assert_not_called()
 
-    def test_invalid_or_failed_gemini_preserves_current_display_data_and_marks_review(self):
+    def test_unbreakable_text_never_calls_gemini_and_is_marked_for_review(self):
+        unbreakable = "mộtchuỗirấtdàikhônghềcókhoảngtrắngđểtách"
         client = Mock()
-        client.generate_json.return_value = {"parts": ["Đã thay đổi", TEXT]}
         semantic = SemanticSegmentationService(store(), lambda key: client)
         service = SubtitleSegmentationService(semantic)
-        existing = DisplaySegment("1.1", 1, 0, 6, TEXT, segmentation_reason="local")
-        utterance = Utterance(1, 0, 6, "中文", vi=TEXT, speaker_id="SPK_01", display_segments=[existing])
+        existing = DisplaySegment("1.1", 1, 0, 6, unbreakable, segmentation_reason="local")
+        utterance = Utterance(1, 0, 6, "中文", vi=unbreakable, speaker_id="SPK_01", display_segments=[existing])
         project = Project("p", "source.mp4", segments=[utterance])
         before = (existing.id, existing.start, existing.end, existing.vi_text)
         service.auto_segment(project)
         after = utterance.display_segments[0]
         self.assertEqual((after.id, after.start, after.end, after.vi_text), before)
-        self.assertEqual(utterance.vi_subtitle, TEXT)
+        self.assertEqual(utterance.vi_subtitle, unbreakable)
         self.assertIn("MANUAL_REVIEW", after.qc_flags)
-
-        client.generate_json.side_effect = GeminiError("unavailable")
-        service.auto_segment(project)
-        self.assertEqual(utterance.vi_subtitle, TEXT)
-        self.assertEqual(utterance.display_segments[0].vi_text, TEXT)
+        client.generate_json.assert_not_called()
 
 
 if __name__ == "__main__":

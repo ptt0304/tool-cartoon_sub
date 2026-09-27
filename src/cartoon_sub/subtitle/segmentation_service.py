@@ -2,11 +2,9 @@
 from dataclasses import asdict
 from copy import copy
 import logging
-import math
 import re
 
 from cartoon_sub.project.cache import content_hash
-from cartoon_sub.ai.gemini_client import GeminiError
 from cartoon_sub.subtitle.models import DisplaySegment, Utterance
 from cartoon_sub.subtitle.segmentation import (LocalSegmentationEngine, SegmentationPlan, SegmentationProfile,
     SegmentationSettings, normalize_text, settings_for)
@@ -187,17 +185,21 @@ class SubtitleSegmentationService:
 
     def auto_segment(self, project, utterance_ids=None, force=False, *, cancel=None, progress=None):
         profile, settings = self.settings_for(project)
+        log.info("[SUBTITLE SEGMENT] preferred_syllables=%s max_syllables=%s max_lines=%s "
+                 "preferred_chars_per_line=%s hard_chars_per_line=%s preferred_duration=%.1f max_duration=%.1f",
+                 settings.preferred_syllables_max, settings.max_syllables, settings.max_lines,
+                 settings.preferred_chars_per_line, settings.hard_max_chars_per_line,
+                 (settings.preferred_duration_min + settings.preferred_duration_max) / 2, settings.max_duration)
         chosen = set(utterance_ids or [item.id for item in project.utterances])
         if not chosen.issubset({item.id for item in project.utterances}):
             raise ValueError("Utterance cần segment không tồn tại")
         changed, skipped = [], []
-        semantic_identity = self.semantic_service.cache_identity() if self.semantic_service is not None else None
         for utterance in project.utterances:
             source_text = self.source_text(project, utterance)
             if utterance.id not in chosen or not source_text.strip():
                 continue
             source_utterance = self.source_utterance(project, utterance)
-            cache_key = self._fingerprint(project, utterance, profile, settings, semantic_identity)
+            cache_key = self._fingerprint(project, utterance, profile, settings)
             state = project.segmentation_cache.get(str(utterance.id), {})
             if state.get("manual") and not force:
                 skipped.append(utterance.id)
@@ -205,45 +207,19 @@ class SubtitleSegmentationService:
             if state.get("fingerprint") == cache_key and utterance.display_segments and not force:
                 continue
             plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
-            if "MANUAL_REVIEW" in plan.qc_flags and self.semantic_service is not None:
-                try:
-                    parts = self.semantic_service.split(source_text, "vi", settings.preferred_syllables_max,
-                        settings.max_syllables, self._max_segments(source_utterance, settings), cancel=cancel)
-                    plan = SegmentationPlan(utterance.id, utterance.speaker_id, source_text, parts,
-                        ("gemini_semantic",) * (len(parts) - 1), (), False, True)
-                except GeminiError:
-                    self._mark_manual_review(utterance, source_utterance, settings, plan)
-                    if progress:
-                        progress(f"Utterance {utterance.id}: Gemini không tạo được điểm tách hợp lệ; cần duyệt tay")
-                    changed.append(utterance.id)
-                    continue
             allocated = allocate_display_segments(source_utterance, plan, settings)
             utterance.set_display_segments(list(allocated.segments))
             for segment in utterance.display_segments:
                 apply_display_qc(segment, settings, source_text)
+                log.info("[SUBTITLE SEGMENT] parent=%s child=%s text=%r syllable_count=%s max=%s "
+                         "duration=%.3f QC=%s", utterance.id, segment.id, segment.vi_text,
+                         count_syllables(segment.vi_text), settings.max_syllables, segment.duration,
+                         "|".join(segment.qc_flags))
             project.segmentation_cache[str(utterance.id)] = {"fingerprint": cache_key, "manual": False,
                 "timing_source": allocated.timing_source,
                 "source_type": getattr(project, "subtitle_text_source", "vi_subtitle")}
             changed.append(utterance.id)
         return changed, skipped
-
-    @staticmethod
-    def _max_segments(utterance, settings):
-        by_syllables = math.ceil(max(1, count_syllables(utterance.vi_subtitle)) / settings.max_syllables)
-        by_duration = math.ceil(utterance.duration / settings.max_duration)
-        return min(8, max(2, by_syllables, by_duration))
-
-    @staticmethod
-    def _mark_manual_review(utterance, source_utterance, settings, plan):
-        if utterance.display_segments:
-            for segment in utterance.display_segments:
-                if "MANUAL_REVIEW" not in segment.qc_flags:
-                    segment.qc_flags.append("MANUAL_REVIEW")
-            return
-        allocated = allocate_display_segments(source_utterance, plan, settings)
-        utterance.set_display_segments(list(allocated.segments))
-        for segment in utterance.display_segments:
-            apply_display_qc(segment, settings, source_utterance.vi_subtitle)
 
     def sync_utterance(self, project, utterance):
         profile, settings = self.settings_for(project)

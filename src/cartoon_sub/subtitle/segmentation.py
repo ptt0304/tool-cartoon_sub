@@ -89,7 +89,7 @@ STRONG_PUNCTUATION = ".?!…。？！"
 SOFT_PUNCTUATION = ",;:，；："
 SEMANTIC_PHRASES = (
     "tuy nhiên", "vì vậy", "do đó", "sau đó", "hôm nay", "ngày mai", "thế nhưng",
-    "trong khi", "chỉ vì", "nhưng", "rồi", "còn",
+    "trong khi", "chỉ vì", "nhưng", "rồi", "còn", "để",
 )
 PROTECTED_PATTERNS = (
     r"\bCao\s+Câu\s+Ly\b",
@@ -145,7 +145,9 @@ def _raw_candidates(text):
     found = {}
     for index, char in enumerate(text):
         if char in STRONG_PUNCTUATION:
-            found[index + 1] = "sentence_boundary"
+            # Treat an ellipsis/punctuation run as one boundary at its end.
+            if index + 1 == len(text) or text[index + 1] not in STRONG_PUNCTUATION:
+                found[index + 1] = "sentence_boundary"
         elif char in SOFT_PUNCTUATION:
             found[index + 1] = "comma_boundary"
     phrase_pattern = r"(?<!\w)(?:" + "|".join(re.escape(item) for item in SEMANTIC_PHRASES) + r")(?!\w)"
@@ -202,8 +204,10 @@ def _candidate_score(text, position, kind, duration, settings):
     left, right = text[:position], text[position:]
     if _inside_protected(position, protected_spans(text)):
         return -1000.0
-    punctuation = {"sentence_boundary": 12.0, "comma_boundary": 7.0, "semantic_boundary": 9.0}[kind]
-    semantic = {"sentence_boundary": 7.0, "comma_boundary": 3.0, "semantic_boundary": 8.0}[kind]
+    punctuation = {"sentence_boundary": 12.0, "comma_boundary": 7.0,
+                   "semantic_boundary": 9.0, "whitespace_boundary": 0.0}[kind]
+    semantic = {"sentence_boundary": 7.0, "comma_boundary": 3.0,
+                "semantic_boundary": 8.0, "whitespace_boundary": 0.0}[kind]
     left_duration = _projected_duration(left, text, duration)
     right_duration = _projected_duration(right, text, duration)
     score = punctuation + semantic
@@ -241,17 +245,28 @@ class LocalSegmentationEngine:
                 for position, kind in _raw_candidates(text)]
 
     def _split(self, text, duration, candidates):
-        def recurse(start, end):
+        priority = ("sentence_boundary", "comma_boundary", "semantic_boundary", "whitespace_boundary")
+
+        def recurse(start, end, depth=0):
             fragment = text[start:end]
             estimate = _projected_duration(fragment, text, duration)
             if _part_is_acceptable(fragment, estimate, self.settings):
                 return [(start, end)], [], False
+            if depth >= 64:
+                return [(start, end)], [], True
             available = [candidate for candidate in candidates if start < candidate.position < end]
             if not available:
+                spans = protected_spans(text)
+                available = [BoundaryCandidate(index, "whitespace_boundary", 0.0)
+                             for index in range(start + 1, end)
+                             if text[index - 1].isspace() and not _inside_protected(index, spans)]
+            if not available:
                 return [(start, end)], [], True
-            candidate = max(available, key=lambda item: self._range_score(text, start, end, item, duration))
-            left, left_reasons, left_unresolved = recurse(start, candidate.position)
-            right, right_reasons, right_unresolved = recurse(candidate.position, end)
+            best_kind = next(kind for kind in priority if any(item.kind == kind for item in available))
+            same_priority = [item for item in available if item.kind == best_kind]
+            candidate = max(same_priority, key=lambda item: self._range_score(text, start, end, item, duration))
+            left, left_reasons, left_unresolved = recurse(start, candidate.position, depth + 1)
+            right, right_reasons, right_unresolved = recurse(candidate.position, end, depth + 1)
             return left + right, left_reasons + [candidate.kind] + right_reasons, left_unresolved or right_unresolved
 
         ranges, reasons, unresolved = recurse(0, len(text))
