@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import wave
+import logging
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.media.ffprobe import probe
 from cartoon_sub.subtitle.parser import import_srt
@@ -32,6 +33,7 @@ from cartoon_sub.subtitle.semantic_segmentation import SemanticSegmentationServi
 from cartoon_sub.subtitle.audio_timing import AudioTimingRefiner
 from cartoon_sub.subtitle.export_service import export_current_srt
 from cartoon_sub.tts.process_manager import LocalTTSProcessManager
+from cartoon_sub.tts.duration_fit import DurationFitPlanner, MAX_SEMANTIC_REWRITES, VoiceCalibrationCache
 
 class Controller:
     def __init__(self, settings_store=None):
@@ -377,7 +379,17 @@ class Controller:
         self.project.speakers[speaker_id] = asdict(speaker)
         if previous_voice != speaker.tts_voice_id or previous_speed != float(speaker.tts_speed):
             for utterance in self.project.utterances:
-                if utterance.speaker_id == speaker_id and utterance.tts_generation_status in {"generated", "cached"}:
+                if utterance.speaker_id != speaker_id:
+                    continue
+                utterance.dubbing_voice_id = speaker.tts_voice_id
+                utterance.dubbing_estimated_rate = None
+                utterance.dubbing_budget_duration = None
+                utterance.allowed_audio_start = None
+                utterance.allowed_audio_end = None
+                utterance.tts_fit_ratio = None
+                utterance.dubbing_fit_status = "NOT_MEASURED"
+                utterance.dubbing_rewrite_attempts = 0
+                if utterance.tts_generation_status in {"generated", "cached"}:
                     utterance.tts_generation_status = "stale"
                     utterance.tts_error = ""
         self.save()
@@ -419,9 +431,52 @@ class Controller:
         settings = self.settings_store.load_local_tts()
         client = LocalTTSClient(settings)
         try:
-            return LocalTTSGenerationService(
-                client, self.manager, settings.base_url
-            ).generate(self.project, self.directory, **job)
+            calibration_cache = VoiceCalibrationCache(
+                Path(self.settings_store.folder) / "voice_duration_calibration.json"
+            )
+            service = LocalTTSGenerationService(
+                client, self.manager, settings.base_url, calibration_cache,
+            )
+            result = service.generate(self.project, self.directory, **job)
+            planner = DurationFitPlanner()
+            planner.apply(self.project)
+            self.manager.save(self.project, self.directory)
+            progress = job.get("progress")
+            for attempt in range(1, MAX_SEMANTIC_REWRITES + 1):
+                rewrite_ids = [
+                    row.id for row in self.project.utterances
+                    if row.dubbing_fit_status in {"REWRITE_SHORTER", "STRONG_REWRITE"}
+                    and row.dubbing_rewrite_attempts < MAX_SEMANTIC_REWRITES
+                ]
+                if not rewrite_ids:
+                    break
+                if progress:
+                    progress(f"Dubbing • Rewrite {attempt}/{MAX_SEMANTIC_REWRITES} • {len(rewrite_ids)} câu")
+                try:
+                    changed = self.dubbing_service.rewrite_duration_failures(
+                        self.project, self.directory, rewrite_ids, **job,
+                    )
+                except Exception as exc:
+                    logging.getLogger(__name__).warning("Targeted dubbing rewrite unavailable: %s", exc)
+                    for row in self.project.utterances:
+                        if row.id in rewrite_ids:
+                            row.dubbing_fit_status = "NEED_REVIEW"
+                            row.tts_alignment_diagnostic = "NEED_REVIEW"
+                    if progress:
+                        progress(f"Dubbing rewrite chưa thực hiện được: {exc}")
+                    break
+                if not changed:
+                    break
+                result = service.generate(self.project, self.directory, **job)
+                planner.apply(self.project)
+                self.manager.save(self.project, self.directory)
+            for row in self.project.utterances:
+                if (row.dubbing_fit_status in {"REWRITE_SHORTER", "STRONG_REWRITE"}
+                        and row.dubbing_rewrite_attempts >= MAX_SEMANTIC_REWRITES):
+                    row.dubbing_fit_status = "NEED_REVIEW"
+                    row.tts_alignment_diagnostic = "NEED_REVIEW"
+            self.manager.save(self.project, self.directory)
+            return result
         finally:
             client.close()
 
@@ -532,6 +587,12 @@ class Controller:
         s.dubbing_fingerprint=""
         s.pre_optimization_vi_subtitle = None
         s.pre_optimization_vi_dubbing = None
+        if previous_dubbing != dubbing:
+            s.allowed_audio_start = None
+            s.allowed_audio_end = None
+            s.tts_fit_ratio = None
+            s.dubbing_fit_status = "NOT_MEASURED"
+            s.dubbing_rewrite_attempts = 0
         if previous_dubbing != dubbing and s.tts_generation_status in {"generated", "cached"}:
             s.tts_generation_status = "stale"
             s.tts_error = ""
@@ -661,6 +722,17 @@ class Controller:
                 self.segmentation_service.sync_utterance(self.project, s)
 
             if dub_changed or speaker_changed or timing_changed:
+                s.allowed_audio_start = None
+                s.allowed_audio_end = None
+                s.tts_fit_ratio = None
+                s.dubbing_fit_status = "NOT_MEASURED"
+                s.dubbing_rewrite_attempts = 0
+                if speaker_changed:
+                    speaker = self.project.speakers.get(new_spk, {})
+                    s.dubbing_voice_id = speaker.get("tts_voice_id")
+                    s.dubbing_estimated_rate = None
+                if speaker_changed or timing_changed:
+                    s.dubbing_budget_duration = None
                 if s.tts_generation_status in {"generated", "cached"}:
                     s.tts_generation_status = "stale"
                     s.tts_error = ""

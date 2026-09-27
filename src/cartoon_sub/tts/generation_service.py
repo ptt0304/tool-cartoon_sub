@@ -26,6 +26,7 @@ from cartoon_sub.tts.cache_manifest import (
     save_manifest,
 )
 from cartoon_sub.tts.local_tts_client import LocalTTSClient, LocalTTSError
+from cartoon_sub.tts.duration_fit import VoiceCalibrationCache
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class LocalTTSGenerationService:
         client: LocalTTSClient,
         manager: ProjectManager | None = None,
         server_base_url: str | None = None,
+        calibration_cache: VoiceCalibrationCache | None = None,
     ):
         self.client = client
         self.manager = manager or ProjectManager()
@@ -78,6 +80,7 @@ class LocalTTSGenerationService:
         if not configured_url:
             raise ValueError("Local_TTS server base URL is required for cache identity")
         self.server_base_url = configured_url
+        self.calibration_cache = calibration_cache
 
         self._voice_registry: dict[str, dict] = {}
 
@@ -411,6 +414,11 @@ class LocalTTSGenerationService:
                 utterance.tts_generation_status = "generated"
                 utterance.tts_error = ""
                 utterance.recalculate()
+                if self.calibration_cache is not None:
+                    self.calibration_cache.observe(
+                        self.server_base_url, item.voice, float(speaker.tts_speed),
+                        normalize_tts_text(utterance.vi_dubbing), actual_duration,
+                    )
                 result.generated += 1
                 result.warnings += utterance.tts_alignment_status == "warning"
                 plan.manifest["segments"][utterance.tts_cache_key] = self._manifest_entry(

@@ -18,6 +18,7 @@ from cartoon_sub.tts.cache_identity import (
     normalize_tts_text,
 )
 from cartoon_sub.tts.cache_manifest import load_manifest, project_audio_path
+from cartoon_sub.tts.duration_fit import DurationFitPlanner
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ class TTSTimelineMixService:
                 "nhưng timestamp overlap. Hãy xác nhận/reconcile Speaker trước khi Build Dubbed Audio."
             )
 
-        inputs: list[tuple[Path, int, float]] = []
+        prepared: list[tuple[object, Path]] = []
         for utterance in project.utterances:
             check_cancel(cancel)
             phase_started = perf_counter()
@@ -195,23 +196,24 @@ class TTSTimelineMixService:
             validate_time += perf_counter() - phase_started
             ready_count += 1
 
-            phase_started = perf_counter()
-            slot_duration = utterance.end - utterance.start
             actual_duration = utterance.tts_duration
-            alignment_time += perf_counter() - phase_started
             if not actual_duration:
                 phase_started = perf_counter()
                 actual_duration = self._wav_duration(path)
                 duration_time += perf_counter() - phase_started
-            phase_started = perf_counter()
-            tolerance = max(0.10, slot_duration * 0.03)
-            tempo = 1.0
-            if actual_duration > slot_duration + tolerance:
-                ratio = actual_duration / slot_duration
-                if ratio <= 1.20:
-                    tempo = ratio
-            inputs.append((path, round(utterance.start * 1000), tempo))
-            alignment_time += perf_counter() - phase_started
+            if actual_duration <= 0:
+                raise ValueError(f"Utterance {utterance.id} có WAV TTS không đo được duration")
+            utterance.tts_duration = actual_duration
+            prepared.append((utterance, path))
+
+        phase_started = perf_counter()
+        planner = DurationFitPlanner()
+        planner.apply(project)
+        inputs: list[tuple[Path, int, float]] = []
+        for utterance, path in prepared:
+            audio_start, tempo = planner.mix_parameters(utterance)
+            inputs.append((path, round(audio_start * 1000), tempo))
+        alignment_time += perf_counter() - phase_started
 
         graph_started = perf_counter()
         output_dir = root / "audio" / "tts"

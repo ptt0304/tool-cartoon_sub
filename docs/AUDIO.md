@@ -70,6 +70,17 @@ liên quan. Dòng trạng thái tổng hợp các nhóm:
 - **Overlap groups**: nhiều speaker thực sự nói chồng nhau; khác với một WAV bị
   overflow khỏi slot của chính nó.
 
+Target ban đầu của VI Dubbing dùng tốc độ đã calibration riêng theo
+`voice_id + engine/model + speed`. Calibration chỉ là ước lượng; duration đọc
+từ WAV Local_TTS thực tế luôn quyết định bước fit cuối. VI Subtitle vẫn là bản
+dịch đầy đủ và không bị ghi đè bởi bản VI Dubbing đã rút gọn.
+
+Khi WAV dài hơn source slot, hệ thống tạo `allowed_audio_start/end` riêng và
+mượn gap thật phía sau trước, rồi mới tới phía trước, luôn chừa guard 80 ms.
+Canonical Start/End của subtitle không đổi. Tỉ lệ nhẹ chỉ dùng tempo tối đa
+1.12; câu dài hơn được rewrite semantic tối đa 2 lần. Ba câu dài/dày liên tiếp
+không mượn dây chuyền mà được đánh dấu `LONG_DENSE_CHAIN / NEED_REVIEW`.
+
 ## Build Dubbed Audio
 
 Nút này không sinh voice mới. Nó xác minh các WAV đã generated/cached, đặt mỗi

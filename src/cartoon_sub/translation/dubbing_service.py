@@ -1,8 +1,10 @@
 from pathlib import Path
 from dataclasses import asdict
+import logging
+import re
 from .chunker import translation_batches, source_rows
-from .prompts import dubbing_prompt, dubbing_system, PROMPT_VERSION, editorial
-from .gemini_translator import TRANSLATION_SCHEMA, validate_translation
+from .prompts import dubbing_prompt, dubbing_system, duration_rewrite_prompt, PROMPT_VERSION, editorial
+from .gemini_translator import TRANSLATION_SCHEMA, TranslationValidationError, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
 from .context_service import source_fingerprint
@@ -15,11 +17,65 @@ from cartoon_sub.syllable.vietnamese import count_syllables
 from cartoon_sub.project.cache import check_cancel, content_hash
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project
+from cartoon_sub.tts.duration_fit import DurationFitPlanner, MAX_SEMANTIC_REWRITES, VoiceCalibrationCache
+from cartoon_sub.tts.local_tts_client import LocalTTSClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class DubbingService:
     def __init__(self, store, client_factory=GeminiClient):
         self.store,self.factory=store,client_factory
+
+    def _calibration_cache(self, directory):
+        folder = Path(getattr(self.store, "folder", Path(directory) / "cache"))
+        return VoiceCalibrationCache(folder / "voice_duration_calibration.json")
+
+    def _apply_voice_budgets(self, project, directory, chosen, budget, progress=None):
+        planner = DurationFitPlanner()
+        calibrations = {}
+        voices = {}
+        try:
+            local_settings = self.store.load_local_tts()
+            client = LocalTTSClient(local_settings)
+            try:
+                if client.health().get("status") == "READY":
+                    voices = {voice.get("voice_id"): voice for voice in client.list_voices()}
+                    needed = {
+                        (project.speakers[row.speaker_id].get("tts_voice_id"),
+                         float(project.speakers[row.speaker_id].get("tts_speed", 1.0)))
+                        for row in project.utterances if row.id in chosen
+                        and row.speaker_id in project.speakers
+                        and project.speakers[row.speaker_id].get("tts_voice_id")
+                    }
+                    cache = self._calibration_cache(directory)
+                    for voice_id, speed in needed:
+                        voice = voices.get(voice_id)
+                        if voice and voice.get("status") == "READY":
+                            calibrations[(voice_id, speed)] = cache.calibrate(
+                                client, local_settings.base_url, voice, speed, progress,
+                            )
+            finally:
+                client.close()
+        except Exception as exc:
+            logger.warning("Voice calibration unavailable; using configured fallback rate: %s", exc)
+
+        for row in project.utterances:
+            if row.id not in chosen:
+                continue
+            speaker = project.speakers.get(row.speaker_id, {})
+            voice_id = speaker.get("tts_voice_id")
+            speed = float(speaker.get("tts_speed", 1.0))
+            calibration = calibrations.get((voice_id, speed))
+            row.dubbing_voice_id = voice_id
+            row.dubbing_estimated_rate = (
+                calibration.syllables_per_second if calibration else float(budget.speech_rate) * speed
+            )
+            row.dubbing_budget_duration = min(
+                planner.potential_duration(project, row), row.duration * 1.30,
+            )
+            row.recalculate(budget)
 
     def optimize(self, project, directory, ids, *, cancel=None, progress=None):
         project=Project.from_dict(project.to_dict())
@@ -34,6 +90,7 @@ class DubbingService:
             raise ValueError("Hãy dịch bản subtitle trước khi tối ưu dubbing")
         settings=self.store.load()
         budget=DubbingSettings(**project.dubbing_settings)
+        self._apply_voice_budgets(project, directory, chosen, budget, progress)
         factory=self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
         requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",settings.translation_model,
             settings.retry_count,cancel,progress,factory,settings.translation_provider)
@@ -90,5 +147,77 @@ class DubbingService:
                 ProjectManager().save(project,directory)
             save_translation_artifacts(project,directory)
             return project,Path(directory)
+        finally:
+            requests.close()
+
+    def rewrite_duration_failures(self, project, directory, ids, *, cancel=None, progress=None):
+        chosen = [row for row in project.utterances if row.id in set(ids)
+                  and row.dubbing_rewrite_attempts < MAX_SEMANTIC_REWRITES
+                  and row.dubbing_fit_status in {"REWRITE_SHORTER", "STRONG_REWRITE"}]
+        if not chosen:
+            return []
+        settings = self.store.load()
+        factory = self.factory if self.factory is not GeminiClient else (
+            GeminiClient if settings.translation_provider == "gemini"
+            else text_client_factory(settings.translation_provider)
+        )
+        requests = CachedRequests(
+            self.store, Path(directory) / "cache" / "dubbing_duration", settings.translation_model,
+            settings.retry_count, cancel, progress, factory, settings.translation_provider,
+        )
+        ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
+        changed = []
+        try:
+            for row in chosen:
+                check_cancel(cancel)
+                index = ordered.index(row)
+                before = source_rows(ordered[max(0, index - 3):index])
+                after = source_rows(ordered[index + 1:index + 4])
+                allowed = (row.allowed_audio_end or row.end) - (row.allowed_audio_start if row.allowed_audio_start is not None else row.start)
+                target = {
+                    "id": row.id,
+                    "chinese_source": row.zh,
+                    "full_vi_subtitle": row.vi_subtitle,
+                    "current_vi_dubbing": row.vi_dubbing,
+                    "speaker": row.speaker_id,
+                    "voice_id": row.dubbing_voice_id or project.speakers.get(row.speaker_id, {}).get("tts_voice_id"),
+                    "available_duration": round(allowed, 3),
+                    "actual_tts_duration": round(float(row.tts_duration or 0), 3),
+                    "required_reduction_percent": round(max(0.0, 1.0 - allowed / float(row.tts_duration or allowed)) * 100, 1),
+                    "rewrite_attempt": row.dubbing_rewrite_attempts + 1,
+                }
+                prompt = duration_rewrite_prompt(project, target, before, after)
+                def validate(payload):
+                    result = validate_translation(payload, [row.id])
+                    if re.search(r"[\u4e00-\u9fff]", result[0]["vi"]):
+                        raise TranslationValidationError(f"ID {row.id}: VI Dubbing còn ký tự Trung")
+                    return result
+                result, _ = requests.request(
+                    dubbing_system(), prompt, TRANSLATION_SCHEMA, validate,
+                    f"Dubbing {row.id} • Rewrite {row.dubbing_rewrite_attempts + 1}/{MAX_SEMANTIC_REWRITES}",
+                )
+                candidate = result[0]
+                row.dubbing_rewrite_attempts += 1
+                if candidate["vi"] == row.vi_dubbing:
+                    row.dubbing_fit_status = "NEED_REVIEW"
+                    continue
+                if row.pre_optimization_vi_dubbing is None:
+                    row.pre_optimization_vi_subtitle = row.vi_subtitle
+                    row.pre_optimization_vi_dubbing = row.vi_dubbing
+                row.vi_dubbing = candidate["vi"]
+                row.dubbing_optimized = True
+                row.dubbing_status = "rewritten"
+                row.semantic_compression = True
+                row.meaning_preservation = candidate["meaning_preservation"]
+                row.dubbing_fingerprint = ""
+                row.tts_generation_status = "stale"
+                row.tts_error = ""
+                row.dubbing_fit_status = "REWRITTEN"
+                project.translation_notes[f"dub:{row.id}"] = candidate["review_note"]
+                row.recalculate(DubbingSettings(**project.dubbing_settings))
+                changed.append(row.id)
+            ProjectManager().save(project, directory)
+            save_translation_artifacts(project, directory)
+            return changed
         finally:
             requests.close()

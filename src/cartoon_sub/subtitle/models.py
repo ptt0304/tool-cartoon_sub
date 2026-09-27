@@ -123,6 +123,14 @@ class Utterance:
     tts_speed_factor: float | None = None
     tts_alignment_status: str = "not_imported"
     tts_alignment_diagnostic: str = ""
+    allowed_audio_start: float | None = None
+    allowed_audio_end: float | None = None
+    tts_fit_ratio: float | None = None
+    dubbing_fit_status: str = "NOT_MEASURED"
+    dubbing_rewrite_attempts: int = 0
+    dubbing_voice_id: str | None = None
+    dubbing_estimated_rate: float | None = None
+    dubbing_budget_duration: float | None = None
     tts_segment_id: str | None = None
     tts_fingerprint: str = ""
     tts_generation_status: str = "not_generated"
@@ -167,6 +175,21 @@ class Utterance:
         if self.tts_duration is not None and (type(self.tts_duration) not in (int,float) or not math.isfinite(self.tts_duration) or self.tts_duration<=0):
             raise ValueError("TTS duration must be positive")
         if self.tts_audio_path is not None and not isinstance(self.tts_audio_path,str): raise ValueError("TTS path must be a string")
+        for name in ("allowed_audio_start", "allowed_audio_end", "tts_fit_ratio", "dubbing_estimated_rate", "dubbing_budget_duration"):
+            value = getattr(self, name)
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+                raise ValueError(f"Invalid dubbing duration metadata: {name}")
+        if self.allowed_audio_start is not None and self.allowed_audio_end is not None and self.allowed_audio_end <= self.allowed_audio_start:
+            raise ValueError("Allowed audio window must have positive duration")
+        if self.dubbing_voice_id is not None and (not isinstance(self.dubbing_voice_id, str) or not self.dubbing_voice_id.strip()):
+            raise ValueError("Dubbing voice ID must be non-empty text or null")
+        if type(self.dubbing_rewrite_attempts) is not int or not 0 <= self.dubbing_rewrite_attempts <= 2:
+            raise ValueError("Dubbing rewrite attempts must be between 0 and 2")
+        if self.dubbing_fit_status not in {
+            "NOT_MEASURED", "FIT", "BORROWED", "LIGHT_FIT", "REWRITE_SHORTER",
+            "STRONG_REWRITE", "REWRITTEN", "LONG_DENSE_CHAIN", "NEED_REVIEW",
+        }:
+            raise ValueError("Invalid dubbing fit status")
         if self.tts_segment_id is not None and (not isinstance(self.tts_segment_id, str) or not self.tts_segment_id.strip()):
             raise ValueError("TTS segment ID must be a non-empty string or null")
         if not isinstance(self.tts_cache_key, str) or not self.tts_cache_key.strip():
@@ -211,7 +234,11 @@ class Utterance:
             config=replace(config,target_strategy="time_based")
         zh,vi,sub=zh_count(self.zh),vi_count(self.vi_dubbing),vi_count(self.vi_subtitle)
         self.zh_syllables,self.vi_syllables,self.vi_subtitle_syllables=zh.count,vi.count,sub.count
-        self.target_syllables=self.target_override or target_syllables(zh.count,self.duration,config)
+        budget_duration = self.dubbing_budget_duration or self.duration
+        if self.dubbing_estimated_rate is not None:
+            from dataclasses import replace
+            config = replace(config, speech_rate=self.dubbing_estimated_rate, target_strategy="time_based")
+        self.target_syllables=self.target_override or target_syllables(zh.count,budget_duration,config)
         self.syllable_delta=vi.count-self.target_syllables
         self.syllable_warnings=list(dict.fromkeys(zh.warnings+vi.warnings+sub.warnings))
         if self.tts_duration is not None:

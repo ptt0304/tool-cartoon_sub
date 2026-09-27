@@ -150,5 +150,23 @@ def dubbing_system():
     return EDITORIAL_RULES.replace("Không sáng tác nội dung, không thêm hook, không rút gọn thành tóm tắt, không sửa cốt truyện.",
         "Không sáng tác nội dung, thêm hook hoặc đảo nghĩa. Chỉ bản dubbing được nén chi tiết/sắc thái nếu translation mode cho phép.") + (
         "\nThis is the DUBBING pass, not the screen subtitle pass. Follow each target's mode and target_syllables. "
+        "Target syllable count is approximate. Semantic completeness and natural Vietnamese are more important. "
+        "Prefer concise spoken Vietnamese. Do not force unnatural abbreviation merely to hit the number. "
         "Return translations with id, vi, review_note, meaning_preservation (self-assessment, not calibrated), compressed. "
         "Local syllable counts are authoritative. Never reverse intent, negation or actor to meet a number.")
+
+
+def duration_rewrite_prompt(project, target, before, after):
+    return json.dumps({
+        "task": (
+            "Rewrite ONLY current_vi_dubbing from Chinese source and full_vi_subtitle so spoken Vietnamese fits the "
+            "actual available duration. Do not mechanically truncate. Preserve MUST_KEEP facts: main action/object, "
+            "proper names, important numbers, negation, and important cause/result. Keep SHOULD_KEEP details when possible; "
+            "remove only optional fillers or context that is already unambiguous. Never change subtitle text, ID, speaker, "
+            "or canonical timestamps."
+        ),
+        "editorial": editorial(project),
+        "reference_before": before,
+        "reference_after": after,
+        "target": target,
+    }, ensure_ascii=False)
