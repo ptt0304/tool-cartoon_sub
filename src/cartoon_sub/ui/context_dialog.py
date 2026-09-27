@@ -1,12 +1,16 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit, QTabWidget,
     QWidget, QFormLayout, QTableWidget, QTableWidgetItem, QPushButton, QMessageBox, QHeaderView)
-from cartoon_sub.translation.context_models import StoryContext
 import json
+import logging
+from cartoon_sub.translation.context_models import StoryContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class ContextDialog(QDialog):
     """The model's proposal never silently replaces the applied context."""
-    def __init__(self, context, valid_ids, parent=None, proposal=False):
+    def __init__(self, context, valid_ids, parent=None, proposal=False, visual_ready=True):
         super().__init__(parent)
         self.valid_ids = valid_ids
         self.result_context = None
@@ -52,7 +56,8 @@ class ContextDialog(QDialog):
                 table.insertRow(index)
                 for col, name in enumerate(keys):
                     value = row[name]
-                    table.setItem(index, col, QTableWidgetItem(", ".join(map(str, value)) if isinstance(value, list) else value))
+                    shown = ", ".join(map(str, value)) if isinstance(value, list) else str(value)
+                    table.setItem(index, col, QTableWidgetItem(shown))
             box.addWidget(table)
             buttons = QHBoxLayout()
             add, remove = QPushButton("Thêm dòng"), QPushButton("Xóa dòng chọn")
@@ -74,11 +79,16 @@ class ContextDialog(QDialog):
         visual_layout.addWidget(self.visual_json)
         tabs.addTab(visual_page, "Visual theo ID")
         buttons = QHBoxLayout()
-        cancel, apply = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh đã duyệt")
+        cancel, self.apply_button = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh đã duyệt")
         cancel.clicked.connect(self.reject)
-        apply.clicked.connect(self.apply)
+        self.apply_button.clicked.connect(self.apply)
         buttons.addWidget(cancel)
-        buttons.addWidget(apply)
+        self.save_status = QLabel("")
+        if not visual_ready or not context.get("visual_contexts"):
+            self.save_status.setText("Chưa thể lưu — chưa phân tích video thành công.")
+            self.apply_button.setEnabled(False)
+        buttons.addWidget(self.save_status)
+        buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)
 
     def values(self):
@@ -107,13 +117,24 @@ class ContextDialog(QDialog):
             data[key] = rows
         try:
             data["visual_contexts"] = json.loads(self.visual_json.toPlainText() or "[]")
-        except ValueError:
-            raise ValueError("Visual context JSON không hợp lệ") from None
-        return StoryContext.from_dict(data, self.valid_ids).to_dict()
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Visual theo ID không phải JSON hợp lệ: dòng {exc.lineno}, cột {exc.colno}: {exc.msg}") from None
+        if not data["visual_contexts"]:
+            raise ValueError("Không thể lưu: Visual Context chưa được phân tích từ video.")
+        validated = StoryContext.from_dict(data, self.valid_ids).to_dict()
+        visual_ids = {row["id"] for row in validated["visual_contexts"]}
+        if visual_ids != self.valid_ids:
+            missing = sorted(self.valid_ids - visual_ids)
+            raise ValueError(f"Không thể lưu: Visual Context thiếu ID transcript: {missing[:20]}")
+        return validated
 
     def apply(self):
+        logger.info("[CONTEXT SAVE] clicked candidate_status=ready")
         try:
             self.result_context = self.values()
+            logger.info("[CONTEXT SAVE] validation=PASS visual_rows=%d result=accepted",
+                        len(self.result_context.get("visual_contexts", [])))
             self.accept()
         except (ValueError, TypeError) as exc:
+            logger.warning("[CONTEXT SAVE] validation=FAIL result=rejected reason=%s", exc)
             QMessageBox.warning(self, "Hồ sơ truyện", str(exc))

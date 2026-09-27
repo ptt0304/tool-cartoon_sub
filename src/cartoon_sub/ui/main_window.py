@@ -780,7 +780,11 @@ class MainWindow(QMainWindow):
                 if project.visual_context_signature != visual_source_signature(project):
                     raise ValueError("Video hoặc timeline đã đổi; hãy phân tích lại visual context")
             context = project.context_proposal if proposal else project.story_context
-            dialog = ContextDialog(context, {s.id for s in project.segments}, self, proposal)
+            required_status = "proposal_ready" if proposal else "applied"
+            dialog = ContextDialog(
+                context, {s.id for s in project.segments}, self, proposal,
+                visual_ready=project.visual_context_status == required_status,
+            )
             if dialog.exec() == dialog.DialogCode.Accepted:
                 self.controller.apply_context(dialog.result_context)
                 self._record_project_edit(before,"Edit story context")

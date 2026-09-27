@@ -3,14 +3,21 @@ import tempfile
 import unittest
 from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from PySide6.QtWidgets import QApplication
+from cartoon_sub.app.controller import Controller
+from cartoon_sub.app.settings import AISettings
 from cartoon_sub.speaker.models import Speaker
 from cartoon_sub.subtitle.models import Project, Utterance
 from cartoon_sub.translation.context_models import StoryContext
+from cartoon_sub.translation.context_service import ContextService
 from cartoon_sub.translation.prompts import translation_prompt
 from cartoon_sub.translation.qc import local_translation_qa
 from cartoon_sub.translation.qc import qa_entry_is_current, store_qa_result
 from cartoon_sub.translation.visual_context import VisualContextAnalyzer
+from cartoon_sub.project.project_manager import ProjectManager
+from cartoon_sub.ui.context_dialog import ContextDialog
 
 
 def visual_row(uid, spk, speaker_char, addressee, referent=None, visible=None,
@@ -69,6 +76,10 @@ def make_project(video, rows):
 
 
 class VisualTranslationContextTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
     def test_flashback_two_men_keep_female_visible_as_referent_not_speaker(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -127,6 +138,17 @@ class VisualTranslationContextTests(unittest.TestCase):
             analyzer.analyze(make_project(video, rows), root)
             self.assertEqual(len(client.calls), 2)
 
+    def test_model_approved_status_is_normalized_to_analyzed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); video = root / "v.mp4"; video.write_bytes(b"source")
+            rows = [Utterance(1, 1, 2, "他说。", speaker_id="SPK_01")]
+            scenario = visual_row(1, "SPK_01", "CHAR_A", "")
+            scenario["analysis_status"] = "approved"
+            result = FakeProxyAnalyzer(FakeVisualClient({1: scenario}), "model").analyze(
+                make_project(video, rows), root,
+            )
+            self.assertEqual(result["visual_contexts"][0]["analysis_status"], "ANALYZED")
+
     def test_cache_is_partial_per_60_second_chunk(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); video = root / "v.mp4"; video.write_bytes(b"source")
@@ -176,6 +198,82 @@ class VisualTranslationContextTests(unittest.TestCase):
         payload = json.loads(text[text.index("{"):])
         self.assertIn("PRIORITY 1", payload["editorial"]["context_instruction"])
         self.assertEqual([item["id"] for item in payload["editorial"]["approved_context"]["visual_contexts"]], [1])
+
+    def test_visual_failure_is_explicit_and_never_creates_text_only_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
+            project = make_project(video, [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
+            config = Mock()
+            config.load.return_value = AISettings(translation_model="gemini-3.5-flash-lite")
+            config.get_key.return_value = "test"
+            client = Mock()
+            factory = Mock(return_value=client)
+            with patch("cartoon_sub.translation.context_service.VisualContextAnalyzer.analyze",
+                       side_effect=ValueError("response parse lỗi")):
+                with self.assertRaisesRegex(ValueError, "chưa đối chiếu được video"):
+                    ContextService(config, factory).analyze(project, root)
+            saved = ProjectManager().load(root)
+            self.assertEqual(saved.visual_context_status, "VISUAL_CONTEXT_FAILED")
+            self.assertEqual(saved.context_status, "VISUAL_CONTEXT_FAILED")
+            self.assertEqual(saved.context_proposal, {})
+            self.assertIn("response parse lỗi", saved.visual_context_error)
+
+    def test_missing_video_and_non_vision_model_fail_before_gemini_request(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = make_project(root / "missing.mp4", [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
+            config = Mock()
+            config.load.return_value = AISettings(translation_model="gemini-3.5-flash-lite")
+            factory = Mock()
+            with self.assertRaisesRegex(ValueError, "Không tìm thấy video"):
+                ContextService(config, factory).analyze(project, root)
+            factory.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
+            project = make_project(video, [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
+            config = Mock()
+            config.load.return_value = AISettings(translation_model="gemini-3.5-transcribe")
+            factory = Mock()
+            with self.assertRaisesRegex(ValueError, "không hỗ trợ phân tích video"):
+                ContextService(config, factory).analyze(project, root)
+            factory.assert_not_called()
+
+    def test_review_dialog_invalid_json_is_visible_and_valid_save_persists(self):
+        row = Utterance(1, 0, 1, "他", speaker_id="SPK_01")
+        visual = visual_row(1, "SPK_01", "CHAR_A", "")
+        candidate = context([visual])
+        candidate["character_profiles"] = [{
+            "character_id": "CHAR_A", "name": "A", "role": "lead", "gender_context": "male",
+            "relationships": [], "visual_description": "áo xanh", "associated_speakers": ["SPK_01"],
+            "confidence": 0.9, "evidence_ids": [1],
+        }]
+        dialog = ContextDialog(candidate, {1}, proposal=True, visual_ready=True)
+        self.assertEqual(dialog.tables["character_profiles"][0].item(0, 7).text(), "0.9")
+        dialog.visual_json.setPlainText("[{broken]")
+        with patch("cartoon_sub.ui.context_dialog.QMessageBox.warning") as warning:
+            dialog.apply_button.click()
+            self.application.processEvents()
+        self.assertTrue(warning.called)
+        self.assertIn("dòng 1", warning.call_args.args[2])
+        self.assertIsNone(dialog.result_context)
+
+        dialog.visual_json.setPlainText(json.dumps([visual], ensure_ascii=False))
+        dialog.apply_button.click()
+        self.application.processEvents()
+        self.assertIsNotNone(dialog.result_context)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
+            project = make_project(video, [row])
+            project.visual_context_status = "proposal_ready"
+            ProjectManager().save(project, root)
+            controller = Controller()
+            controller.accept((project, root))
+            controller.apply_context(dialog.result_context)
+            reopened = ProjectManager().load(root)
+            self.assertEqual(reopened.visual_context_status, "applied")
+            self.assertEqual(reopened.story_context["visual_contexts"][0]["id"], 1)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,8 @@ class VisualContextAnalyzer:
         self.client = client
         self.model = model
         self.ffmpeg_executable = ffmpeg_executable
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     @staticmethod
     def _row(row):
@@ -84,6 +86,21 @@ class VisualContextAnalyzer:
                     values[identity(row)] = row
             base[key] = list(values.values())
         return base
+
+    @staticmethod
+    def _normalize_response(value):
+        """Normalize harmless model vocabulary without weakening the strict schema."""
+        aliases = {
+            "approved": "ANALYZED", "confirmed": "ANALYZED", "complete": "ANALYZED",
+            "completed": "ANALYZED", "success": "ANALYZED", "high_confidence": "ANALYZED",
+            "uncertain": "LOW_CONFIDENCE", "ambiguous": "LOW_CONFIDENCE",
+            "review": "NEED_REVIEW", "needs_review": "NEED_REVIEW",
+        }
+        for row in value.get("visual_contexts", []) if isinstance(value, dict) else []:
+            status = row.get("analysis_status")
+            if isinstance(status, str):
+                row["analysis_status"] = aliases.get(status.strip().casefold(), status.strip().upper())
+        return value
 
     def _proxy(self, source, start, end, fps, directory):
         directory.mkdir(parents=True, exist_ok=True)
@@ -118,15 +135,23 @@ class VisualContextAnalyzer:
         if cache_file.is_file():
             try:
                 cached = json.loads(cache_file.read_text(encoding="utf-8"))
-                value = StoryContext.from_dict(cached["response"], {row.id for row in project.utterances}).to_dict()
+                normalized = self._normalize_response(cached["response"])
+                value = StoryContext.from_dict(normalized, {row.id for row in project.utterances}).to_dict()
                 if {item["id"] for item in value["visual_contexts"]} == {row.id for row in rows}:
                     if progress:
                         progress(f"[VISUAL CONTEXT] range={start:.0f}-{end:.0f}s rows={len(rows)} cache=HIT")
+                    self.cache_hits += 1
+                    logger.info(
+                        "[GEMINI VIDEO] provider=Gemini model=%s chunk_start=%.3f chunk_end=%.3f "
+                        "video_input=no transcript_rows=%d request_status=CACHE_HIT",
+                        self.model, start, end, len(rows),
+                    )
                     return value
             except (OSError, ValueError, TypeError, KeyError):
                 pass
         check_cancel(cancel)
         proxy = self._proxy(Path(project.source_video_path), start, end, fps, cache_dir / "proxies")
+        self.cache_misses += 1
         try:
             approved = dict(project.story_context)
             relevant_ids = {row.id for row in [*rows, *references]}
@@ -144,21 +169,41 @@ class VisualContextAnalyzer:
             }, ensure_ascii=False)
             if progress:
                 progress(f"[VISUAL CONTEXT] range={start:.0f}-{end:.0f}s rows={len(rows)} cache=MISS")
-            payload = self.client.generate_video_json(
-                VISUAL_CONTEXT_SYSTEM, prompt, proxy.read_bytes(), "video/mp4",
-                CONTEXT_SCHEMA, self.model, cancel=cancel, progress=progress,
+            logger.info(
+                "[GEMINI VIDEO] provider=Gemini model=%s chunk_start=%.3f chunk_end=%.3f "
+                "video_input=yes transcript_rows=%d request_status=STARTED",
+                self.model, start, end, len(rows),
             )
+            try:
+                payload = self.client.generate_video_json(
+                    VISUAL_CONTEXT_SYSTEM, prompt, proxy.read_bytes(), "video/mp4",
+                    CONTEXT_SCHEMA, self.model, cancel=cancel, progress=progress,
+                )
+            except Exception:
+                logger.exception(
+                    "[GEMINI VIDEO] provider=Gemini model=%s chunk_start=%.3f chunk_end=%.3f "
+                    "video_input=yes transcript_rows=%d request_status=FAILED",
+                    self.model, start, end, len(rows),
+                )
+                raise
             value = json.loads(payload) if isinstance(payload, str) else payload
+            value = self._normalize_response(value)
             value = StoryContext.from_dict(value, {row.id for row in project.utterances}).to_dict()
             if {item["id"] for item in value["visual_contexts"]} != {row.id for row in rows}:
                 raise ValueError("Gemini visual context thiếu hoặc thừa target ID")
             atomic_json(cache_file, {"status": "completed", "response": value})
+            logger.info(
+                "[GEMINI VIDEO] provider=Gemini model=%s chunk_start=%.3f chunk_end=%.3f "
+                "video_input=yes transcript_rows=%d request_status=COMPLETED",
+                self.model, start, end, len(rows),
+            )
             return value
         finally:
             proxy.unlink(missing_ok=True)
 
     def analyze(self, project, directory, cancel=None, progress=None):
         source = Path(project.source_video_path).resolve(strict=True)
+        self.cache_hits = self.cache_misses = 0
         cache_dir = Path(directory) / "cache" / "visual_context"
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
         result = StoryContext().to_dict()
@@ -201,5 +246,7 @@ class VisualContextAnalyzer:
                                   "targeted_rescan", cancel, progress)
             self._merge(result, value)
         result["visual_contexts"].sort(key=lambda row: row["id"])
+        if not result["visual_contexts"]:
+            raise ValueError("Gemini không trả Visual Context theo ID")
         logger.info("[VISUAL CONTEXT] rows=%d rescans=%d", len(result["visual_contexts"]), len(ambiguous))
         return StoryContext.from_dict(result, {row.id for row in ordered}).to_dict()

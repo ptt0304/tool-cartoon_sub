@@ -125,9 +125,12 @@ class Phase3Tests(unittest.TestCase):
         with self.assertRaises(TranslationValidationError):
             validate_context({}, [])
 
-    def test_context_reads_all_batches_does_not_auto_apply_and_uses_cache(self):
+    def test_context_visual_candidate_does_not_auto_apply(self):
         with tempfile.TemporaryDirectory() as directory:
-            project = make_project(205)
+            project = make_project(3)
+            source = Path(directory) / "source.mp4"
+            source.write_bytes(b"video")
+            project.source_video_path = str(source)
             project.story_context["narration"] = "Ngôi thứ nhất do người dùng chốt"
             project.translation_genres = ["cultivation", "ancient"]
             project.translation_preset = "Natural Vietnamese"
@@ -135,33 +138,24 @@ class Phase3Tests(unittest.TestCase):
             project.glossary = {"顾沉": "Cố Trầm"}
             project.translation_prompt = "Không dùng mày/tao."
             client = Mock()
-            calls = []
-            payloads = []
-            def proposal(system, prompt, *args, **kwargs):
-                data = parse_prompt(prompt)
-                payloads.append(data)
-                calls.extend(r["id"] for r in data["transcript"])
-                profile = StoryContext(summary=f"Đã đọc batch {data['batch']}").to_dict()
-                return profile
-            client.generate_json.side_effect = proposal
             config = store()
             factory = Mock(return_value=client)
             service = ContextService(config, factory)
-            result, _ = service.analyze(project, directory)
-            self.assertEqual(calls, list(range(1, 206)))
+            proposal = StoryContext(summary="Đã đối chiếu video").to_dict()
+            proposal["visual_contexts"] = [{
+                "id": row.id, "scene_mode": "PRESENT",
+                "speaker": {"spk_id": row.speaker_id, "character_id": "", "confidence": 0.4},
+                "addressee": {"character_id": "", "confidence": 0.2},
+                "visible_characters": [], "referents": [], "visible_objects": [],
+                "notes": "unknown is valid", "confidence": 0.4, "analysis_status": "LOW_CONFIDENCE",
+            } for row in project.segments]
+            with patch("cartoon_sub.translation.context_service.VisualContextAnalyzer.analyze",
+                       return_value=proposal):
+                result, _ = service.analyze(project, directory)
             self.assertEqual(result.story_context, project.story_context)
             self.assertEqual(result.context_status, "proposal_ready")
-            self.assertEqual(result.context_proposal["summary"], "Đã đọc batch 3")
-            analysis_editorial = payloads[0]["editorial"]
-            instruction = analysis_editorial["context_instruction"]
-            self.assertIn("Primary genre", instruction)
-            self.assertIn("Secondary genres", instruction)
-            self.assertIn("顾沉 => Cố Trầm", instruction)
-            self.assertIn("Không dùng mày/tao.", instruction)
-            self.assertEqual(payloads[0]["transcript"][0]["zh"], "第1句")
-            factory.reset_mock()
-            service.analyze(project, directory)
-            factory.assert_not_called()
+            self.assertEqual(result.visual_context_status, "proposal_ready")
+            self.assertEqual(len(result.context_proposal["visual_contexts"]), 3)
 
     def test_chunks_keep_timestamps_lookaround_and_previous_translation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -262,12 +256,24 @@ class Phase3Tests(unittest.TestCase):
         from cartoon_sub.app.controller import Controller
         with tempfile.TemporaryDirectory() as directory:
             project = make_project(2)
+            video = Path(directory) / "video.mp4"
+            video.write_bytes(b"source")
+            project.source_video_path = str(video)
             project.story_context["summary"] = "Approved cũ"
             project.context_approved_config_hash = context_config_fingerprint(project)
             controller = Controller()
             controller.accept((project, Path(directory)))
             candidate = StoryContext(summary="User đã sửa candidate").to_dict()
+            candidate["visual_contexts"] = [{
+                "id": row.id, "scene_mode": "UNKNOWN",
+                "speaker": {"spk_id": row.speaker_id, "character_id": "", "confidence": 0.3},
+                "addressee": {"character_id": "", "confidence": 0.2},
+                "visible_characters": [], "referents": [], "visible_objects": [],
+                "notes": "Đã xem, chưa đủ bằng chứng", "confidence": 0.3,
+                "analysis_status": "LOW_CONFIDENCE",
+            } for row in project.segments]
             controller.project.context_proposal = StoryContext(summary="Raw AI").to_dict()
+            controller.project.visual_context_status = "proposal_ready"
             self.assertEqual(controller.project.story_context["summary"], "Approved cũ")
             controller.apply_context(candidate)
             loaded = ProjectManager().load(directory)

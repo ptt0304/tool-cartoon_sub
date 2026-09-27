@@ -406,6 +406,7 @@ class Project:
     context_status: str = "not_started"
     visual_context_status: str = "not_started"
     visual_context_signature: str = ""
+    visual_context_error: str = ""
     translation_status: str = "not_started"
     translation_notes: dict = field(default_factory=dict)
     translation_qa: dict = field(default_factory=dict)

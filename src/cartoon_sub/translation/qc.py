@@ -121,7 +121,7 @@ def local_translation_qa(project, segment):
                    if row.get("id") == segment.id), None)
     ambiguous_source = any(token in source for token in ("他", "她", "它", "这个", "那个", "这东西"))
     if visual is None:
-        if ambiguous_source and project.visual_context_status == "VISUAL_CONTEXT_UNAVAILABLE":
+        if ambiguous_source and project.visual_context_status in {"VISUAL_CONTEXT_UNAVAILABLE", "VISUAL_CONTEXT_FAILED"}:
             issues.append(_issue("VISUAL_CONTEXT_LOW_CONFIDENCE",
                                  "Video context chưa khả dụng cho đại từ/referent mơ hồ", "SUSPECT"))
     else:

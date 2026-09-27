@@ -169,6 +169,7 @@ CONTEXT_SCHEMA = {"type": "OBJECT", "properties": {
         "visible_characters": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"character_id": {"type": "STRING"}, "gender_context": {"type": "STRING", "enum": sorted(GENDER_CONTEXTS)}, "confidence": {"type": "NUMBER"}}, "required": ["character_id", "gender_context", "confidence"]}},
         "referents": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"source_expression": {"type": "STRING"}, "character_id": {"type": "STRING"}, "gender_context": {"type": "STRING", "enum": sorted(GENDER_CONTEXTS)}, "confidence": {"type": "NUMBER"}}, "required": ["source_expression", "character_id", "gender_context", "confidence"]}},
         "visible_objects": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"source_expression": {"type": "STRING"}, "description": {"type": "STRING"}, "confidence": {"type": "NUMBER"}}, "required": ["source_expression", "description", "confidence"]}},
-        "notes": {"type": "STRING"}, "confidence": {"type": "NUMBER"}, "analysis_status": {"type": "STRING"}},
+        "notes": {"type": "STRING"}, "confidence": {"type": "NUMBER"},
+        "analysis_status": {"type": "STRING", "enum": ["ANALYZED", "LOW_CONFIDENCE", "NEED_REVIEW"]}},
         "required": ["id", "scene_mode", "speaker", "addressee", "visible_characters", "referents", "visible_objects", "notes", "confidence", "analysis_status"]}}},
     "required": ["setting", "summary", "narration", "characters", "terms", "address_rules", "uncertainties", "character_profiles", "speaker_character_mappings", "visual_contexts"]}

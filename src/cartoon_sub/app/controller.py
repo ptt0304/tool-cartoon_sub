@@ -184,21 +184,29 @@ class Controller:
 
     def apply_context(self, context):
         from cartoon_sub.translation.context_service import context_config_fingerprint
-        self.project.story_context = StoryContext.from_dict(context, {s.id for s in self.project.segments}).to_dict()
+        valid_ids = {s.id for s in self.project.segments}
+        approved = StoryContext.from_dict(context, valid_ids).to_dict()
+        visual_ids = {row["id"] for row in approved.get("visual_contexts", [])}
+        if visual_ids != valid_ids:
+            raise ValueError("Không thể lưu: Visual Context chưa đầy đủ cho mọi ID transcript.")
+        if self.project.visual_context_status not in {"proposal_ready", "applied"}:
+            raise ValueError("Không thể lưu: Visual Context chưa được phân tích thành công từ video.")
+        self.project.story_context = approved
         self.project.context_source_hash = source_fingerprint(self.project)
         self.project.context_approved_config_hash = context_config_fingerprint(self.project)
         self.project.context_status = "applied"
         self.project.visual_context_status = (
             "applied" if self.project.story_context.get("visual_contexts")
-            else "VISUAL_CONTEXT_UNAVAILABLE"
+            else "VISUAL_CONTEXT_FAILED"
         )
         if self.project.story_context.get("visual_contexts"):
             from cartoon_sub.translation.visual_context import visual_source_signature
             try:
                 self.project.visual_context_signature = visual_source_signature(self.project)
             except (OSError, ValueError):
-                self.project.visual_context_status = "VISUAL_CONTEXT_UNAVAILABLE"
+                self.project.visual_context_status = "VISUAL_CONTEXT_FAILED"
                 self.project.visual_context_signature = ""
+        self.project.visual_context_error = ""
         self.save()
 
     def translate(self, **job):
