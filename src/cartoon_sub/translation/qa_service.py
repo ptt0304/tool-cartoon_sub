@@ -10,7 +10,13 @@ from cartoon_sub.subtitle.models import Project, Utterance
 from .chunker import source_rows
 from .gemini_translator import TRANSLATION_SCHEMA, TranslationValidationError, read_json, validate_translation
 from .prompts import EDITORIAL_RULES, semantic_qa_prompt, translation_retry_prompt
-from .qc import local_translation_qa, qa_entry_is_current, store_qa_result
+from .qc import (
+    local_dubbing_qa,
+    local_translation_qa,
+    qa_entry_is_current,
+    store_dubbing_qa_result,
+    store_qa_result,
+)
 from .requests import CachedRequests
 
 
@@ -115,6 +121,8 @@ class TranslationQAService:
             for segment, initial_issues in retry_queue:
                 self._retry_failed_row(project, segment, initial_issues, rows, indexes, requests, semantic, report)
                 manager.save(project, directory)
+            for segment in segments:
+                store_dubbing_qa_result(project, segment, local_dubbing_qa(project, segment))
             manager.save(project, directory)
             from .artifacts import save_translation_artifacts
             save_translation_artifacts(project, directory)

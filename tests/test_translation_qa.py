@@ -8,7 +8,9 @@ from cartoon_sub.app.settings import AISettings
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Project, Segment
 from cartoon_sub.translation.qa_service import SEMANTIC_QA_SCHEMA, TranslationQAService
+from cartoon_sub.translation.prompts import translation_retry_prompt
 from cartoon_sub.translation.qc import (
+    local_dubbing_qa,
     local_translation_qa,
     qa_entry_is_current,
     store_qa_result,
@@ -69,6 +71,17 @@ class TranslationQATests(unittest.TestCase):
         self.assertIn("UNTRANSLATED_HAN", types)
         self.assertIn("MIXED_SCRIPT", types)
 
+    def test_subtitle_qa_ignores_source_selector_and_dubbing_qa_is_independent(self):
+        segment = Segment(34, 0, 1, "居然自甘堕落。", vi="Vậy mà lại tự甘堕落.")
+        segment.vi_dubbing = "Bản lồng tiếng sạch."
+        project = Project("qa", "video.mp4", segments=[segment])
+        project.subtitle_text_source = "vi_dubbing"
+        subtitle = local_translation_qa(project, segment)
+        dubbing = local_dubbing_qa(project, segment)
+        self.assertEqual(subtitle["status"], "FAIL")
+        self.assertIn("甘堕落", subtitle["issues"][0]["detail"])
+        self.assertEqual(dubbing["status"], "PASS")
+
     def test_empty_suspect_omission_and_good_row(self):
         empty = Segment(1, 0, 1, "我不同意。", vi="")
         long_source = "他已经在炼气三层停留八年今天终于得到丹药也许能够直接突破第五层"
@@ -101,6 +114,26 @@ class TranslationQATests(unittest.TestCase):
         })
         self.assertEqual(local_translation_qa(approved, segment)["status"], "PASS")
 
+    def test_unresolved_context_target_is_not_enforced_as_a_translation(self):
+        segment = Segment(34, 0, 1, "堂堂圣兽。", vi="Đường đường là thánh thú.")
+        project = Project("qa", "video.mp4", segments=[segment], story_context={
+            "terms": [{"source": "圣兽", "target": "Chưa xác định", "evidence_ids": [34]}]
+        })
+        self.assertEqual(local_translation_qa(project, segment), {"status": "PASS", "issues": []})
+
+    def test_retry_prompt_only_includes_target_visual_context(self):
+        rows = [Segment(index, index, index + 1, f"第{index}句", vi=f"Câu {index}")
+                for index in (33, 34, 35)]
+        project = Project("qa", "video.mp4", segments=rows, story_context={
+            "visual_contexts": [{"id": index, "scene": f"scene-{index}"} for index in (33, 34, 35)]
+        })
+        source = [{"id": row.id, "zh": row.zh} for row in rows]
+        prompt = translation_retry_prompt(project, source[1], source[:1], source[2:],
+                                          "Bản lỗi", [{"type": "UNTRANSLATED_HAN"}], 1)
+        payload = prompt_payload(prompt)
+        self.assertEqual([row["id"] for row in payload["targets"]], [34])
+        self.assertEqual([row["id"] for row in payload["editorial"]["approved_context"]["visual_contexts"]], [34])
+
     def test_targeted_retry_fixes_only_bad_row_and_syncs_live_srt(self):
         bad = Segment(133, 12.25, 14.75, SOURCE, vi=BAD_TARGET)
         good = Segment(134, 14.75, 16.0, "我不同意。", vi="Tôi không đồng ý.")
@@ -117,6 +150,7 @@ class TranslationQATests(unittest.TestCase):
         self.assertEqual([(row.id, row.start, row.end) for row in result.segments],
                          [(row[0], row[1], row[2]) for row in original_identity])
         self.assertEqual(result.translation_qa["133"]["status"], "AUTO_FIXED")
+        self.assertEqual(result.translation_qa["133"]["dubbing_status"], "PASS")
         self.assertEqual(result.translation_qa["134"]["status"], "PASS")
         self.assertEqual(reloaded.translation_qa["133"]["status"], "AUTO_FIXED")
         self.assertIn(FIXED_TARGET, live_srt)
@@ -160,6 +194,28 @@ class TranslationQATests(unittest.TestCase):
         self.assertTrue(qa_entry_is_current(segment, entry))
         segment.vi = "Tôi phản đối."
         self.assertFalse(qa_entry_is_current(segment, entry))
+
+    def test_legacy_qa_without_version_is_rescanned(self):
+        segment = Segment(1, 0, 1, "我不同意。", vi="Tôi không đồng ý.")
+        project = Project("qa", "video.mp4", segments=[segment])
+        entry = store_qa_result(project, segment, "PASS")
+        entry.pop("qa_version")
+        self.assertFalse(qa_entry_is_current(segment, entry, project))
+
+    def test_optimized_dubbing_is_preserved_and_fails_secondary_qa(self):
+        segment = Segment(133, 12.25, 14.75, SOURCE, vi=BAD_TARGET)
+        segment.vi_dubbing = "Lồng tiếng còn 甘堕落."
+        segment.dubbing_optimized = True
+        project = Project("qa", "video.mp4", segments=[segment], translation_status="completed")
+        client = fake_qa_client()
+        with tempfile.TemporaryDirectory() as directory:
+            result, _ = TranslationQAService(settings_store(), lambda _key: client).run(
+                project, directory, ids=[133], semantic=False)
+        updated = result.segments[0]
+        self.assertEqual(updated.vi_subtitle, FIXED_TARGET)
+        self.assertEqual(updated.vi_dubbing, "Lồng tiếng còn 甘堕落.")
+        self.assertEqual(updated.dubbing_status, "stale")
+        self.assertEqual(result.translation_qa["133"]["dubbing_status"], "FAIL")
 
 
 if __name__ == "__main__":

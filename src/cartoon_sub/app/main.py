@@ -342,9 +342,57 @@ def _runtime_translation_qa(project_path, result_path):
     return exit_code
 
 
+def _runtime_translation_qa_scan(project_path, result_path):
+    """Read-only local QA scan used to verify a real project from a frozen build."""
+    from cartoon_sub.project.project_manager import ProjectManager
+    from cartoon_sub.translation.qc import local_dubbing_qa, local_translation_qa
+
+    result_file = Path(result_path)
+    result = {"build": BUILD_MARKER, "project": str(Path(project_path).resolve())}
+    try:
+        project = ProjectManager().load(Path(project_path).parent)
+        subtitle_han_ids = []
+        dubbing_han_ids = []
+        for segment in project.segments:
+            subtitle = local_translation_qa(project, segment)
+            dubbing = local_dubbing_qa(project, segment)
+            if any(item["type"] == "UNTRANSLATED_HAN" for item in subtitle["issues"]):
+                subtitle_han_ids.append(segment.id)
+            if any(item["type"] == "UNTRANSLATED_HAN" for item in dubbing["issues"]):
+                dubbing_han_ids.append(segment.id)
+        target = next((segment for segment in project.segments if segment.id == 34), None)
+        result.update(
+            status="completed",
+            total=len(project.segments),
+            subtitle_source_selector=project.subtitle_text_source,
+            subtitle_han_ids=subtitle_han_ids,
+            dubbing_han_ids=dubbing_han_ids,
+            id34_vi_subtitle=target.vi_subtitle if target else None,
+            id34_vi_dubbing=target.vi_dubbing if target else None,
+        )
+        exit_code = 0
+    except Exception as exc:
+        result.update(status="failed", error=str(exc), exception=type(exc).__name__,
+                      traceback=traceback.format_exc())
+        logging.getLogger(__name__).exception("[RUNTIME TRANSLATION QA SCAN] failed")
+        exit_code = 2
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return exit_code
+
+
 def main():
     configure_logging()
     logging.getLogger(__name__).info("[BUILD] %s", BUILD_MARKER)
+    if "--runtime-translation-qa-scan-project" in sys.argv:
+        index = sys.argv.index("--runtime-translation-qa-scan-project")
+        try:
+            project_path = sys.argv[index + 1]
+            result_index = sys.argv.index("--runtime-result")
+            result_path = sys.argv[result_index + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Cần --runtime-translation-qa-scan-project <project.json> --runtime-result <result.json>")
+        return _runtime_translation_qa_scan(project_path, result_path)
     if "--runtime-subtitle-autosegment-project" in sys.argv:
         index = sys.argv.index("--runtime-subtitle-autosegment-project")
         try:

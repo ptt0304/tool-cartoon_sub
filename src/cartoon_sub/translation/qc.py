@@ -13,6 +13,8 @@ HAN_RUN_PATTERN = re.compile(
 VIETNAMESE_LETTER = r"A-Za-zÀ-ỹ"
 TRUNCATED_END = re.compile(r"\b(là|của|và|với|để|nhưng|hoặc|rằng)\s*[.!?…]*$", re.IGNORECASE)
 PLACEHOLDER = re.compile(r"(?:\\u[0-9a-fA-F]{4}|\b(?:TODO|FIXME|undefined|null)\b|<[^>]{1,40}>)")
+TRANSLATION_QA_VERSION = 2
+UNRESOLVED_TARGETS = {"chưa xác định", "không rõ", "unknown", "n/a", "tbd"}
 
 
 def _issue(issue_type, detail, severity="FAIL"):
@@ -21,6 +23,7 @@ def _issue(issue_type, detail, severity="FAIL"):
 
 def translation_qa_fingerprint(segment, project=None):
     value = {
+        "qa_version": TRANSLATION_QA_VERSION,
         "source_hash": content_hash(segment.zh),
         "target_hash": content_hash(segment.vi_subtitle),
     }
@@ -37,6 +40,7 @@ def translation_qa_fingerprint(segment, project=None):
 def qa_entry_is_current(segment, entry, project=None):
     fingerprint = translation_qa_fingerprint(segment, project)
     return (isinstance(entry, dict)
+            and entry.get("qa_version") == fingerprint["qa_version"]
             and entry.get("source_hash") == fingerprint["source_hash"]
             and entry.get("target_hash") == fingerprint["target_hash"]
             and (project is None
@@ -44,8 +48,10 @@ def qa_entry_is_current(segment, entry, project=None):
 
 
 def store_qa_result(project, segment, status, issues=None, attempts=0, last_failed_reason=""):
+    previous = project.translation_qa.get(str(segment.id), {})
     entry = {"status": status, "issues": list(issues or []), "attempts": int(attempts),
              "last_failed_reason": str(last_failed_reason)}
+    entry.update({key: value for key, value in previous.items() if key.startswith("dubbing_")})
     entry.update(translation_qa_fingerprint(segment, project))
     project.translation_qa[str(segment.id)] = entry
     return entry
@@ -53,6 +59,29 @@ def store_qa_result(project, segment, status, issues=None, attempts=0, last_fail
 
 def invalidate_qa(project, segment):
     return store_qa_result(project, segment, "UNKNOWN", [], 0, "Source Chinese đã thay đổi")
+
+
+def dubbing_qa_fingerprint(segment):
+    return {
+        "dubbing_qa_version": TRANSLATION_QA_VERSION,
+        "dubbing_source_hash": content_hash(segment.zh),
+        "dubbing_target_hash": content_hash(segment.vi_dubbing),
+    }
+
+
+def dubbing_qa_entry_is_current(segment, entry):
+    fingerprint = dubbing_qa_fingerprint(segment)
+    return (isinstance(entry, dict)
+            and all(entry.get(key) == value for key, value in fingerprint.items()))
+
+
+def store_dubbing_qa_result(project, segment, result):
+    entry = dict(project.translation_qa.get(str(segment.id), {}))
+    entry.update(dubbing_qa_fingerprint(segment))
+    entry["dubbing_status"] = result["status"]
+    entry["dubbing_issues"] = list(result.get("issues", []))
+    project.translation_qa[str(segment.id)] = entry
+    return entry
 
 
 def _allowed_han_values(project):
@@ -70,22 +99,26 @@ def _mask_allowed(text, allowed):
     return text
 
 
-def local_translation_qa(project, segment):
+def _is_resolved_target(value):
+    return bool(str(value).strip()) and str(value).strip().casefold() not in UNRESOLVED_TARGETS
+
+
+def _local_translation_qa(project, segment, target, target_label):
     """Fast deterministic QA. It never mutates translation text or project state."""
     source = unicodedata.normalize("NFC", segment.zh or "").strip()
-    target = unicodedata.normalize("NFC", segment.vi_subtitle or "").strip()
+    target = unicodedata.normalize("NFC", target or "").strip()
     issues = []
     if source and not target:
         return {"status": "FAIL", "issues": [
-            _issue("EMPTY_TRANSLATION", "Source có nội dung nhưng bản dịch tiếng Việt đang rỗng")
+            _issue("EMPTY_TRANSLATION", f"Source có nội dung nhưng {target_label} đang rỗng")
         ]}
     if not source:
         return {"status": "PASS", "issues": []}
 
     if "\ufffd" in target or any(unicodedata.category(ch) == "Cc" and ch not in "\n\t" for ch in target):
-        issues.append(_issue("INVALID_UNICODE", "Bản dịch chứa ký tự Unicode/control bất thường"))
+        issues.append(_issue("INVALID_UNICODE", f"{target_label} chứa ký tự Unicode/control bất thường"))
     if PLACEHOLDER.search(target):
-        issues.append(_issue("MALFORMED_OUTPUT", "Bản dịch chứa escape, placeholder hoặc artifact không hợp lệ"))
+        issues.append(_issue("MALFORMED_OUTPUT", f"{target_label} chứa escape, placeholder hoặc artifact không hợp lệ"))
 
     # Preserve-source is an explicit user decision. Otherwise only exact locked
     # mapping/context targets may retain Han characters.
@@ -94,9 +127,10 @@ def local_translation_qa(project, segment):
         inspect_target = ""
     else:
         inspect_target = _mask_allowed(inspect_target, _allowed_han_values(project))
-    han = "".join(dict.fromkeys(HAN_PATTERN.findall(inspect_target)))
+    han_fragments = HAN_RUN_PATTERN.findall(inspect_target)
+    han = ", ".join(dict.fromkeys(han_fragments or HAN_PATTERN.findall(inspect_target)))
     if han:
-        issues.append(_issue("UNTRANSLATED_HAN", f"Còn ký tự Trung Quốc trong bản dịch: {han}"))
+        issues.append(_issue("UNTRANSLATED_HAN", f"Còn chữ Trung trong {target_label}: {han}"))
         if (re.search(rf"[{VIETNAMESE_LETTER}]{{1,}}\s*{HAN_PATTERN.pattern}", inspect_target)
                 or re.search(rf"{HAN_PATTERN.pattern}\s*[{VIETNAMESE_LETTER}]{{1,}}", inspect_target)):
             issues.append(_issue("MIXED_SCRIPT", "Bản dịch chứa chuỗi Trung–Việt bất thường"))
@@ -114,7 +148,8 @@ def local_translation_qa(project, segment):
             terms.setdefault(row["source"], row["target"])
     folded_target = target.casefold()
     for term_source, term_target in terms.items():
-        if term_source in source and str(term_target).strip() and str(term_target).casefold() not in folded_target:
+        if (term_source in source and _is_resolved_target(term_target)
+                and str(term_target).casefold() not in folded_target):
             issues.append(_issue("TERM_MISMATCH", f"Thuật ngữ chưa theo mapping/context: {term_source} → {term_target}"))
 
     visual = next((row for row in project.story_context.get("visual_contexts", [])
@@ -177,6 +212,16 @@ def local_translation_qa(project, segment):
     return {"status": "PASS", "issues": []}
 
 
+def local_translation_qa(project, segment):
+    """QA only VI Subtitle; the Subtitle source selector never changes this target."""
+    return _local_translation_qa(project, segment, segment.vi_subtitle, "VI Subtitle")
+
+
+def local_dubbing_qa(project, segment):
+    """Independent secondary QA for VI Dubbing."""
+    return _local_translation_qa(project, segment, segment.vi_dubbing, "VI Dubbing")
+
+
 def review_translation(project):
     warnings = {}
     terms = dict(project.glossary)
@@ -196,6 +241,16 @@ def review_translation(project):
         notes.extend(f"{item.get('type', 'QA')}: {item.get('detail', '')}" for item in qa_issues)
         if any(item.get("type") == "UNTRANSLATED_HAN" for item in qa_issues):
             notes.append("Còn chữ Trung")
+        if dubbing_qa_entry_is_current(segment, saved):
+            dubbing_status = saved.get("dubbing_status", "UNKNOWN")
+            dubbing_issues = saved.get("dubbing_issues", [])
+        else:
+            dubbing_result = local_dubbing_qa(project, segment)
+            dubbing_status = "UNKNOWN" if dubbing_result["status"] == "PASS" else dubbing_result["status"]
+            dubbing_issues = dubbing_result["issues"]
+        notes.append("Dubbing QA: " + dubbing_status)
+        notes.extend(f"DUBBING_{item.get('type', 'QA')}: {item.get('detail', '')}"
+                     for item in dubbing_issues)
         if len(segment.vi) > 100:
             notes.append("Dòng dài >100 ký tự")
         if segment.duration > 0 and len(segment.vi) / segment.duration > 22:

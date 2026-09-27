@@ -619,13 +619,18 @@ class Controller:
                           else previous_dubbing != dubbing)
         if source_changed:
             self.segmentation_service.sync_utterance(self.project, s)
-        if subtitle_changed:
-            from cartoon_sub.translation.qc import local_translation_qa, store_qa_result
-            result = local_translation_qa(self.project, s)
-            status = "MANUAL_FIXED" if result["status"] == "PASS" else (
-                "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
-            store_qa_result(self.project, s, status, result["issues"], 0,
-                            ", ".join(item["type"] for item in result["issues"]))
+        if subtitle_changed or previous_dubbing != dubbing:
+            from cartoon_sub.translation.qc import (
+                local_dubbing_qa, local_translation_qa,
+                store_dubbing_qa_result, store_qa_result,
+            )
+            if subtitle_changed:
+                result = local_translation_qa(self.project, s)
+                status = "MANUAL_FIXED" if result["status"] == "PASS" else (
+                    "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
+                store_qa_result(self.project, s, status, result["issues"], 0,
+                                ", ".join(item["type"] for item in result["issues"]))
+            store_dubbing_qa_result(self.project, s, local_dubbing_qa(self.project, s))
         self.save()
 
     def apply_manual_edits(self, dirty_rows: list[dict]):
@@ -768,15 +773,23 @@ class Controller:
 
             s.recalculate()
             if zh_changed:
-                from cartoon_sub.translation.qc import invalidate_qa
+                from cartoon_sub.translation.qc import (
+                    invalidate_qa, local_dubbing_qa, store_dubbing_qa_result,
+                )
                 invalidate_qa(self.project, s)
-            elif sub_changed:
-                from cartoon_sub.translation.qc import local_translation_qa, store_qa_result
-                result = local_translation_qa(self.project, s)
-                status = "MANUAL_FIXED" if result["status"] == "PASS" else (
-                    "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
-                store_qa_result(self.project, s, status, result["issues"], 0,
-                                ", ".join(item["type"] for item in result["issues"]))
+                store_dubbing_qa_result(self.project, s, local_dubbing_qa(self.project, s))
+            elif sub_changed or dub_changed:
+                from cartoon_sub.translation.qc import (
+                    local_dubbing_qa, local_translation_qa,
+                    store_dubbing_qa_result, store_qa_result,
+                )
+                if sub_changed:
+                    result = local_translation_qa(self.project, s)
+                    status = "MANUAL_FIXED" if result["status"] == "PASS" else (
+                        "SUSPECT" if result["status"] == "SUSPECT" else "NEED_REVIEW")
+                    store_qa_result(self.project, s, status, result["issues"], 0,
+                                    ", ".join(item["type"] for item in result["issues"]))
+                store_dubbing_qa_result(self.project, s, local_dubbing_qa(self.project, s))
 
         if timing_or_spk_changed:
             from cartoon_sub.speaker.service import refresh_timeline

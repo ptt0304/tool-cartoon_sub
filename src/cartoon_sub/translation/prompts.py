@@ -119,7 +119,9 @@ def translation_prompt(project, targets, before, after, previous_vi):
 
 def translation_retry_prompt(project, target, before, after, rejected_translation, issues, attempt):
     payload = {
-        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
+        # Neighbor rows are text-only references. Visual evidence is limited to
+        # the failed target so retry QA does not upload unrelated frame analysis.
+        "editorial": editorial(project, [target["id"]]),
         "qa_retry_attempt": attempt,
         "previous_qa_issues": issues,
         "reference_before": before,
