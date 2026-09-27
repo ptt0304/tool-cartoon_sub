@@ -55,7 +55,7 @@ def validate_visuals(project):
 def save_ass(project, path, start=0, duration=None):
     validate_visuals(project)
     # Rendering must never consume an old persisted DisplaySegment text.
-    from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+    from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService, subtitle_source_text
     SubtitleSegmentationService().sync_stale(project)
     width, height = (int(project.metadata[k]) for k in ('width','height'))
     style = project.subtitle_style
@@ -81,10 +81,13 @@ def save_ass(project, path, start=0, duration=None):
         else:
             position_tag = ''
         if len(entry.source_utterance_ids) > 1:
-            render_rows = [(entry.start, entry.end, entry.vi_subtitle)]
+            text = " ".join(filter(None, (subtitle_source_text(project, utterance_by_id[row_id]).strip()
+                                           for row_id in entry.source_utterance_ids)))
+            render_rows = [(entry.start, entry.end, text)]
         else:
             utterance = utterance_by_id[entry.source_utterance_ids[0]]
-            render_rows = [(row.start, row.end, row.vi_text) for row in presentation_segments(utterance)]
+            render_rows = [(row.start, row.end, row.vi_text)
+                           for row in presentation_segments(utterance, subtitle_source_text(project, utterance))]
         for row_start, row_end, row_text in render_rows:
             if row_end <= start or row_start >= end:
                 continue

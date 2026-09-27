@@ -615,8 +615,11 @@ class Controller:
         if previous_dubbing != dubbing and s.tts_generation_status in {"generated", "cached"}:
             s.tts_generation_status = "stale"
             s.tts_error = ""
-        if subtitle_changed:
+        source_changed = (subtitle_changed if self.project.subtitle_text_source == "vi_subtitle"
+                          else previous_dubbing != dubbing)
+        if source_changed:
             self.segmentation_service.sync_utterance(self.project, s)
+        if subtitle_changed:
             from cartoon_sub.translation.qc import local_translation_qa, store_qa_result
             result = local_translation_qa(self.project, s)
             status = "MANUAL_FIXED" if result["status"] == "PASS" else (
@@ -737,7 +740,8 @@ class Controller:
             s.pre_optimization_vi_subtitle = None
             s.pre_optimization_vi_dubbing = None
 
-            if sub_changed or timing_changed or speaker_changed:
+            source_changed = sub_changed if self.project.subtitle_text_source == "vi_subtitle" else dub_changed
+            if source_changed or timing_changed or speaker_changed:
                 self.segmentation_service.sync_utterance(self.project, s)
 
             if dub_changed or speaker_changed or timing_changed:
@@ -787,6 +791,18 @@ class Controller:
     def update_segmentation_settings(self, profile, settings):
         self.segmentation_service.update_settings(self.project, profile, settings)
 
+    def update_subtitle_text_source(self, source):
+        if source not in ("vi_subtitle", "vi_dubbing"):
+            raise ValueError("Nguồn nội dung phụ đề không hợp lệ")
+        if self.project.subtitle_text_source == source:
+            return
+        self.project.subtitle_text_source = source
+        self.project.segmentation_cache = {}
+        for utterance in self.project.utterances:
+            utterance.set_display_segments([])
+            self.segmentation_service.sync_utterance(self.project, utterance)
+        self.save()
+
     def auto_segment(self, utterance_ids=None, **job):
         changed, skipped=self.segmentation_service.auto_segment(self.project,utterance_ids,
             cancel=job.get("cancel"), progress=job.get("progress"))
@@ -817,9 +833,13 @@ class Controller:
         for utterance in self.project.utterances:
             if utterance.id not in chosen:
                 continue
-            segments = self.audio_timing_refiner.refine(utterance, audio, self.directory / "cache" / "audio_timing",
+            source_utterance = self.segmentation_service.source_utterance(self.project, utterance)
+            segments = self.audio_timing_refiner.refine(source_utterance, audio, self.directory / "cache" / "audio_timing",
                 cancel=job.get("cancel"), progress=job.get("progress"))
             utterance.set_display_segments(segments)
-            self.project.segmentation_cache[str(utterance.id)] = {"manual": True, "timing_source": "audio_alignment"}
+            self.project.segmentation_cache[str(utterance.id)] = {
+                "manual": True, "timing_source": "audio_alignment",
+                "source_type": self.project.subtitle_text_source,
+            }
         self.save()
         return self.project, self.directory

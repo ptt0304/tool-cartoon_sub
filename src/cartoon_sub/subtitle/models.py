@@ -418,6 +418,7 @@ class Project:
     segmentation_profile: str = "BALANCED"
     segmentation_settings: dict = field(default_factory=dict)
     segmentation_cache: dict = field(default_factory=dict)
+    subtitle_text_source: str = "vi_subtitle"
     audio_settings: AudioSettings = field(default_factory=AudioSettings)
     final_audio_status: str = "not_generated"
     final_audio_fingerprint: str = ""
@@ -512,6 +513,9 @@ class Project:
             data["segmentation_settings"]={}
         if not isinstance(data.get("segmentation_cache", {}), dict):
             raise ValueError("Cache segmentation không hợp lệ")
+        if data.get("subtitle_text_source", "vi_subtitle") not in ("vi_subtitle", "vi_dubbing"):
+            raise ValueError("Nguồn nội dung phụ đề không hợp lệ")
+        data["subtitle_text_source"] = data.get("subtitle_text_source", "vi_subtitle")
         from cartoon_sub.speaker.models import Speaker
         speakers = data.get("speakers", {})
         if not isinstance(speakers, dict):

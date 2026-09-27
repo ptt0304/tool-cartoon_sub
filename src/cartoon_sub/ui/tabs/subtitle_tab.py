@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabe
     QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView,QGroupBox)
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
-from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService, subtitle_source_text, subtitle_source_warning
 from cartoon_sub.subtitle.timestamps import format_srt_timestamp
 from cartoon_sub.ui.table_search import add_tree_search, apply_tree_search
 
@@ -25,6 +25,10 @@ class SubtitlePage(QWidget):
                       "không sửa transcript/dịch và giữ timestamp overlap giữa speaker. Chọn câu dài rồi bấm "
                       "‘Căn timing audio’ để Gemini nghe audio và đặt mốc hiển thị chi tiết.")
         note.setWordWrap(True); layout.addWidget(note)
+        source_row = QHBoxLayout();self.text_source = QComboBox()
+        self.text_source.addItem("VI Subtitle", "vi_subtitle");self.text_source.addItem("VI Dubbing", "vi_dubbing")
+        source_row.addWidget(QLabel("Nguồn nội dung phụ đề"));source_row.addWidget(self.text_source);source_row.addStretch();layout.addLayout(source_row)
+        self.source_description = QLabel();self.source_description.setWordWrap(True);layout.addWidget(self.source_description)
         controls = QHBoxLayout(); self.profile = QComboBox()
         for profile, label in PROFILE_LABELS.items(): self.profile.addItem(label, profile.value)
         self.apply_settings = QPushButton("Áp dụng settings")
@@ -68,6 +72,14 @@ class SubtitlePage(QWidget):
         export_layout.addWidget(self.export_subtitle_button); export_layout.addWidget(self.export_subtitle_status)
         layout.addWidget(export_group)
         self.profile.currentIndexChanged.connect(self.load_profile_defaults)
+        self.text_source.currentIndexChanged.connect(self.update_source_description)
+        self.update_source_description()
+
+    def update_source_description(self):
+        if self.text_source.currentData() == "vi_dubbing":
+            self.source_description.setText("Hiển thị đúng nội dung thuyết minh; phụ đề và giọng đọc trùng nhau.")
+        else:
+            self.source_description.setText("Hiển thị bản dịch đầy đủ; lời TTS có thể khác phụ đề.")
 
     def load_profile_defaults(self):
         if not self.loading and self.profile.currentData() != SegmentationProfile.CUSTOM.value: self.set_settings(settings_for(self.profile.currentData()))
@@ -91,13 +103,16 @@ class SubtitlePage(QWidget):
 
     def load_project(self, project):
         self.loading = True; profile, settings = SubtitleSegmentationService().settings_for(project)
-        self.profile.setCurrentIndex(max(0,self.profile.findData(profile.value))); self.set_settings(settings); self.loading = False; self.populate(project)
+        self.profile.setCurrentIndex(max(0,self.profile.findData(profile.value))); self.set_settings(settings)
+        self.text_source.setCurrentIndex(max(0,self.text_source.findData(getattr(project,"subtitle_text_source","vi_subtitle"))))
+        self.update_source_description();self.loading = False; self.populate(project)
 
     def populate(self, project):
         rows = SubtitleSegmentationService().rows(project, self.warning_filter.currentData())
         self.tree.clear(); warning_count = 0
         for utterance, children in rows:
-            parent = QTreeWidgetItem([f"Utterance {utterance.id}", utterance.speaker_id, format_srt_timestamp(utterance.start), format_srt_timestamp(utterance.end), utterance.vi_subtitle, ""])
+            warning = subtitle_source_warning(project, utterance)
+            parent = QTreeWidgetItem([f"Utterance {utterance.id}", utterance.speaker_id, format_srt_timestamp(utterance.start), format_srt_timestamp(utterance.end), subtitle_source_text(project,utterance), warning])
             parent.setData(0,Qt.ItemDataRole.UserRole,"utterance"); parent.setData(1,Qt.ItemDataRole.UserRole,utterance.id); self.tree.addTopLevelItem(parent)
             for segment, flags in children:
                 child = QTreeWidgetItem([segment.id, segment.speaker_id, format_srt_timestamp(segment.start), format_srt_timestamp(segment.end), segment.vi_text, " | ".join(flags)])

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 from cartoon_sub.project.paths import ProjectPaths
-from cartoon_sub.subtitle.parser import export_canonical_srt
+from cartoon_sub.subtitle.parser import export_canonical_srt, export_srt
 
 
 EXPORT_KINDS = {
@@ -29,8 +29,16 @@ def export_current_srt(project, project_root, kind):
     rows = list(project.utterances)
     if not rows:
         raise ValueError("Project chưa có dữ liệu để export SRT")
-    language, _use_presentation = EXPORT_KINDS[kind]
+    language, use_presentation = EXPORT_KINDS[kind]
     output_dir = ProjectPaths(project_root).export_dir / kind
     path = next_export_path(output_dir, kind)
-    export_canonical_srt(rows, path, language)
+    if kind == "subtitle":
+        from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+        service = SubtitleSegmentationService();service.sync_stale(project)
+        for utterance in project.utterances:
+            if not utterance.display_segments:
+                service.sync_utterance(project, utterance)
+        export_srt(rows, path, getattr(project, "subtitle_text_source", "vi_subtitle"), use_presentation)
+    else:
+        export_canonical_srt(rows, path, language)
     return path

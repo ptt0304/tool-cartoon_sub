@@ -1,5 +1,7 @@
 """Project-level segmentation workflows; no UI, transcription, or translation calls."""
 from dataclasses import asdict
+from copy import copy
+import logging
 import math
 import re
 
@@ -15,6 +17,32 @@ from cartoon_sub.syllable.vietnamese import count_syllables
 
 SEGMENTATION_VERSION = "local-segmentation-v2"
 SYLLABLE_COUNTER_VERSION = "vietnamese-local-v1"
+SUBTITLE_TEXT_SOURCES = ("vi_subtitle", "vi_dubbing")
+log = logging.getLogger(__name__)
+
+
+def subtitle_source_text(project, utterance):
+    source = getattr(project, "subtitle_text_source", "vi_subtitle")
+    if source not in SUBTITLE_TEXT_SOURCES:
+        raise ValueError("Nguồn nội dung phụ đề không hợp lệ")
+    text = getattr(utterance, source)
+    if source == "vi_dubbing" and not text.strip():
+        log.warning("[SUBTITLE SOURCE] ID %s chưa có VI Dubbing; tạm dùng VI Subtitle.", utterance.id)
+        return utterance.vi_subtitle
+    return text
+
+
+def subtitle_source_warning(project, utterance):
+    if (getattr(project, "subtitle_text_source", "vi_subtitle") == "vi_dubbing"
+            and not utterance.vi_dubbing.strip() and utterance.vi_subtitle.strip()):
+        return f"ID {utterance.id} chưa có VI Dubbing; tạm dùng VI Subtitle."
+    return ""
+
+
+def subtitle_source_utterance(project, utterance):
+    view = copy(utterance)
+    view.vi_subtitle = subtitle_source_text(project, utterance)
+    return view
 
 
 def project_settings(project):
@@ -23,20 +51,23 @@ def project_settings(project):
     return profile, settings_for(profile, custom)
 
 
-def segmentation_fingerprint(utterance, profile, settings, semantic_identity=None):
+def segmentation_fingerprint(utterance, profile, settings, semantic_identity=None,
+                             source_type="vi_subtitle", source_text=None):
+    text = utterance.vi_subtitle if source_text is None else source_text
     return content_hash({"version": SEGMENTATION_VERSION, "syllable_counter": SYLLABLE_COUNTER_VERSION,
         "utterance": {"id": utterance.id, "start": utterance.start, "end": utterance.end,
-                      "vi_subtitle": utterance.vi_subtitle}, "profile": str(profile), "settings": asdict(settings),
+                      "source_type": source_type, "source_text": text}, "profile": str(profile), "settings": asdict(settings),
         "semantic_fallback": semantic_identity})
 
 
-def presentation_segments(utterance):
+def presentation_segments(utterance, source_text=None):
     if utterance.display_segments:
         return list(utterance.display_segments)
-    if not utterance.vi_subtitle.strip():
+    text = utterance.vi_subtitle if source_text is None else source_text
+    if not text.strip():
         return []
     fallback = DisplaySegment(f"{utterance.id}.1", utterance.id, utterance.start, utterance.end,
-        utterance.vi_subtitle, segmentation_reason="utterance_source")
+        text, segmentation_reason="utterance_source")
     fallback.inherit_speaker(utterance.speaker_id)
     return [fallback]
 
@@ -114,6 +145,22 @@ class SubtitleSegmentationService:
     def settings_for(self, project):
         return project_settings(project)
 
+    @staticmethod
+    def source_text(project, utterance):
+        return subtitle_source_text(project, utterance)
+
+    @staticmethod
+    def source_utterance(project, utterance):
+        return subtitle_source_utterance(project, utterance)
+
+    @staticmethod
+    def _fingerprint(project, utterance, profile, settings, semantic_identity=None):
+        return segmentation_fingerprint(
+            utterance, profile, settings, semantic_identity,
+            getattr(project, "subtitle_text_source", "vi_subtitle"),
+            subtitle_source_text(project, utterance),
+        )
+
     def update_settings(self, project, profile, settings=None):
         profile = SegmentationProfile(profile)
         if profile is SegmentationProfile.CUSTOM:
@@ -142,34 +189,37 @@ class SubtitleSegmentationService:
         changed, skipped = [], []
         semantic_identity = self.semantic_service.cache_identity() if self.semantic_service is not None else None
         for utterance in project.utterances:
-            if utterance.id not in chosen or not utterance.vi_subtitle.strip():
+            source_text = self.source_text(project, utterance)
+            if utterance.id not in chosen or not source_text.strip():
                 continue
-            cache_key = segmentation_fingerprint(utterance, profile, settings, semantic_identity)
+            source_utterance = self.source_utterance(project, utterance)
+            cache_key = self._fingerprint(project, utterance, profile, settings, semantic_identity)
             state = project.segmentation_cache.get(str(utterance.id), {})
             if state.get("manual") and not force:
                 skipped.append(utterance.id)
                 continue
             if state.get("fingerprint") == cache_key and utterance.display_segments and not force:
                 continue
-            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(utterance)
+            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
             if "MANUAL_REVIEW" in plan.qc_flags and self.semantic_service is not None:
                 try:
-                    parts = self.semantic_service.split(utterance.vi_subtitle, "vi", settings.preferred_syllables_max,
-                        settings.max_syllables, self._max_segments(utterance, settings), cancel=cancel)
-                    plan = SegmentationPlan(utterance.id, utterance.speaker_id, utterance.vi_subtitle, parts,
+                    parts = self.semantic_service.split(source_text, "vi", settings.preferred_syllables_max,
+                        settings.max_syllables, self._max_segments(source_utterance, settings), cancel=cancel)
+                    plan = SegmentationPlan(utterance.id, utterance.speaker_id, source_text, parts,
                         ("gemini_semantic",) * (len(parts) - 1), (), False, True)
                 except GeminiError:
-                    self._mark_manual_review(utterance, settings, plan)
+                    self._mark_manual_review(utterance, source_utterance, settings, plan)
                     if progress:
                         progress(f"Utterance {utterance.id}: Gemini không tạo được điểm tách hợp lệ; cần duyệt tay")
                     changed.append(utterance.id)
                     continue
-            allocated = allocate_display_segments(utterance, plan, settings)
+            allocated = allocate_display_segments(source_utterance, plan, settings)
             utterance.set_display_segments(list(allocated.segments))
             for segment in utterance.display_segments:
-                apply_display_qc(segment, settings, utterance.vi_subtitle)
+                apply_display_qc(segment, settings, source_text)
             project.segmentation_cache[str(utterance.id)] = {"fingerprint": cache_key, "manual": False,
-                "timing_source": allocated.timing_source}
+                "timing_source": allocated.timing_source,
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle")}
             changed.append(utterance.id)
         return changed, skipped
 
@@ -180,20 +230,22 @@ class SubtitleSegmentationService:
         return min(8, max(2, by_syllables, by_duration))
 
     @staticmethod
-    def _mark_manual_review(utterance, settings, plan):
+    def _mark_manual_review(utterance, source_utterance, settings, plan):
         if utterance.display_segments:
             for segment in utterance.display_segments:
                 if "MANUAL_REVIEW" not in segment.qc_flags:
                     segment.qc_flags.append("MANUAL_REVIEW")
             return
-        allocated = allocate_display_segments(utterance, plan, settings)
+        allocated = allocate_display_segments(source_utterance, plan, settings)
         utterance.set_display_segments(list(allocated.segments))
         for segment in utterance.display_segments:
-            apply_display_qc(segment, settings, utterance.vi_subtitle)
+            apply_display_qc(segment, settings, source_utterance.vi_subtitle)
 
     def sync_utterance(self, project, utterance):
         profile, settings = self.settings_for(project)
-        if not utterance.vi_subtitle.strip():
+        source_text = self.source_text(project, utterance)
+        source_utterance = self.source_utterance(project, utterance)
+        if not source_text.strip():
             utterance.set_display_segments([])
             project.segmentation_cache.pop(str(utterance.id), None)
             return
@@ -208,68 +260,74 @@ class SubtitleSegmentationService:
         if not existing or len(existing) == 1:
             if len(existing) == 1:
                 seg = existing[0]
-                seg.vi_text = utterance.vi_subtitle
+                seg.vi_text = source_text
                 seg.start = utterance.start
                 seg.end = utterance.end
                 seg.inherit_speaker(utterance.speaker_id)
                 seg.recalculate()
-                apply_display_qc(seg, settings, utterance.vi_subtitle)
+                apply_display_qc(seg, settings, source_text)
                 utterance.set_display_segments([seg])
             else:
                 fallback = DisplaySegment(
                     f"{utterance.id}.1", utterance.id, utterance.start, utterance.end,
-                    utterance.vi_subtitle, segmentation_reason="utterance_source"
+                    source_text, segmentation_reason="utterance_source"
                 )
                 fallback.inherit_speaker(utterance.speaker_id)
-                apply_display_qc(fallback, settings, utterance.vi_subtitle)
+                apply_display_qc(fallback, settings, source_text)
                 utterance.set_display_segments([fallback])
-            cache_key = segmentation_fingerprint(utterance, profile, settings)
+            cache_key = self._fingerprint(project, utterance, profile, settings)
             project.segmentation_cache[str(utterance.id)] = {
                 "fingerprint": cache_key,
                 "manual": is_manual,
                 "timing_source": "manual" if is_manual else "utterance",
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle"),
             }
         elif not is_manual:
-            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(utterance)
-            allocated = allocate_display_segments(utterance, plan, settings)
+            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
+            allocated = allocate_display_segments(source_utterance, plan, settings)
             utterance.set_display_segments(list(allocated.segments))
             for segment in utterance.display_segments:
-                apply_display_qc(segment, settings, utterance.vi_subtitle)
-            cache_key = segmentation_fingerprint(utterance, profile, settings)
+                apply_display_qc(segment, settings, source_text)
+            cache_key = self._fingerprint(project, utterance, profile, settings)
             project.segmentation_cache[str(utterance.id)] = {
                 "fingerprint": cache_key,
                 "manual": False,
                 "timing_source": allocated.timing_source,
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle"),
             }
         else:
-            parts = reflow_text_to_segments(utterance.vi_subtitle, existing)
+            parts = reflow_text_to_segments(source_text, existing)
             for seg, part in zip(existing, parts):
                 seg.vi_text = part
                 seg.inherit_speaker(utterance.speaker_id)
                 seg.recalculate()
-                apply_display_qc(seg, settings, utterance.vi_subtitle)
+                apply_display_qc(seg, settings, source_text)
             utterance.set_display_segments(existing)
-            cache_key = segmentation_fingerprint(utterance, profile, settings)
+            cache_key = self._fingerprint(project, utterance, profile, settings)
             project.segmentation_cache[str(utterance.id)] = {
                 "fingerprint": cache_key,
                 "manual": True,
                 "timing_source": cache_entry.get("timing_source", "manual"),
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle"),
             }
 
-    @staticmethod
-    def display_segments_are_stale(utterance):
+    def display_segments_are_stale(self, project, utterance):
         """Return whether persisted presentation text no longer represents its master source."""
         if not utterance.display_segments:
             return False
-        if not utterance.vi_subtitle.strip():
+        source_text = self.source_text(project, utterance)
+        if not source_text.strip():
             return True
-        return normalize_text(" ".join(segment.vi_text for segment in utterance.display_segments)) != normalize_text(utterance.vi_subtitle)
+        state = project.segmentation_cache.get(str(utterance.id), {})
+        return (normalize_text(" ".join(segment.vi_text for segment in utterance.display_segments)) != normalize_text(source_text)
+                or (state.get("source_type") is not None
+                    and state.get("source_type") != getattr(project, "subtitle_text_source", "vi_subtitle")))
 
     def sync_stale(self, project):
         """Synchronize only presentation groups whose text diverged from Project.utterances."""
         changed = []
         for utterance in project.utterances:
-            if self.display_segments_are_stale(utterance):
+            if self.display_segments_are_stale(project, utterance):
                 self.sync_utterance(project, utterance)
                 changed.append(utterance.id)
         return changed
@@ -289,7 +347,8 @@ class SubtitleSegmentationService:
     def split_manual(self, project, utterance_id, display_id, word_index):
         utterance = self._utterance(project, utterance_id)
         _, settings = self.settings_for(project)
-        rows = presentation_segments(utterance)
+        source_text = self.source_text(project, utterance)
+        rows = presentation_segments(utterance, source_text)
         index = next((i for i, item in enumerate(rows) if item.id == display_id), None)
         if index is None:
             raise ValueError("DisplaySegment không tồn tại")
@@ -307,15 +366,17 @@ class SubtitleSegmentationService:
         replacement = list(allocated.segments)
         for item in replacement:
             item.segmentation_reason, item.manual = "manual", True
-            apply_display_qc(item, settings, utterance.vi_subtitle)
+            apply_display_qc(item, settings, source_text)
         utterance.set_display_segments(self._reindex(utterance, rows[:index] + replacement + rows[index + 1:]))
-        project.segmentation_cache[str(utterance.id)] = {"fingerprint": segmentation_fingerprint(utterance, *self.settings_for(project)),
-            "manual": True, "timing_source": "manual"}
+        project.segmentation_cache[str(utterance.id)] = {"fingerprint": self._fingerprint(project, utterance, *self.settings_for(project)),
+            "manual": True, "timing_source": "manual",
+            "source_type": getattr(project, "subtitle_text_source", "vi_subtitle")}
 
     def merge_manual(self, project, utterance_id, display_ids):
         utterance = self._utterance(project, utterance_id)
         _, settings = self.settings_for(project)
-        rows = presentation_segments(utterance)
+        source_text = self.source_text(project, utterance)
+        rows = presentation_segments(utterance, source_text)
         selected = [item for item in rows if item.id in set(display_ids)]
         if len(selected) < 2:
             raise ValueError("Chọn ít nhất hai DisplaySegment cùng utterance để gộp")
@@ -325,22 +386,24 @@ class SubtitleSegmentationService:
         first, last = selected[0], selected[-1]
         merged = DisplaySegment("manual", utterance.id, first.start, last.end, "".join(item.vi_text for item in selected),
             segmentation_reason="manual", manual=True)
-        apply_display_qc(merged, settings, utterance.vi_subtitle)
+        apply_display_qc(merged, settings, source_text)
         utterance.set_display_segments(self._reindex(utterance, rows[:positions[0]] + [merged] + rows[positions[-1] + 1:]))
-        project.segmentation_cache[str(utterance.id)] = {"fingerprint": segmentation_fingerprint(utterance, *self.settings_for(project)),
-            "manual": True, "timing_source": "manual"}
+        project.segmentation_cache[str(utterance.id)] = {"fingerprint": self._fingerprint(project, utterance, *self.settings_for(project)),
+            "manual": True, "timing_source": "manual",
+            "source_type": getattr(project, "subtitle_text_source", "vi_subtitle")}
 
     def rows(self, project, warning_filter=None):
         self.sync_stale(project)
         _, settings = self.settings_for(project)
         result = []
         for utterance in project.utterances:
-            if not utterance.vi_subtitle.strip():
+            source_text = self.source_text(project, utterance)
+            if not source_text.strip():
                 result.append((utterance, []))
                 continue
             children = []
-            for segment in presentation_segments(utterance):
-                flags = review_display_segment(segment, settings, utterance.vi_subtitle)
+            for segment in presentation_segments(utterance, source_text):
+                flags = review_display_segment(segment, settings, source_text)
                 if warning_filter == "WARNINGS" and flags == ["OK"]:
                     continue
                 if warning_filter and warning_filter not in ("ALL", "WARNINGS") and warning_filter not in flags:

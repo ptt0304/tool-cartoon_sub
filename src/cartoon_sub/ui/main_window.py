@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self.pages[2].export_speakers_button.clicked.connect(self.export_speakers)
         subtitle = self.pages[3]
         subtitle.apply_settings.clicked.connect(self.apply_segmentation_settings)
+        subtitle.text_source.currentIndexChanged.connect(self.change_subtitle_text_source)
         subtitle.warning_filter.currentIndexChanged.connect(self.refresh_segmentation_page)
         subtitle.auto_all.clicked.connect(lambda: self.auto_segment(False))
         subtitle.auto_selected.clicked.connect(lambda: self.auto_segment(True))
@@ -295,6 +296,33 @@ class MainWindow(QMainWindow):
             self.controller.save();self._record_project_edit(before,"Edit subtitle settings")
             self.refresh()
         except Exception as exc:self.error(exc)
+
+    def change_subtitle_text_source(self):
+        page = self.pages[3]
+        if page.loading or not self.controller.project:
+            return
+        source = page.text_source.currentData()
+        project = self.controller.project
+        previous = getattr(project, "subtitle_text_source", "vi_subtitle")
+        if source == previous:
+            return
+        if any(row.display_segments for row in project.utterances):
+            answer = QMessageBox.question(
+                self, "Nguồn phụ đề đã thay đổi",
+                "Nguồn phụ đề đã thay đổi. Các phân đoạn phụ đề hiện tại cần được tạo lại theo nguồn mới.\n\nTiếp tục và đặt lại về Utterance?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                page.loading = True;page.text_source.setCurrentIndex(page.text_source.findData(previous));page.loading = False
+                page.update_source_description()
+                return
+        try:
+            before=self._project_state();self.controller.update_subtitle_text_source(source);self._record_project_edit(before,"Change subtitle text source")
+            self.refresh()
+        except Exception as exc:
+            page.loading = True;page.text_source.setCurrentIndex(page.text_source.findData(previous));page.loading = False
+            self.error(exc)
 
     def auto_segment(self, selected):
         try:
