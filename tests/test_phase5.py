@@ -219,7 +219,7 @@ class Phase5Tests(unittest.TestCase):
         p.mask=Mask(True,'solid',0,140,320,30);p.subtitle_style.font_size=25
         self.assertEqual(translation_fingerprint(p,AISettings()),before)
 
-    def test_real_ffmpeg_solid_blur_final_and_cancel(self):
+    def test_real_ffmpeg_solid_blur_no_mask_final_and_cancel(self):
         with tempfile.TemporaryDirectory(prefix='mask space ') as tmp:
             root=Path(tmp);p=self.project();source=root/'source.mp4';p.source_video_path=str(source)
             run_process(['ffmpeg','-nostdin','-n','-f','lavfi','-i','testsrc2=size=320x180:rate=12',
@@ -227,7 +227,7 @@ class Phase5Tests(unittest.TestCase):
                 '-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',str(source)])
             renderer=VideoRenderer()
             self.assertTrue(renderer.frame(p,root,2).is_file())
-            for kind in ('solid','gaussian'):
+            for kind in ('solid','gaussian','none'):
                 p.mask=Mask(True,kind,11,131,280,36,14)
                 output=renderer.render(p,root,2,True)
                 info=probe(output)

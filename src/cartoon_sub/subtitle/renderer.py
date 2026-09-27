@@ -19,13 +19,16 @@ def validate_visuals(project):
     if width < 2 or height < 2:
         raise ValueError('Kích thước video không hợp lệ')
     m, s = project.mask, project.subtitle_style
-    if m.kind not in ('solid', 'gaussian'):
+    if m.kind not in ('solid', 'gaussian', 'none'):
         raise ValueError('Kiểu mask không hợp lệ')
     _color(m.mask_color); _color(s.text_color); _color(s.outline_color)
-    if m.enabled and (any(type(v) is not int for v in (m.x,m.y,m.width,m.height,m.strength)) or
-                      m.x < 0 or m.y < 0 or m.width < 2 or m.height < 2 or
-                      m.x+m.width > width or m.y+m.height > height or not 1 <= m.strength <= 20):
+    needs_region = m.enabled and (m.kind != 'none' or s.center_in_mask)
+    if needs_region and (any(type(v) is not int for v in (m.x,m.y,m.width,m.height)) or
+                         m.x < 0 or m.y < 0 or m.width < 2 or m.height < 2 or
+                         m.x+m.width > width or m.y+m.height > height):
         raise ValueError('Vùng mask phải nằm trong video và rộng/cao ít nhất 2 pixel')
+    if m.enabled and m.kind != 'none' and (type(m.strength) is not int or not 1 <= m.strength <= 20):
+        raise ValueError('Độ nhòe mask phải từ 1 đến 20')
     if not s.font.strip() or any(c in s.font for c in '\r\n,'):
         raise ValueError('Tên font không hợp lệ')
     if not 8 <= s.font_size <= 300 or s.alignment not in range(1,10) or not 1 <= s.max_lines <= 4:

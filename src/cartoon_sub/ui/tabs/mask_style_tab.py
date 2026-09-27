@@ -89,6 +89,8 @@ class MaskCanvas(QWidget):
             if self.drag and min(self.drag[2:])>=2:self.selected.emit(*self.drag)
             self.origin=None;self.drag=None;self.update()
     def draw_mask_effect(self,p,rect,x,y,w,h,kind,strength,mask_color='#000000'):
+        if kind == 'none':
+            return
         if kind == 'solid':
             p.fillRect(rect,QColor(mask_color));return
         source=self.pixmap.copy(max(0,x),max(0,y),max(1,min(w,self.pixmap.width()-max(0,x))),max(1,min(h,self.pixmap.height()-max(0,y))))
@@ -142,7 +144,7 @@ class MaskCanvas(QWidget):
             p.setPen(Qt.GlobalColor.white);p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,'Lấy khung hình rồi kéo vùng che phụ đề Trung.');return
         p.drawPixmap(r.toRect(),self.pixmap);m=self.mask
         box=self.drag or ((m.x,m.y,m.width,m.height) if m.enabled else None)
-        if box:
+        if box and m.kind != 'none':
             x,y,w,h=box;sx=r.width()/self.pixmap.width();sy=r.height()/self.pixmap.height()
             rect=QRectF(r.x()+x*sx,r.y()+y*sy,w*sx,h*sy)
             self.draw_mask_effect(p,rect,x,y,w,h,m.kind,m.strength,m.mask_color)
@@ -182,7 +184,7 @@ class MaskStylePage(QWidget):
         splitter=QSplitter(Qt.Orientation.Horizontal);splitter.addWidget(self.views);splitter.addWidget(scroll);splitter.setStretchFactor(0,1);splitter.setSizes([900,360]);body.addWidget(splitter,1)
         self.options_scroll=scroll;self.options_splitter=splitter
         self.enabled=QCheckBox('Bật vùng che');form.addRow(self.enabled)
-        self.kind=QComboBox();self.kind.addItem('Solid','solid');self.kind.addItem('Gaussian','gaussian');form.addRow('Kiểu mask',self.kind)
+        self.kind=QComboBox();self.kind.addItem('Solid','solid');self.kind.addItem('Gaussian','gaussian');self.kind.addItem('No mask','none');form.addRow('Kiểu mask',self.kind)
         self.mask_color=ColorButton('#000000');form.addRow('Màu khung mask',self.mask_color)
         self.strength=QSpinBox();self.strength.setRange(1,20);self.strength.setValue(12);form.addRow('Độ nhòe (1–20)',self.strength)
         self.coords=[]
@@ -348,8 +350,10 @@ class MaskStylePage(QWidget):
         if not self.loading:
             self.canvas.mask,self.canvas.style=self.values();self.canvas.update()
             self.canvas.watermark=self.overlay_values()[1]
+            has_mask = self.kind.currentData() != 'none'
             self.center_mask.setEnabled(self.enabled.isChecked())
-            self.strength.setEnabled(self.kind.currentData() != 'solid')
+            self.mask_color.setEnabled(has_mask)
+            self.strength.setEnabled(has_mask and self.kind.currentData() != 'solid')
             if not self.enabled.isChecked() and self.center_mask.isChecked(): self.center_mask.setChecked(False)
     def commit_watermark_state(self,*args):
         if self.loading:return

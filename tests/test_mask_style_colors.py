@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import QApplication
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.subtitle.models import Mask, Project, SubtitleStyle, Utterance
 from cartoon_sub.subtitle.renderer import save_ass
+from cartoon_sub.subtitle.renderer import validate_visuals
+from cartoon_sub.media.preview import VideoRenderer
 from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage
 
 
@@ -63,6 +66,50 @@ class MaskStyleColorTests(unittest.TestCase):
             painter.end();rendered.append(image)
         self.assertEqual(rendered[0], rendered[1])
         page.close()
+
+    def test_no_mask_option_preview_and_controls(self):
+        page = MaskStylePage();page.resize(700, 400);page.canvas.resize(400, 250)
+        self.assertEqual([page.kind.itemText(i) for i in range(page.kind.count())],
+                         ['Solid', 'Gaussian', 'No mask'])
+        page.canvas.pixmap = QPixmap(320, 180);page.canvas.pixmap.fill(Qt.GlobalColor.gray)
+        page.enabled.setChecked(True);page.kind.setCurrentIndex(page.kind.findData('none'))
+        page.canvas.show();self.app.processEvents()
+        no_mask = page.canvas.grab().toImage()
+        page.enabled.setChecked(False);self.app.processEvents()
+        mask_off = page.canvas.grab().toImage()
+        self.assertEqual(no_mask, mask_off)
+        self.assertFalse(page.mask_color.isEnabled())
+        self.assertFalse(page.strength.isEnabled())
+        page.kind.setCurrentIndex(page.kind.findData('gaussian'))
+        self.assertTrue(page.mask_color.isEnabled())
+        self.assertTrue(page.strength.isEnabled())
+        page.close()
+
+    def test_no_mask_roundtrip_and_final_filter_is_text_only(self):
+        project = self.project()
+        project.mask = Mask(True, 'none', 10, 120, 300, 50, 12, '#2468AC')
+        project.subtitle_style = SubtitleStyle(font_size=24, outline=3, shadow=2, text_color='#123456', center_in_mask=True)
+        validate_visuals(project)
+        with tempfile.TemporaryDirectory() as folder:
+            ProjectManager().save(project, folder)
+            loaded = ProjectManager().load(folder)
+            self.assertEqual(loaded.mask.kind, 'none')
+            subs = pysubs2.load(str(save_ass(loaded, Path(folder) / 'no-mask.ass')))
+            self.assertTrue(all(event.text.startswith(r'{\an5\pos(160,145)}') for event in subs))
+            source = Path(folder) / 'source.mp4';source.write_bytes(b'source')
+            loaded.source_video_path = str(source)
+            captured = []
+            def fake_run(args, *_args, **_kwargs):
+                captured.append(args)
+                Path(args[-1]).write_bytes(b'rendered')
+            with patch('cartoon_sub.media.preview.run_process', side_effect=fake_run):
+                output = VideoRenderer().render(loaded, folder, preview=True)
+            self.assertTrue(output.is_file())
+            filters = captured[0][captured[0].index('-filter_complex') + 1]
+            self.assertIn('[0:v]null[masked];', filters)
+            self.assertIn('ass=filename=subtitle.ass', filters)
+            self.assertNotIn('drawbox=', filters)
+            self.assertNotIn('gblur=', filters)
 
     def test_ass_and_project_roundtrip_keep_three_colors(self):
         project = self.project()

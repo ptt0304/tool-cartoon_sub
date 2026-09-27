@@ -76,7 +76,7 @@ class VideoRenderer:
         try:
             save_ass(project,folder/'subtitle.ass',start if is_partial else 0,calc_duration)
             m = project.mask
-            if not m.enabled: chain = '[0:v]null[masked];'
+            if not m.enabled or m.kind == 'none': chain = '[0:v]null[masked];'
             elif m.kind == 'solid':
                 color = '0x' + m.mask_color[1:]
                 chain = f'[0:v]drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}:color={color}:t=fill[masked];'
