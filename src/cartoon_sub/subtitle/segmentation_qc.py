@@ -5,10 +5,14 @@ from cartoon_sub.syllable.vietnamese import count_syllables
 
 
 MAX_SYLLABLES_PER_SECOND = 5.0
+DYNAMIC_QC_FLAGS = {
+    "OK", "TOO_SHORT", "TOO_LONG", "TOO_MANY_SYLLABLES", "TOO_MANY_LINES",
+    "TOO_MANY_CHARS_PER_LINE", "HIGH_READING_SPEED", "BAD_SPLIT", "MANUAL_REVIEW",
+}
 
 
 def review_display_segment(segment, settings, source_text=None):
-    flags = [flag for flag in segment.qc_flags if flag != "OK"]
+    flags = [flag for flag in segment.qc_flags if flag not in DYNAMIC_QC_FLAGS]
     if segment.duration < settings.min_duration:
         flags.append("TOO_SHORT")
     if segment.duration > settings.max_duration:
@@ -17,6 +21,9 @@ def review_display_segment(segment, settings, source_text=None):
         flags.append("TOO_MANY_SYLLABLES")
     if segment.line_count > settings.max_lines:
         flags.append("TOO_MANY_LINES")
+    if any(len(re.sub(r"\s+", " ", line).strip()) > settings.hard_max_chars_per_line
+           for line in segment.vi_text.splitlines() or [segment.vi_text]):
+        flags.append("TOO_MANY_CHARS_PER_LINE")
     if count_syllables(segment.vi_text) / segment.duration > MAX_SYLLABLES_PER_SECOND:
         flags.append("HIGH_READING_SPEED")
     words = re.findall(r"[^\W\d_]+", segment.vi_text, re.UNICODE)

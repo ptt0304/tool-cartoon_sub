@@ -9,12 +9,12 @@ from cartoon_sub.ui.table_search import add_tree_search, apply_tree_search
 
 
 PROFILE_LABELS = {
-    SegmentationProfile.BALANCED: "Balanced", SegmentationProfile.READING_COMFORT: "Reading comfort",
-    SegmentationProfile.FAST_DIALOGUE: "Fast dialogue", SegmentationProfile.PRESERVE_SENTENCES: "Preserve sentences",
-    SegmentationProfile.CUSTOM: "Custom",
+    SegmentationProfile.BALANCED: "Cân bằng", SegmentationProfile.READING_COMFORT: "Ưu tiên dễ đọc",
+    SegmentationProfile.FAST_DIALOGUE: "Hội thoại nhanh", SegmentationProfile.PRESERVE_SENTENCES: "Giữ nguyên câu",
+    SegmentationProfile.CUSTOM: "Tùy chỉnh",
 }
 QC_FILTERS = ("OK", "TOO_LONG", "TOO_SHORT", "TOO_MANY_SYLLABLES", "TOO_MANY_LINES",
-              "HIGH_READING_SPEED", "BAD_SPLIT", "MANUAL_REVIEW")
+              "TOO_MANY_CHARS_PER_LINE", "HIGH_READING_SPEED", "BAD_SPLIT", "MANUAL_REVIEW")
 
 
 class SubtitlePage(QWidget):
@@ -31,10 +31,12 @@ class SubtitlePage(QWidget):
         self.source_description = QLabel();self.source_description.setWordWrap(True);layout.addWidget(self.source_description)
         controls = QHBoxLayout(); self.profile = QComboBox()
         for profile, label in PROFILE_LABELS.items(): self.profile.addItem(label, profile.value)
-        self.apply_settings = QPushButton("Áp dụng settings")
+        self.apply_settings = QPushButton("Áp dụng cài đặt")
         self.warning_filter = QComboBox(); self.warning_filter.addItem("Tất cả QC", "ALL"); self.warning_filter.addItem("Có cảnh báo", "WARNINGS")
         for flag in QC_FILTERS: self.warning_filter.addItem(flag, flag)
-        controls.addWidget(QLabel("Profile")); controls.addWidget(self.profile); controls.addWidget(self.apply_settings)
+        controls.addWidget(QLabel("Cấu hình")); controls.addWidget(self.profile); controls.addWidget(self.apply_settings)
+        profile_description = QLabel("Cân bằng giữa độ dài, thời lượng và khả năng đọc.")
+        profile_description.setWordWrap(True);controls.addWidget(profile_description)
         controls.addStretch(); controls.addWidget(QLabel("Lọc")); controls.addWidget(self.warning_filter); layout.addLayout(controls)
         settings = QHBoxLayout(); form = QFormLayout(); settings.addLayout(form)
         self.preferred_duration = QDoubleSpinBox(); self.preferred_duration.setRange(.1,30); self.preferred_duration.setDecimals(1)
@@ -44,10 +46,20 @@ class SubtitlePage(QWidget):
         self.max_lines = QSpinBox(); self.max_lines.setRange(1,4)
         self.chars_per_line = QSpinBox(); self.chars_per_line.setRange(8,120)
         self.hard_chars_per_line = QSpinBox(); self.hard_chars_per_line.setRange(8,160)
-        for label, control in (("Preferred duration",self.preferred_duration),("Max duration",self.max_duration),
-                               ("Preferred syllables",self.preferred_syllables),("Max syllables",self.max_syllables),
-                               ("Max lines",self.max_lines),("Preferred chars / line",self.chars_per_line),
-                               ("Hard chars / line",self.hard_chars_per_line)): form.addRow(label,control)
+        setting_rows = (
+            ("Thời lượng khuyến nghị", self.preferred_duration, "Ưu tiên mỗi đoạn phụ đề có thời lượng gần mức này."),
+            ("Thời lượng tối đa", self.max_duration, "Giới hạn thời lượng trước khi xem xét tách."),
+            ("Âm tiết khuyến nghị", self.preferred_syllables, "Số âm tiết lý tưởng cho mỗi đoạn; đây là ngưỡng mềm."),
+            ("Tối đa âm tiết", self.max_syllables, "Vượt mức này sẽ được ưu tiên tách thành đoạn nhỏ hơn."),
+            ("Tối đa số dòng", self.max_lines, "Số dòng phụ đề tối đa hiển thị cùng lúc."),
+            ("Ký tự/dòng khuyến nghị", self.chars_per_line, "Ngưỡng mềm cho độ dài một dòng."),
+            ("Tối đa ký tự/dòng", self.hard_chars_per_line, "Giới hạn cứng cho độ dài một dòng."),
+        )
+        for label, control, description in setting_rows:
+            row = QWidget();row_layout = QHBoxLayout(row);row_layout.setContentsMargins(0,0,0,0)
+            detail = QLabel(description);detail.setWordWrap(True);detail.setMaximumWidth(430)
+            row_layout.addWidget(control);row_layout.addWidget(detail, 1)
+            form.addRow(label, row)
         settings.addStretch(); layout.addLayout(settings)
         buttons = QHBoxLayout()
         self.auto_all = QPushButton("Auto Segment All"); self.auto_selected = QPushButton("Auto Segment Selected")
@@ -85,6 +97,7 @@ class SubtitlePage(QWidget):
         if not self.loading and self.profile.currentData() != SegmentationProfile.CUSTOM.value: self.set_settings(settings_for(self.profile.currentData()))
 
     def set_settings(self, settings):
+        self.active_settings = settings
         self.preferred_duration.setValue((settings.preferred_duration_min + settings.preferred_duration_max) / 2)
         self.max_duration.setValue(settings.max_duration); self.preferred_syllables.setValue(settings.preferred_syllables_max)
         self.max_syllables.setValue(settings.max_syllables); self.max_lines.setValue(settings.max_lines)
@@ -92,14 +105,32 @@ class SubtitlePage(QWidget):
 
     def values(self):
         profile = SegmentationProfile(self.profile.currentData())
-        baseline = settings_for(profile) if profile is not SegmentationProfile.CUSTOM else SegmentationSettings()
+        baseline = settings_for(profile) if profile is not SegmentationProfile.CUSTOM else getattr(self, "active_settings", SegmentationSettings())
+        preferred_duration = self.preferred_duration.value();max_duration = self.max_duration.value()
+        preferred_syllables = self.preferred_syllables.value();max_syllables = self.max_syllables.value()
+        preferred_chars = self.chars_per_line.value();hard_chars = self.hard_chars_per_line.value()
+        if max_duration < preferred_duration:
+            raise ValueError("Thời lượng tối đa phải lớn hơn hoặc bằng Thời lượng khuyến nghị.")
+        if max_syllables < preferred_syllables:
+            raise ValueError("Tối đa âm tiết phải lớn hơn hoặc bằng Âm tiết khuyến nghị.")
+        if hard_chars < preferred_chars:
+            raise ValueError("Tối đa ký tự/dòng phải lớn hơn hoặc bằng Ký tự/dòng khuyến nghị.")
         custom = SegmentationSettings(min_duration=baseline.min_duration,
-            preferred_duration_min=min(baseline.preferred_duration_min,self.preferred_duration.value()), preferred_duration_max=self.preferred_duration.value(),
-            max_duration=max(self.max_duration.value(),self.preferred_duration.value()),
-            preferred_syllables_min=min(baseline.preferred_syllables_min,self.preferred_syllables.value()), preferred_syllables_max=self.preferred_syllables.value(),
-            max_syllables=max(self.max_syllables.value(),self.preferred_syllables.value()), max_lines=self.max_lines.value(),
-            preferred_chars_per_line=self.chars_per_line.value(), hard_max_chars_per_line=max(self.hard_chars_per_line.value(),self.chars_per_line.value())).validate()
-        return profile.value, custom
+            preferred_duration_min=min(baseline.preferred_duration_min,preferred_duration), preferred_duration_max=preferred_duration,
+            max_duration=max_duration,
+            preferred_syllables_min=min(baseline.preferred_syllables_min,preferred_syllables), preferred_syllables_max=preferred_syllables,
+            max_syllables=max_syllables, max_lines=self.max_lines.value(),
+            preferred_chars_per_line=preferred_chars, hard_max_chars_per_line=hard_chars).validate()
+        displayed_baseline = (
+            (baseline.preferred_duration_min + baseline.preferred_duration_max) / 2,
+            baseline.max_duration, baseline.preferred_syllables_max, baseline.max_syllables,
+            baseline.max_lines, baseline.preferred_chars_per_line, baseline.hard_max_chars_per_line,
+        )
+        displayed_current = (preferred_duration, max_duration, preferred_syllables, max_syllables,
+                             self.max_lines.value(), preferred_chars, hard_chars)
+        if profile is not SegmentationProfile.CUSTOM and displayed_current == displayed_baseline:
+            return profile.value, baseline
+        return SegmentationProfile.CUSTOM.value, custom
 
     def load_project(self, project):
         self.loading = True; profile, settings = SubtitleSegmentationService().settings_for(project)

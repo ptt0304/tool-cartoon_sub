@@ -63,7 +63,8 @@ class SegmentationEngineTests(unittest.TestCase):
         self.assertTrue(second_plan.preserves_source_text())
 
     def test_profiles_and_custom_settings(self):
-        self.assertEqual(settings_for(SegmentationProfile.BALANCED).max_syllables, 18)
+        balanced = settings_for(SegmentationProfile.BALANCED)
+        self.assertEqual((balanced.preferred_syllables_max, balanced.max_syllables, balanced.max_lines), (8, 14, 1))
         self.assertEqual(settings_for(SegmentationProfile.READING_COMFORT).max_syllables, 16)
         self.assertEqual(settings_for(SegmentationProfile.FAST_DIALOGUE).max_syllables, 14)
         self.assertEqual(settings_for(SegmentationProfile.PRESERVE_SENTENCES).max_syllables, 20)

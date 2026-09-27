@@ -173,6 +173,10 @@ class SubtitleSegmentationService:
         project.segmentation_profile, project.segmentation_settings = profile.value, serialized
         if changed:
             project.segmentation_cache = {}
+        for utterance in project.utterances:
+            source_text = self.source_text(project, utterance)
+            for segment in utterance.display_segments:
+                apply_display_qc(segment, settings, source_text)
 
     def invalidate(self, project, utterance_ids=None):
         if utterance_ids is None:

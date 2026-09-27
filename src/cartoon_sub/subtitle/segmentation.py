@@ -23,9 +23,9 @@ class SegmentationSettings:
     preferred_duration_max: float = 4.0
     max_duration: float = 5.0
     preferred_syllables_min: int = 8
-    preferred_syllables_max: int = 16
-    max_syllables: int = 18
-    max_lines: int = 2
+    preferred_syllables_max: int = 8
+    max_syllables: int = 14
+    max_lines: int = 1
     preferred_chars_per_line: int = 36
     hard_max_chars_per_line: int = 44
 
