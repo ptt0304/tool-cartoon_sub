@@ -22,12 +22,14 @@ def load_gemini_keys(path):
 
 class GeminiError(RuntimeError):
     def __init__(self, message, retryable=False, retry_after_seconds=None, quota_exhausted=False,
-                 rotate_key=False):
+                 rotate_key=False, status_code=None, category="UNKNOWN"):
         super().__init__(message)
         self.retryable = retryable
         self.retry_after_seconds = retry_after_seconds
         self.quota_exhausted = quota_exhausted
         self.rotate_key = rotate_key
+        self.status_code = status_code
+        self.category = category
 
 
 def safe_error(exc):
@@ -40,30 +42,45 @@ def safe_error(exc):
     except (TypeError, ValueError):
         retry_after = None
     if code == 400:
-        return GeminiError("Gemini HTTP 400: kiểm tra model và định dạng request/audio.")
+        return GeminiError("Gemini HTTP 400: kiểm tra model và định dạng request/audio.",
+                           status_code=400, category="BAD_REQUEST")
     if code in (401, 403):
-        return GeminiError(f"Gemini HTTP {code}: key không hợp lệ hoặc không có quyền API.", rotate_key=True)
+        return GeminiError(f"Gemini HTTP {code}: key không hợp lệ hoặc không có quyền API.", rotate_key=True,
+                           status_code=code, category="AUTH" if code == 401 else "PERMISSION")
     if code == 404:
         return GeminiError("Gemini HTTP 404: model không có sẵn cho request này. Mở Settings > AI, "
-                           "chọn một model hiện hành rồi Save và thử lại; đồng thời kiểm tra quyền truy cập.")
+                           "chọn một model hiện hành rồi Save và thử lại; đồng thời kiểm tra quyền truy cập.",
+                           status_code=404, category="MODEL_NOT_FOUND")
+    if code == 408:
+        # Transcript classifies this structured status itself. Shared features
+        # retain their previous no-retry behavior in this task.
+        return GeminiError("Gemini HTTP 408: request hết thời gian chờ.", retry_after_seconds=retry_after,
+                           status_code=408, category="TRANSIENT")
+    if code == 422:
+        return GeminiError("Gemini HTTP 422: request không hợp lệ.",
+                           status_code=422, category="BAD_REQUEST")
     if code == 429:
         detail = str(exc).lower()
         exhausted = "daily quota" in detail or "quota exhausted" in detail
         message = ("GEMINI_QUOTA_EXHAUSTED: Gemini HTTP 429 báo quota ngày đã hết."
                    if exhausted else "Gemini HTTP 429: hết quota hoặc vượt giới hạn tốc độ. Kiểm tra quota trong AI Studio.")
-        return GeminiError(message, not exhausted, retry_after, exhausted, rotate_key=True)
+        return GeminiError(message, not exhausted, retry_after, exhausted, rotate_key=True,
+                           status_code=429, category="TRANSIENT")
     if isinstance(code, int) and 500 <= code < 600:
         return GeminiError(f"Gemini HTTP {code}: dịch vụ tạm thời gặp lỗi.", True, retry_after,
-                           rotate_key=True)
+                           rotate_key=True, status_code=code,
+                           category="TRANSIENT" if code in (500, 502, 503, 504) else "SERVER_ERROR")
     # Never surface raw SDK exceptions: they may contain request bodies or credentials.
     import httpx
     if isinstance(exc, (httpx.TransportError, TimeoutError, ConnectionError)):
         return GeminiError("Không kết nối được Gemini hoặc request hết thời gian chờ. Kiểm tra mạng/proxy.",
-                           True, rotate_key=True)
+                           True, rotate_key=True, category="TRANSIENT")
     return GeminiError("Gemini không xử lý được request. Kiểm tra model, cấu hình và phiên bản google-genai.")
 
 
 class GeminiClient:
+    managed_transcript_retry = True
+
     def __init__(self, api_key):
         self.key_pool_enabled = not isinstance(api_key, str)
         self._api_keys = [api_key] if isinstance(api_key, str) else list(api_key)
@@ -88,6 +105,22 @@ class GeminiClient:
         self.client.close()
         self.client = self._create_client(self._api_keys[index])
         self._key_index = index
+
+    @property
+    def transcript_key_count(self):
+        return len(self._api_keys)
+
+    def select_transcript_key(self, index):
+        """Select one key for Transcript's own bounded retry policy."""
+        self._select_key(index)
+
+    def _request_once(self, operation, cancel=None):
+        """One sanitized request; intentionally does not rotate keys or retry."""
+        check_cancel(cancel)
+        try:
+            return operation()
+        except Exception as exc:
+            raise (exc if isinstance(exc, GeminiError) else safe_error(exc)) from None
 
     def _request(self, operation, cancel=None, progress=None):
         if not getattr(self, "key_pool_enabled", False):
@@ -134,7 +167,7 @@ class GeminiClient:
             message += f" PASS using key {self._key_index + 1}/{len(self._api_keys)}."
         return message
 
-    def transcribe_json(self, audio_bytes, prompt, schema, model, cancel=None, references=None, progress=None):
+    def _transcribe_json(self, audio_bytes, prompt, schema, model, cancel, references, progress, request):
         from google.genai import types
         check_cancel(cancel)
         contents=[prompt]
@@ -145,11 +178,11 @@ class GeminiClient:
         contents.append(types.Part.from_bytes(data=audio_bytes,mime_type="audio/wav"))
         for token_limit in (16384, 32768):
             check_cancel(cancel)
-            response = self._request(lambda: self.client.models.generate_content(
+            response = request(lambda: self.client.models.generate_content(
                     model=model, contents=contents,
                     config=types.GenerateContentConfig(response_mime_type="application/json",
                         response_schema=schema, temperature=0, max_output_tokens=token_limit),
-                ), cancel, progress)
+                ))
             check_cancel(cancel)
             candidates = response.candidates or []
             if not candidates:
@@ -171,6 +204,15 @@ class GeminiClient:
         if not response.text:
             raise GeminiError("Gemini không trả nội dung JSON.")
         return response.text
+
+    def transcribe_json(self, audio_bytes, prompt, schema, model, cancel=None, references=None, progress=None):
+        return self._transcribe_json(audio_bytes, prompt, schema, model, cancel, references, progress,
+            lambda operation: self._request(operation, cancel, progress))
+
+    def transcribe_json_once(self, audio_bytes, prompt, schema, model, cancel=None, references=None, progress=None):
+        """Transcript-only primitive; GeminiTranscriber owns retry/backoff/key rotation."""
+        return self._transcribe_json(audio_bytes, prompt, schema, model, cancel, references, progress,
+            lambda operation: self._request_once(operation, cancel))
 
     def generate_json(self, system, prompt, schema, model, cancel=None):
         """Text-only requests for translation and its context analysis; no media input."""

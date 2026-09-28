@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event
 
 from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
+from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.cache import atomic_json, check_cancel, content_hash
 from cartoon_sub.prompts import read
 from cartoon_sub.speaker.service import detect_overlaps
@@ -16,6 +17,7 @@ from cartoon_sub.subtitle.models import Segment
 PROMPT_VERSION = "zh-utterance-v2"
 SPEAKER_DETECTION_VERSION = "voice-reference-v1"
 CHUNK_SECONDS = 60
+TRANSCRIPT_GEMINI_BACKOFF_SECONDS = (2, 4, 8, 16, 32)
 PROMPT = read("transcription_v2.txt")
 SCHEMA = {"type":"OBJECT", "properties":{"segments":{"type":"ARRAY","items":{
     "type":"OBJECT","properties":{
@@ -27,6 +29,45 @@ SCHEMA = {"type":"OBJECT", "properties":{"segments":{"type":"ARRAY","items":{
     "required":["id","start","end","speaker_id","zh","overlap","overlap_group","speaker_confidence","transcript_confidence"]}}},"required":["segments"]}
 
 log = logging.getLogger(__name__)
+
+
+def classify_gemini_error(exc):
+    """Stable Transcript-only classification; never parses SDK error strings."""
+    if isinstance(exc, CancelledError):
+        return "CANCELLED"
+    if isinstance(exc, TranscriptValidationError):
+        return "VALIDATION"
+    if getattr(exc, "status_code", None) in (408, 429, 500, 502, 503, 504):
+        return "TRANSIENT"
+    if getattr(exc, "category", None) in ("AUTH", "PERMISSION", "BAD_REQUEST", "MODEL_NOT_FOUND"):
+        return exc.category
+    if getattr(exc, "status_code", None) is not None:
+        return "UNKNOWN"
+    if getattr(exc, "category", None) == "TRANSIENT" or getattr(exc, "retryable", False):
+        return "TRANSIENT"
+    return "UNKNOWN"
+
+
+def _wait_for_transcript_retry(cancel, seconds, report, message):
+    """Interruptible one-second countdown, called from the existing worker thread."""
+    for remaining in range(seconds, 0, -1):
+        report(f"{message} Thử lại sau {remaining} giây…")
+        if cancel.wait(1):
+            check_cancel(cancel)
+    check_cancel(cancel)
+
+
+def _transcript_exhausted_error(last_error, key_count):
+    detail = str(last_error) if last_error else "Gemini không phản hồi."
+    keys = f" Đã thử {key_count} API key." if key_count > 1 else ""
+    schedule = ", ".join(f"{seconds}s" for seconds in TRANSCRIPT_GEMINI_BACKOFF_SECONDS)
+    return GeminiError(
+        f"Gemini vẫn không khả dụng sau {len(TRANSCRIPT_GEMINI_BACKOFF_SECONDS)} lần thử lại "
+        f"({schedule})." + keys + f"\n\nLỗi cuối:\n{detail}\n\n"
+        "Các đoạn transcript đã hoàn tất vẫn được giữ trong cache; hãy chạy lại để tiếp tục.",
+        status_code=getattr(last_error, "status_code", None),
+        category=getattr(last_error, "category", "TRANSIENT"),
+    )
 
 
 class TranscriptValidationError(GeminiError):
@@ -151,6 +192,9 @@ class GeminiTranscriber:
                             state = json.loads(path.read_text(encoding="utf-8"))
                             if state.get("status") == "completed":
                                 local = validate_response(state["response"], duration)
+                                for cached, segment in zip(state["response"]["segments"], local):
+                                    if cached.get("tts_cache_key"):
+                                        segment.tts_cache_key = cached["tts_cache_key"]
                             else:
                                 state = None
                         except (ValueError, KeyError, AttributeError, GeminiError):
@@ -168,52 +212,114 @@ class GeminiTranscriber:
                         if client is None:
                             client = self.client_factory(self.key_provider())
                         correction = ""
-                        for attempt in range(self.retry_count + 1):
-                            check_cancel(cancel)
-                            report(f"Transcribing chunk {chunk_index + 1}/{total}, lần {attempt + 1}")
-                            atomic_json(path, {"status": "running", "attempt": attempt + 1})
-                            payload = None
-                            try:
-                                payload = client.transcribe_json(
-                                    buffer.getvalue(),
-                                    PROMPT + f"\nTARGET AUDIO duration: {duration:.6f} seconds. Known IDs: "
-                                             f"{sorted({s.speaker_id for s in result})}" + correction,
-                                    SCHEMA, self.model, cancel=cancel, references=references, progress=report)
-                                raw_start, raw_end = _raw_time_range(payload)
-                                log.info(
-                                    "[TRANSCRIPT TRACE] chunk_index=%d raw_model_start=%s raw_model_end=%s "
-                                    "validation_duration=%.6f cache_used=False cache_timestamp_basis=relative",
-                                    chunk_index, raw_start, raw_end, duration,
-                                )
-                                local = validate_response(payload, duration)
+                        managed_gemini_retry = getattr(client, "managed_transcript_retry", False) is True
+                        key_count = (max(1, int(client.transcript_key_count)) if managed_gemini_retry else 1)
+                        key_indexes = range(key_count) if managed_gemini_retry else range(1)
+                        completed = False
+                        last_transient = None
+                        for key_index in key_indexes:
+                            if managed_gemini_retry:
                                 check_cancel(cancel)
-                                response = {"segments": [{k: v for k, v in asdict(s).items() if k != "vi"}
-                                                         for s in local]}
-                                atomic_json(path, {"status": "completed", "response": response})
-                                break
-                            except GeminiError as exc:
-                                failure = {"status": "failed", "attempt": attempt + 1, "error": str(exc),
-                                           "duration": duration, "chunk": chunk_index + 1}
-                                if isinstance(exc, TranscriptValidationError):
+                                client.select_transcript_key(key_index)
+                            transient_index = 0
+                            max_attempts = (len(TRANSCRIPT_GEMINI_BACKOFF_SECONDS) + 1
+                                            if managed_gemini_retry else self.retry_count + 1)
+                            validation_failures = 0
+                            for attempt in range(max_attempts):
+                                check_cancel(cancel)
+                                key_label = (f", key {key_index + 1}/{key_count}"
+                                             if managed_gemini_retry and key_count > 1 else "")
+                                if managed_gemini_retry and attempt:
+                                    report(f"Transcript {chunk_index + 1}/{total} • Thử lại "
+                                           f"{attempt}/{len(TRANSCRIPT_GEMINI_BACKOFF_SECONDS)}{key_label}")
+                                else:
+                                    report(f"Transcribing chunk {chunk_index + 1}/{total}, lần {attempt + 1}{key_label}")
+                                log.info(
+                                    "[GEMINI RETRY] feature=transcript chunk=%d/%d attempt=%d/%d key_index=%d/%d",
+                                    chunk_index + 1, total, attempt + 1, max_attempts, key_index + 1, key_count,
+                                )
+                                atomic_json(path, {"status": "running", "attempt": attempt + 1})
+                                payload = None
+                                try:
+                                    transcribe = (client.transcribe_json_once if managed_gemini_retry
+                                                  else client.transcribe_json)
+                                    payload = transcribe(
+                                        buffer.getvalue(),
+                                        PROMPT + f"\nTARGET AUDIO duration: {duration:.6f} seconds. Known IDs: "
+                                                 f"{sorted({s.speaker_id for s in result})}" + correction,
+                                        SCHEMA, self.model, cancel=cancel, references=references, progress=report)
                                     raw_start, raw_end = _raw_time_range(payload)
-                                    log.warning(
+                                    log.info(
                                         "[TRANSCRIPT TRACE] chunk_index=%d raw_model_start=%s raw_model_end=%s "
-                                        "normalized_start=N/A normalized_end=N/A validation_duration=%.6f "
-                                        "cache_used=False cache_timestamp_basis=relative error=%s",
-                                        chunk_index, raw_start, raw_end, duration, exc,
+                                        "validation_duration=%.6f cache_used=False cache_timestamp_basis=relative",
+                                        chunk_index, raw_start, raw_end, duration,
                                     )
-                                    failure["raw_response"] = (payload if isinstance(payload, str)
-                                                               else json.dumps(payload, ensure_ascii=False))
-                                    correction = ("\nYour previous response failed local validation: " + str(exc)
-                                                  + "\nTranscribe the same audio again. Correct the indicated field; "
-                                                    "use decimal seconds within the audio duration, short phrases, "
-                                                    "and non-empty Chinese text. Do not invent or drop speech to bypass validation.")
-                                atomic_json(path, failure)
-                                if not exc.retryable or attempt >= self.retry_count:
-                                    raise
-                                report(f"Đoạn {chunk_index + 1}: thử lại sau {2 ** (attempt + 1)} giây…")
-                                if cancel.wait(2 ** (attempt + 1)):
+                                    local = validate_response(payload, duration)
                                     check_cancel(cancel)
+                                    response = {"segments": [{k: v for k, v in asdict(s).items() if k != "vi"}
+                                                             for s in local]}
+                                    atomic_json(path, {"status": "completed", "response": response})
+                                    completed = True
+                                    break
+                                except GeminiError as exc:
+                                    failure = {"status": "failed", "attempt": attempt + 1, "error": str(exc),
+                                               "duration": duration, "chunk": chunk_index + 1}
+                                    if isinstance(exc, TranscriptValidationError):
+                                        raw_start, raw_end = _raw_time_range(payload)
+                                        log.warning(
+                                            "[TRANSCRIPT TRACE] chunk_index=%d raw_model_start=%s raw_model_end=%s "
+                                            "normalized_start=N/A normalized_end=N/A validation_duration=%.6f "
+                                            "cache_used=False cache_timestamp_basis=relative error=%s",
+                                            chunk_index, raw_start, raw_end, duration, exc,
+                                        )
+                                        failure["raw_response"] = (payload if isinstance(payload, str)
+                                                                   else json.dumps(payload, ensure_ascii=False))
+                                        correction = ("\nYour previous response failed local validation: " + str(exc)
+                                                      + "\nTranscribe the same audio again. Correct the indicated field; "
+                                                        "use decimal seconds within the audio duration, short phrases, "
+                                                        "and non-empty Chinese text. Do not invent or drop speech to bypass validation.")
+                                    atomic_json(path, failure)
+                                    category = classify_gemini_error(exc)
+                                    if category == "VALIDATION":
+                                        validation_failures += 1
+                                        if validation_failures > self.retry_count or attempt + 1 >= max_attempts:
+                                            raise
+                                        continue
+                                    if not managed_gemini_retry:
+                                        if not exc.retryable or attempt >= self.retry_count:
+                                            raise
+                                        delay = 2 ** (attempt + 1)
+                                        report(f"Đoạn {chunk_index + 1}: thử lại sau {delay} giây…")
+                                        if cancel.wait(delay):
+                                            check_cancel(cancel)
+                                        continue
+                                    if category != "TRANSIENT":
+                                        raise
+                                    last_transient = exc
+                                    status = getattr(exc, "status_code", None)
+                                    log.warning(
+                                        "[GEMINI RETRY] feature=transcript chunk=%d/%d attempt=%d/%d status=%s",
+                                        chunk_index + 1, total, attempt + 1, max_attempts,
+                                        status if status is not None else "network",
+                                    )
+                                    if transient_index >= len(TRANSCRIPT_GEMINI_BACKOFF_SECONDS):
+                                        break
+                                    configured_delay = TRANSCRIPT_GEMINI_BACKOFF_SECONDS[transient_index]
+                                    retry_after = getattr(exc, "retry_after_seconds", None) or 0
+                                    delay = max(configured_delay, math.ceil(retry_after))
+                                    transient_index += 1
+                                    log.info("[GEMINI RETRY] feature=transcript waiting=%ds", delay)
+                                    countdown_key = (f" • key {key_index + 1}/{key_count}"
+                                                     if key_count > 1 else "")
+                                    _wait_for_transcript_retry(
+                                        cancel, delay, report,
+                                        f"Transcript {chunk_index + 1}/{total} • Gemini "
+                                        f"{status if status is not None else 'network'}{countdown_key} •",
+                                    )
+                            if completed:
+                                break
+                        if not completed:
+                            raise _transcript_exhausted_error(last_transient, key_count)
                     offset = chunk_index * CHUNK_SECONDS
                     base_id = len(result)
                     raw_start = min((s.start for s in local), default=None)
