@@ -59,7 +59,14 @@ class FakeStore:
         self.folder = Path(folder)
 
     def load(self):
-        return AISettings(translation_model="model", translation_provider="openai")
+        return AISettings(default_ai_model="vendor/model", translation_model="model",
+                          translation_provider="openai")
+
+    def openrouter_catalog_cache(self):
+        return {"models": [{
+            "id": "vendor/model", "name": "Test",
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+        }]}
 
     def get_key(self, provider):
         return "test"

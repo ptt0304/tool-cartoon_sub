@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from uuid import uuid4
 from cartoon_sub.media.ffmpeg import FFmpeg
@@ -14,27 +14,84 @@ from cartoon_sub.project.paths import ProjectPaths
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.subtitle.parser import export_canonical_srt
 from cartoon_sub.transcription.gemini_transcriber import GeminiTranscriber, PROMPT_VERSION
+from cartoon_sub.transcription.segmentation_normalizer import TRANSCRIPT_SEGMENTATION_VERSION
+from cartoon_sub.transcription.semantic_boundary_resolver import (
+    ChineseSemanticBoundaryResolver,
+    SEMANTIC_BOUNDARY_VERSION,
+)
 from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.openai_transcription_client import OpenAITranscriptionClient
-from cartoon_sub.speaker.service import refresh_timeline, reconcile_overlaps, capture_initial_speaker_state
+from cartoon_sub.ai.openrouter_client import OpenRouterTranscriptionClient
+from cartoon_sub.speaker.service import reconcile_overlaps, capture_initial_speaker_state
+from cartoon_sub.speaker.resolution_service import SpeakerResolutionService
 
 log = logging.getLogger(__name__)
 
 
-TRANSCRIPTION_CLIENTS = {"gemini": GeminiClient, "openai": OpenAITranscriptionClient}
+TRANSCRIPTION_CLIENTS = {"gemini": GeminiClient, "openai": OpenAITranscriptionClient,
+                         "openrouter": OpenRouterTranscriptionClient}
+
+
+def resolve_transcript_stt_settings(settings):
+    """Resolve the dedicated Transcript override before any media/API work."""
+    override = str((settings.tab_model_overrides or {}).get("transcript_stt", "") or "").strip()
+    model = override or str(settings.transcription_model or "").strip()
+    if not model:
+        raise ValueError(
+            "Chưa chọn model STT.\n"
+            "Hãy chọn model STT tại tab Transcript hoặc trong Settings → AI."
+        )
+    if override:
+        return replace(settings, transcription_provider="openrouter", transcription_model=model)
+    return settings
+
+
+def transcript_timeline_signature(rows):
+    return [(row.id, round(row.start, 6), round(row.end, 6), row.zh, row.speaker_id)
+            for row in rows]
+
+
+def invalidate_transcript_dependents(project):
+    """Invalidate only derived state; source media and raw STT cache stay valid."""
+    project.speakers = {}
+    project.speaker_review_hash = ""
+    project.speaker_review_initial_state = {}
+    project.context_proposal = {}
+    project.context_proposal_hash = ""
+    project.context_proposal_config_hash = ""
+    project.context_status = "stale" if project.context_source_hash else "not_started"
+    project.visual_context_status = "stale" if project.context_source_hash else "not_started"
+    project.visual_context_signature = ""
+    project.visual_context_error = ""
+    if project.translation_status != "not_started":
+        project.translation_status = "stale"
+    project.translation_notes = {}
+    project.translation_qa = {}
+    project.segmentation_cache = {}
+    project.final_audio_status = "stale" if project.final_audio_status != "not_generated" else "not_generated"
+    project.final_audio_fingerprint = ""
+    project.cache_hashes.pop("translation", None)
+    project.cache_hashes.pop("translation_run", None)
+    project.chunk_states.pop("translation", None)
 
 
 def resolve_transcription_client(settings, settings_store):
     from cartoon_sub.ai.text_client import model_metadata
     provider = settings.transcription_provider
-    metadata = model_metadata(provider, settings.transcription_model)
-    if not metadata or not metadata["capabilities"]["transcription"]:
-        raise ValueError("Model đã chọn không có capability audio transcription.")
+    if provider == "openrouter":
+        if not settings.transcription_model or "/" not in settings.transcription_model:
+            raise ValueError("Hãy chọn model OpenRouter Speech-to-Text trong Settings > AI.")
+    else:
+        metadata = model_metadata(provider, settings.transcription_model)
+        if not metadata or not metadata["capabilities"]["transcription"]:
+            raise ValueError("Model đã chọn không có capability audio transcription.")
     client_factory = TRANSCRIPTION_CLIENTS.get(provider)
     if client_factory is None:
         raise ValueError("Provider/model này chưa được Cartoon_Sub hỗ trợ audio transcription.")
     if provider == "gemini":
         key_provider = lambda: settings_store.get_gemini_keys(settings)
+    elif provider == "openrouter":
+        key_provider = settings_store.openrouter_key_pool
     else:
         key_provider = lambda: (settings_store.get_api_key(provider, settings) if settings.api_key_file
                                 else settings_store.get_key(provider))
@@ -71,13 +128,21 @@ class TranscriptionPipeline:
         if project.transcription_status == "imported":
             raise ValueError("Project đã import SRT: không gọi AI transcription.")
         project = Project.from_dict(project.to_dict())
+        if any(row.canonical_edit_source == "manual_split" for row in project.utterances):
+            report = progress or (lambda text: None)
+            report("Giữ timeline đã Tách dòng thủ công; không chạy lại STT/segmentation.")
+            return project, Path(directory)
         # Re-probe here so projects created by older versions remain safe.
         # This happens before extraction and before constructing the transcriber.
         probe(project.source_video_path, cancel=cancel, progress=progress, require_audio=True)
+        settings = resolve_transcript_stt_settings(self.settings_store.load())
         paths = ProjectPaths(directory).ensure()
         directory = paths.root
-        settings = self.settings_store.load()
         provider, key_provider, client_factory = resolve_transcription_client(settings, self.settings_store)
+        log.info("[OPENROUTER STT] %s", settings.transcription_model)
+        log.info("[AI MODEL] feature=TRANSCRIPTION tab=transcript effective_model=%s "
+                 "selection_source=SPECIALIZED_STT required_capabilities=transcription",
+                 settings.transcription_model)
         report = progress or (lambda text: None)
         report("Kiểm tra hash video và audio cache…")
         source_hash = file_hash(project.source_video_path, cancel)
@@ -122,12 +187,26 @@ class TranscriptionPipeline:
                                                    client_factory)
             segments = transcriber.transcribe(audio_path, cancel=cancel, progress=report)
             check_cancel(cancel)
+            raw_result = getattr(transcriber, "last_raw_result", None)
+            semantic_stats = None
+            if isinstance(raw_result, dict) and raw_result.get("segments"):
+                resolved = ChineseSemanticBoundaryResolver(
+                    self.settings_store,
+                    directory / "cache" / "transcription_semantic",
+                ).resolve(
+                    raw_result["segments"], segments,
+                    words=raw_result.get("words"), source="stt",
+                    cancel=cancel, progress=report,
+                )
+                segments = resolved.utterances
+                semantic_stats = resolved.stats
+                check_cancel(cancel)
         except Exception as exc:
             project.transcription_status = "cancelled" if isinstance(exc, CancelledError) else "failed"
             manager.save(project, directory)
             raise
-        same_text = [(s.id, s.zh) for s in project.segments] == [(s.id, s.zh) for s in segments]
-        if same_text:
+        same_timeline = transcript_timeline_signature(project.segments) == transcript_timeline_signature(segments)
+        if same_timeline:
             # A repeated cached transcription must not erase a finished translation.
             for source, target in zip(project.segments, segments):
                 target.vi_subtitle,target.vi_dubbing=source.vi_subtitle,source.vi_dubbing
@@ -137,27 +216,38 @@ class TranscriptionPipeline:
                 target.semantic_compression=source.semantic_compression
                 target.meaning_preservation=source.meaning_preservation
                 target.dubbing_status="stale" if source.dubbing_optimized else source.dubbing_status
-        elif project.translation_status != "not_started":
-            project.translation_status = "stale"
-            project.translation_notes = {}
+        else:
+            invalidate_transcript_dependents(project)
         project.segments = segments
-        # A fresh diarization proposal must always be reviewed, even if the words match.
-        project.speaker_review_hash=""
-        if not same_text:
-            project.speakers={}
+        if not same_timeline:
             for segment in segments: segment.translation_mode=project.dubbing_settings.get("mode","balanced_dubbing")
-        refresh_timeline(project)
+        speaker_stats = SpeakerResolutionService().resolve(project, provider)
         reconcile_overlaps(project.segments)
-        capture_initial_speaker_state(project, replace=not same_text or not project.speaker_review_initial_state)
+        capture_initial_speaker_state(project, replace=not same_timeline or not project.speaker_review_initial_state)
         project.transcription_status = "completed" if segments else "no_speech"
         project.selected_models["transcription"] = settings.transcription_model
         project.selected_models["transcription_provider"] = provider
-        project.cache_hashes["transcription"] = content_hash({"source": source_hash,
-            "provider": provider, "model": settings.transcription_model, "version": PROMPT_VERSION})
+        raw_fingerprint = content_hash({"source": source_hash, "provider": provider,
+            "model": settings.transcription_model, "version": PROMPT_VERSION})
+        project.cache_hashes["transcription_raw"] = raw_fingerprint
+        project.cache_hashes["transcription"] = content_hash({
+            "raw": raw_fingerprint, "segmentation_version": TRANSCRIPT_SEGMENTATION_VERSION})
+        if semantic_stats and semantic_stats.ambiguous_regions:
+            project.selected_models["semantic_boundary"] = semantic_stats.model
+            project.cache_hashes["transcript_semantic"] = content_hash({
+                "version": SEMANTIC_BOUNDARY_VERSION,
+                "model": semantic_stats.model,
+                "timeline": transcript_timeline_signature(segments),
+            })
         manager.save(project, directory)
         save_subtitle_artifacts(project, directory)
         if project.translation_status != "not_started":
             from cartoon_sub.translation.artifacts import save_translation_artifacts
             save_translation_artifacts(project, directory)
+        report(SpeakerResolutionService.message(speaker_stats))
+        if semantic_stats and semantic_stats.ambiguous_regions:
+            report(f"Semantic boundaries: {semantic_stats.ambiguous_regions} vùng; "
+                   f"+{semantic_stats.added}/-{semantic_stats.removed}; "
+                   f"request={semantic_stats.requests}, cache={semantic_stats.cache_hits}.")
         report(f"Hoàn tất {len(segments)} subtitle. Đã lưu subtitle/zh.srt và segments.json.")
         return project, directory

@@ -27,7 +27,7 @@ class IterativeSegmentationTests(unittest.TestCase):
 
     def test_real_cases_recursively_satisfy_hard_limits_and_log_children(self):
         semantic = Mock()
-        service = SubtitleSegmentationService(semantic)
+        service = SubtitleSegmentationService()
         project = self.project()
         service.update_settings(project, SegmentationProfile.CUSTOM, settings())
         with self.assertLogs("cartoon_sub.subtitle.segmentation_service", level="INFO") as captured:
@@ -44,7 +44,7 @@ class IterativeSegmentationTests(unittest.TestCase):
         semantic.split.assert_not_called()
 
     def test_settings_changes_propagate_and_second_run_is_idempotent(self):
-        service = SubtitleSegmentationService(Mock())
+        service = SubtitleSegmentationService()
         project = self.project()
         snapshots = {}
         for maximum in (18, 14, 10):
@@ -61,7 +61,7 @@ class IterativeSegmentationTests(unittest.TestCase):
                                           for child in row.display_segments] for row in project.utterances])
 
     def test_matching_cache_does_not_skip_an_auto_child_that_still_fails_hard_limits(self):
-        service = SubtitleSegmentationService(Mock())
+        service = SubtitleSegmentationService()
         project = self.project()
         service.update_settings(project, SegmentationProfile.CUSTOM, settings())
         utterance = project.utterances[0]
@@ -81,16 +81,17 @@ class IterativeSegmentationTests(unittest.TestCase):
         self.assertTrue(all(not service._requires_hard_split(child, active)
                             for child in utterance.display_segments))
 
-    def test_duration_only_warning_does_not_fragment_short_readable_text(self):
-        service = SubtitleSegmentationService(Mock())
+    def test_hard_max_duration_requires_a_deterministic_split(self):
+        service = SubtitleSegmentationService()
         text = "Gâu gâu gâu, to, to, to, to, kêu kêu kêu."
         utterance = Utterance(101, 0, 5.1, "原文", vi_subtitle=text, vi_dubbing=text)
         project = Project("duration-only", "source.mp4", segments=[utterance],
                           subtitle_text_source="vi_dubbing")
         service.update_settings(project, SegmentationProfile.CUSTOM, settings())
         service.auto_segment(project)
-        self.assertEqual([child.vi_text for child in utterance.display_segments], [text])
-        self.assertEqual(utterance.display_segments[0].qc_flags, ["TOO_LONG"])
+        self.assertGreater(len(utterance.display_segments), 1)
+        self.assertEqual("".join(child.vi_text for child in utterance.display_segments), text)
+        self.assertTrue(all(child.duration <= 5 for child in utterance.display_segments))
 
 
 if __name__ == "__main__":

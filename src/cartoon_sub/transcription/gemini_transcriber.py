@@ -13,6 +13,12 @@ from cartoon_sub.project.cache import atomic_json, check_cancel, content_hash
 from cartoon_sub.prompts import read
 from cartoon_sub.speaker.service import detect_overlaps
 from cartoon_sub.subtitle.models import Segment
+from cartoon_sub.transcription.contracts import (
+    normalize_confidence,
+    normalize_speaker_hint,
+    normalize_word_timestamps,
+)
+from cartoon_sub.transcription.segmentation_normalizer import TranscriptSegmentationNormalizer
 
 PROMPT_VERSION = "zh-utterance-v2"
 SPEAKER_DETECTION_VERSION = "voice-reference-v1"
@@ -124,9 +130,10 @@ def validate_response(payload, duration):
         if end > duration + 0.001:
             raise TranscriptValidationError(f"dòng {index}, end={end:.3f}s vượt độ dài audio {duration:.3f}s")
         try:
-            segment = Segment(index, start, end, item["zh"], speaker_id=item.get("speaker_id", "SPK_UNKNOWN"),
-                speaker_confidence=item.get("speaker_confidence"),
-                transcript_confidence=item.get("transcript_confidence"))
+            segment = Segment(index, start, end, item["zh"],
+                speaker_id=normalize_speaker_hint(item.get("speaker_id", "SPK_UNKNOWN")),
+                speaker_confidence=normalize_confidence(item.get("speaker_confidence")),
+                transcript_confidence=normalize_confidence(item.get("transcript_confidence")))
         except ValueError:
             raise TranscriptValidationError(f"dòng {index}, speaker_id hoặc confidence không hợp lệ") from None
         segments.append(segment)
@@ -157,12 +164,17 @@ class GeminiTranscriber:
         self.cache_directory = Path(cache_directory)
         self.retry_count = retry_count
         self.client_factory = client_factory
+        self.last_raw_result = None
 
     def transcribe(self, audio_path, *, cancel=None, progress=None):
         cancel = cancel or Event()
         report = progress or (lambda text: None)
         client = None
         result = []
+        raw_segments = []
+        raw_words = []
+        languages = []
+        capabilities = set()
         references = {}
         try:
             with wave.open(str(audio_path), "rb") as audio:
@@ -191,8 +203,9 @@ class GeminiTranscriber:
                         try:
                             state = json.loads(path.read_text(encoding="utf-8"))
                             if state.get("status") == "completed":
-                                local = validate_response(state["response"], duration)
-                                for cached, segment in zip(state["response"]["segments"], local):
+                                response = state["response"]
+                                local = validate_response(response, duration)
+                                for cached, segment in zip(response["segments"], local):
                                     if cached.get("tts_cache_key"):
                                         segment.tts_cache_key = cached["tts_cache_key"]
                             else:
@@ -258,6 +271,11 @@ class GeminiTranscriber:
                                     check_cancel(cancel)
                                     response = {"segments": [{k: v for k, v in asdict(s).items() if k != "vi"}
                                                              for s in local]}
+                                    if isinstance(payload, dict):
+                                        for metadata_key in ("language", "words", "transcription_capabilities",
+                                                             "transcription_provider"):
+                                            if metadata_key in payload:
+                                                response[metadata_key] = payload[metadata_key]
                                     atomic_json(path, {"status": "completed", "response": response})
                                     completed = True
                                     break
@@ -320,7 +338,23 @@ class GeminiTranscriber:
                                 break
                         if not completed:
                             raise _transcript_exhausted_error(last_transient, key_count)
+                    raw_local = list(local)
+                    raw_word_local = normalize_word_timestamps(response.get("words"), duration)
+                    if response.get("language"):
+                        languages.append(response["language"])
+                    capabilities.update(response.get("transcription_capabilities", []))
+                    # The completed cache remains raw provider-neutral evidence.
+                    # Segmentation is deliberately recomputed so algorithm changes
+                    # never require another paid STT request.
+                    local = TranscriptSegmentationNormalizer().normalize(
+                        local, response.get("words"), response.get("language", "zh"), source="stt")
                     offset = chunk_index * CHUNK_SECONDS
+                    raw_segments.extend(replace(s, id=len(raw_segments) + i,
+                                                start=s.start + offset, end=s.end + offset)
+                                        for i, s in enumerate(raw_local, 1))
+                    raw_words.extend({**word, "start": word["start"] + offset,
+                                      "end": word["end"] + offset}
+                                     for word in raw_word_local)
                     base_id = len(result)
                     raw_start = min((s.start for s in local), default=None)
                     raw_end = max((s.end for s in local), default=None)
@@ -350,6 +384,12 @@ class GeminiTranscriber:
                         references[segment.speaker_id] = voice.getvalue()
             check_cancel(cancel)
             detect_overlaps(result)
+            self.last_raw_result = {
+                "segments": raw_segments,
+                "words": raw_words,
+                "language": languages[0] if languages else "zh",
+                "transcription_capabilities": sorted(capabilities),
+            }
             return result
         finally:
             if client is not None:

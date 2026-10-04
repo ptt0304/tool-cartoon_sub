@@ -41,11 +41,9 @@ PROVIDER_CATALOG = {
         _model("claude-opus-5", text=True, vision=True),
         _model("claude-fable-5", text=True, vision=True),
     )},
-    "openrouter": {"name": "OpenRouter", "key_name": "openrouter_key", "url": "https://openrouter.ai/api/v1/chat/completions", "models": (
-        _model("openai/gpt-5.6-sol", text=True, vision=True),
-        _model("anthropic/claude-sonnet-5", text=True, vision=True),
-        _model("google/gemini-3.8-flash", text=True, vision=True),
-    )},
+    # Models are loaded dynamically from OpenRouter's /models endpoint.
+    "openrouter": {"name": "OpenRouter", "key_name": "openrouter_key",
+                   "url": "https://openrouter.ai/api/v1/chat/completions", "models": ()},
     "deepseek": {"name": "DeepSeek", "key_name": "deepseek_key", "url": "https://api.deepseek.com/chat/completions", "models": (
         _model("deepseek-v4-pro", text=True),
         _model("deepseek-flash", text=True, vision=True),
@@ -91,7 +89,7 @@ for _provider in PROVIDER_CATALOG.values():
 
 PROVIDERS = {provider: (item["name"], item["url"], next(model["id"] for model in item["models"]
                                                          if model["capabilities"]["text"]))
-             for provider, item in PROVIDER_CATALOG.items() if provider != "gemini"}
+             for provider, item in PROVIDER_CATALOG.items() if provider not in ("gemini", "openrouter")}
 MODEL_PRESETS = {provider: tuple(model["id"] for model in item["models"])
                  for provider, item in PROVIDER_CATALOG.items()}
 
@@ -150,8 +148,14 @@ class TextProviderClient:
         return f"Kết nối {provider_label(self.provider)} thành công; đã gửi một request thử nhỏ."
 
 
-def text_client_factory(provider):
-    return lambda key: TextProviderClient(provider, key)
+def text_client_factory(provider, models=None):
+    if provider == "openrouter":
+        from cartoon_sub.ai.openrouter_client import openrouter_client_factory
+        return openrouter_client_factory(models)
+    raise ValueError(
+        "Cấu hình AI text cũ chưa được ánh xạ sang OpenRouter; "
+        "hãy mở Settings > AI và chọn model từ catalog đã đồng bộ."
+    )
 
 
 class ProviderModelClient:

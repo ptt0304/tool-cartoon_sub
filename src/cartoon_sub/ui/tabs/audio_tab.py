@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem
+from cartoon_sub.ui.cache_status_widget import CacheStatusBox
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ class AudioPage(QWidget):
     retry_start_requested = Signal()
     select_exe_requested = Signal()
     batch_voice_requested = Signal(list, object)
+    tts_source_changed = Signal(str)
+    cache_clear_requested = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -47,6 +50,25 @@ class AudioPage(QWidget):
         scroll.setWidgetResizable(True)
         self.container = QWidget()
         layout = QVBoxLayout(self.container)
+        model_row = QHBoxLayout(); self.ai_model_search = QLineEdit(); self.ai_model = QComboBox(); self.ai_model_effective = QLabel()
+        self.ai_model_search.setPlaceholderText("Tìm model theo provider, tên hoặc ID…")
+        model_row.addWidget(QLabel("Model AI cho tab")); model_row.addWidget(self.ai_model_search, 1); model_row.addWidget(self.ai_model, 2)
+        self.reset_ai_button = QPushButton("Xóa dữ liệu AI / Chạy lại")
+        model_row.addWidget(self.ai_model_effective); model_row.addWidget(self.reset_ai_button); layout.addLayout(model_row)
+        self.cache_status = CacheStatusBox(); layout.addWidget(self.cache_status)
+        cache_row = QHBoxLayout()
+        self.cache_clear_target = QComboBox()
+        for label, target in (
+            ("TTS — VI Subtitle", "tts_vi_subtitle"),
+            ("TTS — VI Dubbing", "tts_vi_dubbing"),
+            ("Tất cả TTS", "tts_all"),
+            ("Dubbed Audio", "dubbed_audio"),
+            ("Toàn bộ Audio downstream", "audio_all"),
+        ):
+            self.cache_clear_target.addItem(label, target)
+        self.cache_clear_button = QPushButton("Xóa dữ liệu đã chọn")
+        cache_row.addWidget(QLabel("Xóa cache:")); cache_row.addWidget(self.cache_clear_target, 1)
+        cache_row.addWidget(self.cache_clear_button); layout.addLayout(cache_row)
 
         # ----------------------------------------------------
         # Section A: Local_TTS Connection
@@ -88,6 +110,11 @@ class AudioPage(QWidget):
         tts_layout.addLayout(batch_row)
 
         tts_actions = QHBoxLayout()
+        self.tts_source = QComboBox()
+        self.tts_source.addItem("VI Subtitle", "vi_subtitle")
+        self.tts_source.addItem("VI Dubbing", "vi_dubbing")
+        tts_actions.addWidget(QLabel("Nguồn TTS:"))
+        tts_actions.addWidget(self.tts_source)
         self.tts_preview_button = QPushButton("Preview selected voice")
         self.tts_generate_button = QPushButton("Generate / Resume TTS")
         self.tts_mix_button = QPushButton("Build Dubbed Audio")
@@ -205,6 +232,7 @@ class AudioPage(QWidget):
         self.tts_select_exe_button.clicked.connect(self.select_exe_requested.emit)
         self.tts_preview_button.clicked.connect(self._on_preview_clicked)
         self.tts_generate_button.clicked.connect(self.generate_requested.emit)
+        self.tts_source.currentIndexChanged.connect(lambda: self.tts_source_changed.emit(self.tts_source.currentData()))
         self.tts_mix_button.clicked.connect(self.mix_dubbed_requested.emit)
         self.select_all_button.clicked.connect(lambda: self._set_all_checked(True))
         self.clear_selection_button.clicked.connect(lambda: self._set_all_checked(False))
@@ -219,6 +247,8 @@ class AudioPage(QWidget):
 
         self.final_mix_btn.clicked.connect(self._on_final_mix_clicked)
         self.final_play_btn.clicked.connect(self._play_final_audio)
+        self.cache_clear_button.clicked.connect(
+            lambda: self.cache_clear_requested.emit(self.cache_clear_target.currentData()))
 
     def _on_final_mix_clicked(self):
         self.stop_final_audio_playback(release_source=True)
@@ -257,7 +287,7 @@ class AudioPage(QWidget):
     def selected_voice_id(self):
         row = self.tts_table.currentRow()
         combo = self.tts_table.cellWidget(row, 3) if row >= 0 else None
-        return combo.currentData() if combo else None
+        return combo.currentData() if combo and combo.currentData() else self.batch_voice.currentData()
 
     def _set_all_checked(self, checked):
         for row in range(self.tts_table.rowCount()):
@@ -321,6 +351,13 @@ class AudioPage(QWidget):
     def populate(self, project, voices=None, project_dir=None):
         self._project = project
         self._root = Path(project_dir) if project_dir else None
+        if self._root:
+            from cartoon_sub.project.cache_status_service import CacheStatusService
+            self.cache_status.set_statuses(CacheStatusService(project, self._root).audio())
+        source = getattr(project.audio_settings, "tts_text_source", "vi_dubbing")
+        self.tts_source.blockSignals(True)
+        self.tts_source.setCurrentIndex(max(0, self.tts_source.findData(source)))
+        self.tts_source.blockSignals(False)
         if voices is not None:
             self._voices = [v for v in voices if v.get("status") == "READY"]
         ready = {voice["voice_id"]: voice for voice in (self._voices or [])}
@@ -393,7 +430,7 @@ class AudioPage(QWidget):
         overlap_groups = len({row.overlap_group for row in project.utterances if row.overlap_group})
 
         status_text = (
-            f"Generated: {generated}/{len(project.utterances)} • "
+            f"Nguồn TTS: {'VI Subtitle' if source == 'vi_subtitle' else 'VI Dubbing'}\nTTS câu: {generated}/{len(project.utterances)} • "
             f"Sync OK: {sync_ok} • Auto-fit: {auto_fit} • Needs review: {needs_review} • Overlap groups: {overlap_groups}"
         )
         if stale:

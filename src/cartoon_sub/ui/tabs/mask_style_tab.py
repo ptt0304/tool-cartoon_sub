@@ -101,15 +101,11 @@ class MaskCanvas(QWidget):
         p.drawPixmap(rect.toRect(),reduced.scaled(rect.size().toSize(),Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation))
     def draw_preview_subtitle(self,p,r):
         style=self.style;text='Phụ đề mẫu tiếng Việt'
+        if self.mask.width < 2 or self.mask.height < 2:return
         sx=r.width()/self.pixmap.width();sy=r.height()/self.pixmap.height();scale=min(sx,sy)
         font=QFont(style.font);font.setBold(style.bold);font.setPixelSize(max(8,round(style.font_size*scale)))
         path=QPainterPath();path.addText(0,0,font,text);bounds=path.boundingRect()
-        if style.center_in_mask and self.mask.enabled:
-            cx=r.x()+(self.mask.x+self.mask.width/2)*sx;cy=r.y()+(self.mask.y+self.mask.height/2)*sy
-        else:
-            column=(style.alignment-1)%3;row=(style.alignment-1)//3
-            cx=(r.left()+bounds.width()/2+10 if column==0 else r.right()-bounds.width()/2-10 if column==2 else r.center().x())
-            cy=(r.bottom()-style.margin_bottom*sy-bounds.height()/2 if row==0 else r.center().y() if row==1 else r.top()+bounds.height()/2+10)
+        cx=r.x()+(self.mask.x+self.mask.width/2)*sx;cy=r.y()+(self.mask.y+self.mask.height/2)*sy
         path.translate(cx-bounds.center().x(),cy-bounds.center().y())
         if style.shadow:
             shadow=QPainterPath(path);shadow.translate(style.shadow*scale,style.shadow*scale)
@@ -197,12 +193,7 @@ class MaskStylePage(QWidget):
         self.outline=QDoubleSpinBox();self.outline.setRange(0,20);form.addRow('Viền',self.outline)
         self.outline_color=ColorButton('#000000');form.addRow('Màu viền chữ',self.outline_color)
         self.shadow=QDoubleSpinBox();self.shadow.setRange(0,20);form.addRow('Bóng',self.shadow)
-        self.alignment=QComboBox()
-        for i,name in enumerate(['Dưới trái','Dưới giữa','Dưới phải','Giữa trái','Chính giữa','Giữa phải','Trên trái','Trên giữa','Trên phải'],1):self.alignment.addItem(name,i)
-        form.addRow('Vị trí chữ',self.alignment)
         self.margin=QSpinBox();self.margin.setRange(0,32768);form.addRow('Lề dọc',self.margin)
-        self.lines=QSpinBox();self.lines.setRange(1,4);form.addRow('Số dòng tối đa',self.lines)
-        self.center_mask=QCheckBox('Căn phụ đề giữa vùng mask');form.addRow(self.center_mask)
         self.speaker_label_mode=QComboBox()
         self.speaker_label_mode.addItem('Chỉ khi overlap (mặc định)','overlap_only')
         self.speaker_label_mode.addItem('Luôn hiện tên','always')
@@ -233,8 +224,8 @@ class MaskStylePage(QWidget):
             control.valueChanged.connect(self.update_logo);control.editingFinished.connect(self.commit_logo_controls)
         self.logo_scale.editingFinished.connect(self.update_logo_scale)
         for signal in (self.font.currentTextChanged,self.size.valueChanged,self.bold.toggled,self.outline.valueChanged,
-                       self.shadow.valueChanged,self.alignment.currentIndexChanged,self.margin.valueChanged,
-                       self.lines.valueChanged,self.center_mask.toggled,self.speaker_label_mode.currentIndexChanged): signal.connect(self.update_mask)
+                       self.shadow.valueChanged,self.margin.valueChanged,
+                       self.speaker_label_mode.currentIndexChanged): signal.connect(self.update_mask)
         for signal in (self.watermark_text.textChanged,self.watermark_font.currentTextChanged,self.watermark_size.valueChanged,
                        self.watermark_bold.toggled,self.watermark_outline.valueChanged,self.watermark_shadow.valueChanged,
                        self.watermark_transparency.valueChanged,self.watermark_speed.valueChanged): signal.connect(self.update_mask)
@@ -243,10 +234,10 @@ class MaskStylePage(QWidget):
             spin.setKeyboardTracking(False);spin.editingFinished.connect(self.commit_watermark_state)
         for signal in (self.watermark_font.currentIndexChanged,self.watermark_bold.toggled):signal.connect(self.commit_watermark_state)
         self.player.errorOccurred.connect(lambda *args:self.output.setText('Không phát được preview: '+self.player.errorString()))
-        for spin in (*self.coords,self.strength,self.size,self.outline,self.shadow,self.margin,self.lines):
+        for spin in (*self.coords,self.strength,self.size,self.outline,self.shadow,self.margin):
             spin.setKeyboardTracking(False);spin.editingFinished.connect(self.commit_visual_state)
         for signal in (self.enabled.toggled,self.kind.currentIndexChanged,self.font.currentIndexChanged,self.bold.toggled,
-                       self.alignment.currentIndexChanged,self.center_mask.toggled,self.speaker_label_mode.currentIndexChanged,
+                       self.speaker_label_mode.currentIndexChanged,
                        self.mask_color.colorChanged,self.text_color.colorChanged,self.outline_color.colorChanged):
             signal.connect(self.commit_visual_state)
     def set_undo_stack(self,stack,commit=None):
@@ -255,8 +246,9 @@ class MaskStylePage(QWidget):
         for spin,value in zip(self.coords,(x,y,w,h)):spin.setValue(value)
         self.enabled.setChecked(True);self.update_mask();self.commit_visual_state()
     def values(self):
+        legacy_max_lines=getattr(getattr(self._project,'subtitle_style',None),'max_lines',2)
         return (Mask(self.enabled.isChecked(),self.kind.currentData(),*(s.value() for s in self.coords),self.strength.value(),self.mask_color.color()),
-            SubtitleStyle(self.font.currentText(),self.size.value(),self.bold.isChecked(),self.outline.value(),self.shadow.value(),self.alignment.currentData(),self.margin.value(),self.lines.value(),self.center_mask.isChecked(),self.speaker_label_mode.currentData() or 'overlap_only',self.text_color.color(),self.outline_color.color()))
+            SubtitleStyle(self.font.currentText(),self.size.value(),self.bold.isChecked(),self.outline.value(),self.shadow.value(),5,self.margin.value(),legacy_max_lines,True,self.speaker_label_mode.currentData() or 'overlap_only',self.text_color.color(),self.outline_color.color()))
     def overlay_values(self):
         return list(self.canvas.logos), WatermarkStyle(self.watermark_text.text(),self.watermark_font.currentText(),
             self.watermark_size.value(),self.watermark_bold.isChecked(),self.watermark_outline.value(),self.watermark_shadow.value(),
@@ -351,10 +343,8 @@ class MaskStylePage(QWidget):
             self.canvas.mask,self.canvas.style=self.values();self.canvas.update()
             self.canvas.watermark=self.overlay_values()[1]
             has_mask = self.kind.currentData() != 'none'
-            self.center_mask.setEnabled(self.enabled.isChecked())
             self.mask_color.setEnabled(has_mask)
             self.strength.setEnabled(has_mask and self.kind.currentData() != 'solid')
-            if not self.enabled.isChecked() and self.center_mask.isChecked(): self.center_mask.setChecked(False)
     def commit_watermark_state(self,*args):
         if self.loading:return
         state=deepcopy(self.overlay_values()[1]);old=self._committed_watermark
@@ -382,7 +372,7 @@ class MaskStylePage(QWidget):
         self.enabled.setChecked(m.enabled);self.kind.setCurrentIndex(max(0,self.kind.findData(m.kind)));self.mask_color.set_color(m.mask_color);self.strength.setValue(m.strength)
         for spin,value in zip(self.coords,(m.x,m.y,m.width,m.height)):spin.setValue(value)
         if self.font.findText(s.font)<0:self.font.insertItem(0,s.font)
-        self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold);self.text_color.set_color(s.text_color);self.outline.setValue(s.outline);self.outline_color.set_color(s.outline_color);self.shadow.setValue(s.shadow);self.alignment.setCurrentIndex(s.alignment-1);self.margin.setValue(s.margin_bottom);self.lines.setValue(s.max_lines);self.center_mask.setChecked(s.center_in_mask);self.speaker_label_mode.setCurrentIndex(max(0,self.speaker_label_mode.findData(s.speaker_label_mode)))
+        self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold);self.text_color.set_color(s.text_color);self.outline.setValue(s.outline);self.outline_color.set_color(s.outline_color);self.shadow.setValue(s.shadow);self.margin.setValue(s.margin_bottom);self.speaker_label_mode.setCurrentIndex(max(0,self.speaker_label_mode.findData(s.speaker_label_mode)))
         self.loading=False;self.update_mask();self._committed_visual=(deepcopy(m),deepcopy(s))
         if self._project:self._project.mask,self._project.subtitle_style=deepcopy((m,s))
         if self.undo_commit:self.undo_commit()
@@ -398,7 +388,7 @@ class MaskStylePage(QWidget):
         if self.font.findText(s.font) < 0:self.font.insertItem(0,s.font)
         self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold)
         self.text_color.set_color(s.text_color);self.outline_color.set_color(s.outline_color)
-        self.outline.setValue(s.outline);self.shadow.setValue(s.shadow);self.alignment.setCurrentIndex(s.alignment-1);self.margin.setValue(s.margin_bottom);self.lines.setValue(s.max_lines);self.center_mask.setChecked(s.center_in_mask);self.center_mask.setEnabled(m.enabled)
+        self.outline.setValue(s.outline);self.shadow.setValue(s.shadow);self.margin.setValue(s.margin_bottom)
         mode_idx = self.speaker_label_mode.findData(getattr(s, 'speaker_label_mode', 'overlap_only'))
         if mode_idx >= 0: self.speaker_label_mode.setCurrentIndex(mode_idx)
         self.canvas.logos=list(project.logos);self.logo.clear()

@@ -56,15 +56,15 @@ class SegmentationTimingTests(unittest.TestCase):
         self.assertEqual(punctuation_result.timing_source, "character_proportion")
         self.assertEqual(punctuation_result.segments[0].end, 3)
 
-    def test_minimum_duration_rebalance_preserves_outer_timing(self):
+    def test_accurate_word_timing_is_not_rebalanced_to_soft_minimum(self):
         row = self.row("Một hai ba bốn năm sáu", 5)
         plan = self.plan(row, ("Một ", "hai ba bốn ", "năm sáu"))
         words = [{"start": 0, "end": .2}, {"start": .2, "end": 1}, {"start": 1, "end": 2},
                  {"start": 2, "end": 4}, {"start": 4, "end": 4.5}, {"start": 4.5, "end": 5}]
         result = allocate_display_segments(row, plan, word_timestamps=words)
-        self.assertEqual([segment.start for segment in result.segments], [0, 1, 4])
+        self.assertEqual([segment.start for segment in result.segments], [0, .2, 4])
         self.assertEqual(result.segments[-1].end, 5)
-        self.assertTrue(all(segment.duration >= 1 for segment in result.segments))
+        self.assertIn("TOO_SHORT", result.segments[0].qc_flags)
 
     def test_cross_speaker_overlap_remains_independent(self):
         first = self.row("Anh nghe tôi giải thích, chuyện này không phải như anh nghĩ, "

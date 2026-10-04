@@ -9,6 +9,32 @@ from cartoon_sub.project.cache import atomic_json
 
 logger = logging.getLogger(__name__)
 CACHE_MANIFEST_VERSION = 1
+MANIFEST_KEY_SEPARATOR = "::"
+
+
+def segment_manifest_key(cache_key: str, source: str) -> str:
+    if source not in {"vi_subtitle", "vi_dubbing"}:
+        raise ValueError("Nguồn TTS không hợp lệ")
+    return f"{cache_key}{MANIFEST_KEY_SEPARATOR}{source}"
+
+
+def find_segment_entry(segments: dict, cache_key: str, source: str):
+    """Return a source-specific entry, accepting the old dubbing-only key once."""
+    key = segment_manifest_key(cache_key, source)
+    entry = segments.get(key)
+    if entry is not None:
+        return key, entry
+    legacy = segments.get(cache_key)
+    if legacy is not None and legacy.get("source", "vi_dubbing") == source:
+        return cache_key, legacy
+    return key, None
+
+
+def entry_utterance_cache_key(key: str, entry: dict) -> str:
+    stored = entry.get("utterance_cache_key")
+    if isinstance(stored, str) and stored:
+        return stored
+    return key.split(MANIFEST_KEY_SEPARATOR, 1)[0]
 
 
 def manifest_path(project_dir) -> Path:

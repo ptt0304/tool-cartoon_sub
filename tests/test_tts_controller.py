@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from cartoon_sub.app.controller import Controller
@@ -106,6 +107,31 @@ class LocalTTSControllerTests(unittest.TestCase):
             )
             self.assertEqual(missing, ["SPK_01"])
             self.assertEqual(controller.project.speakers["SPK_01"]["tts_voice_id"], "gone")
+
+    def test_generate_stops_after_per_utterance_wav_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = Controller(SettingsStore(folder=root / "settings", vault=Mock()))
+            controller.project = self.project()
+            controller.directory = root
+            controller.manager.save(controller.project, root)
+            result = SimpleNamespace(cached=0, generated=1, needed=1, deleted=0, failed_ids=[])
+            client = Mock()
+            generated = Mock(return_value=result)
+            rewrite = Mock()
+            controller.dubbing_service.rewrite_duration_failures = rewrite
+
+            with (patch("cartoon_sub.app.controller.LocalTTSClient", return_value=client),
+                  patch("cartoon_sub.app.controller.VoiceCalibrationCache"),
+                  patch("cartoon_sub.app.controller.LocalTTSGenerationService") as service_class,
+                  patch("cartoon_sub.app.controller.TTSTimelineMixService") as mix_class):
+                service_class.return_value.generate = generated
+                actual = controller.generate_tts()
+
+            self.assertIs(actual, result)
+            generated.assert_called_once()
+            mix_class.assert_not_called()
+            rewrite.assert_not_called()
 
 
 if __name__ == "__main__":

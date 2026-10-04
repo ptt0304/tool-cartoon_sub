@@ -28,7 +28,11 @@ class CoreTests(unittest.TestCase):
             path = Path(d) / "zh.srt"
             segments = [Segment(1, 1.25, 3.8, "中文\n第二行")]
             export_srt(segments, path)
-            self.assertEqual(import_srt(path), segments)
+            imported = import_srt(path)
+            self.assertEqual(
+                [(row.id, row.start, row.end, row.zh) for row in imported],
+                [(row.id, row.start, row.end, row.zh) for row in segments],
+            )
 
     def test_mock_does_not_mutate_source(self):
         source = [Segment(7, 1, 4, "你好")]

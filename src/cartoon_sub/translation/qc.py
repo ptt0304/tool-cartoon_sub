@@ -2,6 +2,7 @@ import re
 import unicodedata
 from cartoon_sub.project.cache import content_hash
 from cartoon_sub.syllable.target import DubbingSettings, allowed_delta
+from cartoon_sub.translation.prompts import effective_custom_rules
 
 
 HAN_PATTERN = re.compile(
@@ -13,7 +14,7 @@ HAN_RUN_PATTERN = re.compile(
 VIETNAMESE_LETTER = r"A-Za-zÀ-ỹ"
 TRUNCATED_END = re.compile(r"\b(là|của|và|với|để|nhưng|hoặc|rằng)\s*[.!?…]*$", re.IGNORECASE)
 PLACEHOLDER = re.compile(r"(?:\\u[0-9a-fA-F]{4}|\b(?:TODO|FIXME|undefined|null)\b|<[^>]{1,40}>)")
-TRANSLATION_QA_VERSION = 2
+TRANSLATION_QA_VERSION = 3
 UNRESOLVED_TARGETS = {"chưa xác định", "không rõ", "unknown", "n/a", "tbd"}
 
 
@@ -28,11 +29,13 @@ def translation_qa_fingerprint(segment, project=None):
         "target_hash": content_hash(segment.vi_subtitle),
     }
     if project is not None:
-        visual = next((row for row in project.story_context.get("visual_contexts", [])
-                       if row.get("id") == segment.id), None)
-        value["visual_context_hash"] = content_hash({
-            "status": project.visual_context_status,
-            "visual": visual,
+        value["translation_guidance_hash"] = content_hash({
+            "genres": project.translation_genres,
+            "style": project.translation_preset,
+            "proper_name_mode": project.proper_name_mode,
+            "proper_name_rules": project.glossary,
+            "user_defined_context": project.translation_prompt,
+            "active_custom_rules": effective_custom_rules(project),
         })
     return value
 
@@ -43,8 +46,8 @@ def qa_entry_is_current(segment, entry, project=None):
             and entry.get("qa_version") == fingerprint["qa_version"]
             and entry.get("source_hash") == fingerprint["source_hash"]
             and entry.get("target_hash") == fingerprint["target_hash"]
-            and (project is None
-                 or entry.get("visual_context_hash") == fingerprint["visual_context_hash"]))
+            and (project is None or entry.get("translation_guidance_hash")
+                 == fingerprint["translation_guidance_hash"]))
 
 
 def store_qa_result(project, segment, status, issues=None, attempts=0, last_failed_reason=""):
@@ -86,10 +89,6 @@ def store_dubbing_qa_result(project, segment, result):
 
 def _allowed_han_values(project):
     values = [value for value in project.glossary.values() if isinstance(value, str) and HAN_PATTERN.search(value)]
-    context_rows = project.story_context.get("characters", []) + project.story_context.get("terms", [])
-    values.extend(row.get("target", "") for row in context_rows
-                  if isinstance(row, dict) and isinstance(row.get("target"), str)
-                  and HAN_PATTERN.search(row["target"]))
     return sorted(set(filter(None, values)), key=len, reverse=True)
 
 
@@ -143,52 +142,11 @@ def _local_translation_qa(project, segment, target, target_label):
                                  "Còn nguyên cụm Chinese từ source: " + ", ".join(dict.fromkeys(fragments))))
 
     terms = dict(project.glossary)
-    for row in project.story_context.get("characters", []) + project.story_context.get("terms", []):
-        if isinstance(row, dict) and row.get("source") and row.get("target"):
-            terms.setdefault(row["source"], row["target"])
     folded_target = target.casefold()
     for term_source, term_target in terms.items():
         if (term_source in source and _is_resolved_target(term_target)
                 and str(term_target).casefold() not in folded_target):
             issues.append(_issue("TERM_MISMATCH", f"Thuật ngữ chưa theo mapping/context: {term_source} → {term_target}"))
-
-    visual = next((row for row in project.story_context.get("visual_contexts", [])
-                   if row.get("id") == segment.id), None)
-    ambiguous_source = any(token in source for token in ("他", "她", "它", "这个", "那个", "这东西"))
-    if visual is None:
-        if ambiguous_source and project.visual_context_status in {"VISUAL_CONTEXT_UNAVAILABLE", "VISUAL_CONTEXT_FAILED"}:
-            issues.append(_issue("VISUAL_CONTEXT_LOW_CONFIDENCE",
-                                 "Video context chưa khả dụng cho đại từ/referent mơ hồ", "SUSPECT"))
-    else:
-        if visual["speaker"].get("spk_id") != segment.speaker_id:
-            issues.append(_issue("SPEAKER_CHARACTER_MISMATCH",
-                                 f"Visual context gắn {visual['speaker'].get('spk_id')} nhưng timeline là {segment.speaker_id}"))
-        if visual.get("confidence", 0) < 0.70 or visual.get("analysis_status") in {"LOW_CONFIDENCE", "NEED_REVIEW"}:
-            issues.append(_issue("VISUAL_CONTEXT_LOW_CONFIDENCE",
-                                 "Visual context chưa đủ chắc chắn; giữ cách diễn đạt trung tính", "SUSPECT"))
-        male_pronouns = re.compile(r"\b(hắn|anh ấy|ông ấy|cậu ấy|chàng)\b", re.IGNORECASE)
-        female_pronouns = re.compile(r"\b(nàng|cô ấy|chị ấy|em ấy|bà ấy)\b", re.IGNORECASE)
-        for referent in visual.get("referents", []):
-            expression = referent.get("source_expression", "")
-            if expression and expression not in source:
-                continue
-            if referent.get("confidence", 0) < 0.80:
-                continue
-            gender = referent.get("gender_context")
-            if gender == "female" and male_pronouns.search(target):
-                issues.append(_issue("PRONOUN_CONTEXT_MISMATCH",
-                                     f"{expression or 'Referent'} được duyệt là nữ nhưng bản dịch dùng đại từ nam"))
-            elif gender == "male" and female_pronouns.search(target):
-                issues.append(_issue("PRONOUN_CONTEXT_MISMATCH",
-                                     f"{expression or 'Referent'} được duyệt là nam nhưng bản dịch dùng đại từ nữ"))
-        matching_referents = [item for item in visual.get("referents", [])
-                              if item.get("confidence", 0) >= 0.80
-                              and item.get("source_expression") in source
-                              and item.get("character_id")]
-        if ambiguous_source and visual.get("confidence", 0) >= 0.80 and not matching_referents:
-            issues.append(_issue("REFERENT_CONTEXT_MISMATCH",
-                                 "Visual context chưa xác định được referent chắc chắn cho biểu thức mơ hồ",
-                                 "SUSPECT"))
 
     suspect = []
     bracket_pairs = (("(", ")"), ("[", "]"), ("{", "}"), ("“", "”"), ("‘", "’"))
@@ -225,9 +183,6 @@ def local_dubbing_qa(project, segment):
 def review_translation(project):
     warnings = {}
     terms = dict(project.glossary)
-    for row in project.story_context.get("characters", []) + project.story_context.get("terms", []):
-        if row["source"] and row["target"]:
-            terms.setdefault(row["source"], row["target"])
     for segment in project.segments:
         notes = []
         saved = project.translation_qa.get(str(segment.id), {})

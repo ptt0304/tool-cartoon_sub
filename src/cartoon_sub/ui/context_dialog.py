@@ -1,8 +1,11 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit, QTabWidget,
-    QWidget, QFormLayout, QTableWidget, QTableWidgetItem, QPushButton, QMessageBox, QHeaderView)
+    QWidget, QFormLayout, QTableWidget, QTableWidgetItem, QPushButton, QMessageBox, QHeaderView,
+    QFileDialog)
 import json
 import logging
+from pathlib import Path
 from cartoon_sub.translation.context_models import StoryContext
+from cartoon_sub.translation.context_export import export_context_ai_json
 
 
 logger = logging.getLogger(__name__)
@@ -12,10 +15,13 @@ GENDER_CANONICAL = {value.casefold(): key for key, value in GENDER_DISPLAY.items
 
 class ContextDialog(QDialog):
     """The model's proposal never silently replaces the applied context."""
-    def __init__(self, context, valid_ids, parent=None, proposal=False, visual_ready=True):
+    def __init__(self, context, valid_ids, parent=None, proposal=False, visual_ready=True,
+                 speaker_reviewed=True, diagnostic_payload=None, export_directory=None):
         super().__init__(parent)
         self.valid_ids = valid_ids
         self.result_context = None
+        self.diagnostic_payload = diagnostic_payload or {}
+        self.export_directory = Path(export_directory) if export_directory else Path.cwd()
         self.setWindowTitle("Duyệt & lưu ngữ cảnh AI" if proposal else "Ngữ cảnh AI đã duyệt")
         self.resize(1050, 720)
         layout = QVBoxLayout(self)
@@ -89,17 +95,37 @@ class ContextDialog(QDialog):
         visual_layout.addWidget(self.visual_json)
         tabs.addTab(visual_page, "Visual theo ID")
         buttons = QHBoxLayout()
-        cancel, self.apply_button = QPushButton("Đóng, chưa lưu"), QPushButton("Lưu ngữ cảnh")
+        cancel = QPushButton("Đóng, chưa lưu")
+        self.export_button = QPushButton("Export context_ai.json")
+        self.apply_button = QPushButton(
+            "Phê duyệt & lưu ngữ cảnh" if proposal else "Lưu thay đổi ngữ cảnh đã duyệt")
         cancel.clicked.connect(self.reject)
+        self.export_button.clicked.connect(self.export_diagnostic)
         self.apply_button.clicked.connect(self.apply)
         buttons.addWidget(cancel)
+        buttons.addWidget(self.export_button)
         self.save_status = QLabel("")
-        if not visual_ready or not context.get("visual_contexts"):
+        if not speaker_reviewed:
+            self.save_status.setText("Có thể xem/sửa Candidate, nhưng cần hoàn tất Speaker Review trước khi phê duyệt.")
+            self.apply_button.setEnabled(False)
+        elif not visual_ready or not context.get("visual_contexts"):
             self.save_status.setText("Chưa thể lưu — chưa phân tích video thành công.")
             self.apply_button.setEnabled(False)
         buttons.addWidget(self.save_status)
         buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)
+
+    def export_diagnostic(self):
+        default = str(self.export_directory / "context_ai.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Context AI JSON", default, "JSON (*.json)")
+        if not path:
+            return
+        try:
+            export_context_ai_json(self.diagnostic_payload, path)
+            QMessageBox.information(self, "Export Context AI", f"Đã xuất:\n{path}")
+        except (OSError, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Export Context AI", f"Không thể xuất JSON:\n{exc}")
 
     def values(self):
         data = {key: field.toPlainText().strip() for key, field in self.fields.items()}

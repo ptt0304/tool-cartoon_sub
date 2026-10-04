@@ -201,13 +201,14 @@ def review_hash(project):
 
 
 def review_complete(project):
-    return bool(project.segments) and all(s.speaker_id != "SPK_UNKNOWN" for s in project.segments) and project.speaker_review_hash==review_hash(project)
+    # A user may explicitly review an utterance and keep it UNKNOWN.  The
+    # signed complete timeline, not the absence of UNKNOWN, is authoritative.
+    return bool(project.segments) and bool(project.speaker_review_hash) \
+        and project.speaker_review_hash == review_hash(project)
 
 
 def approve_review(project):
     refresh_timeline(project)
-    if any(s.speaker_id=="SPK_UNKNOWN" for s in project.segments):
-        raise ValueError("Còn dòng chưa gán speaker. Chọn các dòng và gán SPK_01… trước khi xác nhận.")
     summary = reconcile_overlaps(project.segments)
     if summary["same_speaker_fixed"]:
         for segment in project.segments:
@@ -251,15 +252,32 @@ def _validated_speaker_state(project, speakers, assignments, require_complete):
         raise ValueError("Speaker assignment không khớp timeline hiện tại")
     if any(speaker_id not in registry for speaker_id in normalized.values()):
         raise ValueError("Speaker assignment tham chiếu SPK không tồn tại")
-    if require_complete and any(speaker_id == UNKNOWN_SPEAKER for speaker_id in normalized.values()):
-        raise ValueError("Còn dòng chưa gán speaker. Chọn các dòng và gán SPK_01… trước khi xác nhận.")
     return registry, normalized
+
+
+def _invalidate_speaker_dependents(project, assignment_changed, registry_changed):
+    if not assignment_changed and not registry_changed:
+        return
+    if project.context_source_hash:
+        project.context_status = "stale"
+    if project.translation_status != "not_started":
+        project.translation_status = "stale"
+    project.translation_qa = {}
+    for row in project.utterances:
+        if row.dubbing_optimized or row.dubbing_status not in {"not_started", "stale"}:
+            row.dubbing_status = "stale"
+        if assignment_changed and row.tts_generation_status in {"generated", "cached"}:
+            row.tts_generation_status = "stale"
+            row.tts_error = ""
+    if assignment_changed:
+        project.final_audio_status = "stale"
+        project.final_audio_fingerprint = ""
 
 
 def apply_speaker_review_state(project, speakers, assignments):
     """Atomically commit one confirmed registry + batch assignment session."""
     registry, normalized = _validated_speaker_state(project, speakers, assignments, True)
-    old_registry = project.speakers
+    old_registry = deepcopy(project.speakers)
     old_ids = {row.id: row.speaker_id for row in project.utterances}
     old_hash = project.speaker_review_hash
     try:
@@ -278,6 +296,7 @@ def apply_speaker_review_state(project, speakers, assignments):
                 row.tts_error = ""
         if changed:
             project.final_audio_status = "stale"
+        _invalidate_speaker_dependents(project, bool(changed), old_registry != registry)
         return project
     except Exception:
         project.speakers = old_registry
@@ -285,6 +304,24 @@ def apply_speaker_review_state(project, speakers, assignments):
         for row in project.utterances:
             row.speaker_id = old_ids[row.id]
         refresh_timeline(project)
+        raise
+
+
+def commit_speaker_review_session(project, working_project, speakers, assignments):
+    """Atomically commit a Speaker Review working copy, including manual splits."""
+    if project.name != working_project.name or project.source_video_path != working_project.source_video_path:
+        raise ValueError("Speaker Review không thuộc project hiện tại")
+    before = project.to_dict()
+    try:
+        candidate = type(project).from_dict(working_project.to_dict())
+        project.__dict__.clear()
+        project.__dict__.update(candidate.__dict__)
+        apply_speaker_review_state(project, speakers, assignments)
+        return project
+    except Exception:
+        restored = type(project).from_dict(before)
+        project.__dict__.clear()
+        project.__dict__.update(restored.__dict__)
         raise
 
 
@@ -297,6 +334,7 @@ def restore_initial_speaker_state(project):
         project, baseline.get("speakers", {}), baseline.get("assignments", {}), False,
     )
     changed = []
+    old_registry = deepcopy(project.speakers)
     project.speakers = registry
     for row in project.utterances:
         if row.speaker_id != normalized[row.id]:
@@ -311,4 +349,5 @@ def restore_initial_speaker_state(project):
             row.tts_error = ""
     if changed:
         project.final_audio_status = "stale"
+    _invalidate_speaker_dependents(project, bool(changed), old_registry != registry)
     return project

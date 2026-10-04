@@ -20,6 +20,7 @@ def add_table_search(layout, table, columns):
     row.addWidget(clear)
     layout.addLayout(row)
     table.search_edit = edit
+    table.search_row = row
     table.search_columns = tuple(columns)
     edit.textChanged.connect(lambda text: apply_table_search(table, text, table.search_columns))
     clear.clicked.connect(edit.clear)
@@ -34,6 +35,9 @@ def apply_table_search(table, query=None, columns=None):
             query in _needle(table.item(row, column).text())
             for column in columns if table.item(row, column) is not None
         )
+        predicate = getattr(table, "row_filter_predicate", None)
+        if matches and callable(predicate):
+            matches = bool(predicate(row))
         table.setRowHidden(row, not matches)
 
 

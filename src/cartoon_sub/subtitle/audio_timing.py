@@ -84,14 +84,15 @@ class AudioTimingRefiner:
             raise ValueError("Cần transcript Trung và bản dịch Việt trước khi căn audio")
         audio = self._slice(audio_path, utterance.start, utterance.end)
         settings = self.store.load()
+        model = settings.legacy_gemini_audio_model
         with wave.open(io.BytesIO(audio), "rb") as clip:
             actual_duration = clip.getnframes() / clip.getframerate()
         log.info("[TIMING] utterance_id=%s utterance_start=%.3f utterance_end=%.3f "
                  "utterance_duration=%.3f text=%r audio_segment_duration=%.3f selected_model=%s",
                  utterance.id, utterance.start, utterance.end, utterance.duration,
-                 utterance.vi_subtitle, actual_duration, settings.transcription_model)
+                 utterance.vi_subtitle, actual_duration, model)
         key = content_hash({"version": TIMING_VERSION, "audio": hashlib.sha256(audio).hexdigest(),
-            "zh": utterance.zh, "vi": utterance.vi_subtitle, "model": settings.transcription_model})
+            "zh": utterance.zh, "vi": utterance.vi_subtitle, "model": model})
         path = Path(cache_directory) / f"{key}.json"
         if path.exists():
             try:
@@ -99,14 +100,12 @@ class AudioTimingRefiner:
                 if data.get("status") == "completed": return validate_timing(data["response"], utterance)
             except (ValueError, KeyError, GeminiError): pass
         check_cancel(cancel)
-        if settings.transcription_provider != "gemini":
-            raise ValueError(f"Provider {settings.transcription_provider} không hỗ trợ căn timing audio.")
         client = self.factory(self.store.get_gemini_keys(settings))
         try:
             if progress: progress(f"Căn audio Utterance {utterance.id} bằng Gemini…")
             prompt = TIMING_PROMPT + "\n" + json.dumps({"clip_duration": utterance.duration,
                 "chinese_transcript": utterance.zh, "vietnamese_subtitle": utterance.vi_subtitle}, ensure_ascii=False)
-            payload = client.transcribe_json(audio, prompt, TIMING_SCHEMA, settings.transcription_model,
+            payload = client.transcribe_json(audio, prompt, TIMING_SCHEMA, model,
                 cancel=cancel, progress=progress)
             log.info("[TIMING] result_status=success raw_response=%r", payload)
             check_cancel(cancel)

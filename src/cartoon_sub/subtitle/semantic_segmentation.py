@@ -50,7 +50,9 @@ class SemanticSegmentationService:
         self.store, self.factory = store, client_factory
 
     def cache_identity(self):
-        settings=self.store.load();return {"version": SEMANTIC_SEGMENTATION_VERSION, "provider": settings.translation_provider, "model": settings.translation_model}
+        settings=self.store.load()
+        model=(settings.tab_model_overrides or {}).get("subtitle") or settings.default_ai_model
+        return {"version": SEMANTIC_SEGMENTATION_VERSION, "provider": "openrouter", "model": model}
 
     def split(self, text, language="vi", target_syllables=12, max_syllables=18, max_segments=4, *, cancel=None):
         if language != "vi" or not isinstance(text, str) or not text.strip():
@@ -60,13 +62,21 @@ class SemanticSegmentationService:
         if not 1 <= target_syllables <= max_syllables or not 2 <= max_segments <= 8:
             raise ValueError("Giới hạn semantic fallback không hợp lệ")
         settings = self.store.load()
-        factory=self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
-        client = factory(self.store.get_key(settings.translation_provider))
+        from cartoon_sub.ai.model_resolver import AIModelResolver
+        model = AIModelResolver(self.store).resolve(
+            "SUBTITLE_SEMANTIC_SEGMENTATION", "subtitle", ("text",)).model_id
+        cached = self.store.openrouter_catalog_cache()
+        factory=(self.factory if self.factory is not GeminiClient else
+                 text_client_factory(settings.translation_provider, cached["models"] if cached else None))
+        credentials = (self.store.openrouter_key_pool()
+                       if settings.translation_provider == "openrouter"
+                       else self.store.get_key(settings.translation_provider))
+        client = factory(credentials)
         try:
             prompt = json.dumps({"text": text, "language": language, "preferred_syllables": target_syllables,
                 "max_syllables": max_syllables, "max_segments": max_segments}, ensure_ascii=False)
             payload = client.generate_json(SEMANTIC_SEGMENTATION_RULES, prompt,
-                SEMANTIC_SEGMENTATION_SCHEMA, settings.translation_model, cancel=cancel)
+                SEMANTIC_SEGMENTATION_SCHEMA, model, cancel=cancel)
             log.info("[TIMING] semantic raw_response=%r", payload)
             try:
                 parts = validate_parts(payload, text, max_segments)

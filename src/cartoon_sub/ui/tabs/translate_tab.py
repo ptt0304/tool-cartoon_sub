@@ -1,14 +1,16 @@
-from PySide6.QtWidgets import (QComboBox, QPlainTextEdit, QPushButton, QLabel, QCheckBox,
+from PySide6.QtWidgets import (QComboBox, QLineEdit, QPlainTextEdit, QPushButton, QLabel, QCheckBox,
     QGridLayout, QHBoxLayout, QVBoxLayout, QGroupBox, QScrollArea, QWidget, QTabWidget)
 from PySide6.QtCore import Qt
 from cartoon_sub.translation.presets import GENRES, STYLES
+from cartoon_sub.ui.no_wheel import NoWheelComboBox
 from cartoon_sub.ui.table_search import add_table_search
+from cartoon_sub.ui.cache_status_widget import CacheStatusBox
 
 
 PROPER_NAME_DESCRIPTIONS = {
     "sino_vietnamese": "Tên người, địa danh, môn phái, chiêu thức và tổ chức dùng âm Hán Việt khi có cách đọc ổn định.",
     "preserve_source": "Giữ nguyên tên theo transcript/source, không tự chuyển sang âm Hán Việt.",
-    "user_mapping": "Tên có mapping dùng mapping; tên chưa có mapping giữ nguyên theo nguồn.",
+    "custom": "Dùng quy tắc tên riêng do người dùng nhập. Mapping đã lưu vẫn được ưu tiên.",
 }
 
 
@@ -23,8 +25,14 @@ def build():
     body = QWidget()
     layout = QVBoxLayout(body)
     scroll.setWidget(body)
-    intro = QLabel("1. Chọn thể loại & văn phong → 2. Phân tích, duyệt hồ sơ truyện → 3. Dịch → kiểm tra tại Subtitle. "
-                   "Phân tích ngữ cảnh đối chiếu transcript với video theo chunk; dịch dùng visual context đã cache và không upload lại video.")
+    model_row = QHBoxLayout(); widget.ai_model_search = QLineEdit(); widget.ai_model = NoWheelComboBox(); widget.ai_model_effective = QLabel()
+    widget.ai_model_search.setPlaceholderText("Tìm model theo provider, tên hoặc ID…")
+    model_row.addWidget(QLabel("Model AI cho tab")); model_row.addWidget(widget.ai_model_search, 1); model_row.addWidget(widget.ai_model, 2)
+    widget.reset_ai_button = QPushButton("Xóa dữ liệu AI / Chạy lại")
+    model_row.addWidget(widget.ai_model_effective); model_row.addWidget(widget.reset_ai_button); layout.addLayout(model_row)
+    widget.cache_status = CacheStatusBox(); layout.addWidget(widget.cache_status)
+    intro = QLabel("Chọn hướng dẫn dịch rồi bấm Dịch. AI dịch theo từng đoạn hội thoại, dùng video/audio "
+                   "quanh timestamp và tự chạy QA/QC tiếng Việt; không cần phân tích hay duyệt ngữ cảnh trước.")
     intro.setWordWrap(True)
     layout.addWidget(intro)
     group = QGroupBox("Thể loại chính — chọn tối đa 3")
@@ -33,18 +41,21 @@ def build():
     genre_help.setWordWrap(True); genre_layout.addWidget(genre_help)
     grid = QGridLayout(); genre_layout.addLayout(grid)
     widget.genres = {}
-    for index, (key, (label, guidance)) in enumerate(GENRES.items()):
+    genre_items = [*GENRES.items(), ("custom", ("Tùy chỉnh", "Dùng Thể loại chính do người dùng nhập."))]
+    for index, (key, (label, guidance)) in enumerate(genre_items):
         check = QCheckBox(label)
         check.setToolTip(guidance)
-        grid.addWidget(check, index // 3, index % 3)
+        grid.addWidget(check, index % 9, index // 9)
         widget.genres[key] = check
+    for column in range(4):
+        grid.setColumnStretch(column, 1)
     widget.genre_status = QLabel(""); widget.genre_status.setStyleSheet("color: #b45309;")
     genre_layout.addWidget(widget.genre_status)
     layout.addWidget(group)
 
     style_group = QGroupBox("Văn phong dịch")
     style_layout = QVBoxLayout(style_group)
-    widget.preset = QComboBox()
+    widget.preset = NoWheelComboBox()
     for key, (label, _) in STYLES.items():
         widget.preset.addItem(label, key)
     widget.style_description = QLabel(); widget.style_description.setWordWrap(True)
@@ -53,67 +64,66 @@ def build():
 
     name_group = QGroupBox("Quy tắc tên riêng")
     name_layout = QVBoxLayout(name_group)
-    widget.proper_name_mode = QComboBox()
+    widget.proper_name_mode = NoWheelComboBox()
     widget.proper_name_mode.addItem("Hán Việt (mặc định)", "sino_vietnamese")
     widget.proper_name_mode.addItem("Giữ nguyên theo nguồn", "preserve_source")
-    widget.proper_name_mode.addItem("Theo Mapping của user", "user_mapping")
+    widget.proper_name_mode.addItem("Tùy chỉnh", "custom")
     widget.proper_name_description = QLabel(); widget.proper_name_description.setWordWrap(True)
     mapping_note = QLabel("Mapping của user luôn ưu tiên hơn quy tắc tên riêng đang chọn.")
     mapping_note.setWordWrap(True)
     name_layout.addWidget(widget.proper_name_mode); name_layout.addWidget(widget.proper_name_description); name_layout.addWidget(mapping_note)
     layout.addWidget(name_group)
 
-    requirements_group = QGroupBox("Bối cảnh bổ sung / Yêu cầu riêng — ưu tiên cao nhất")
+    requirements_group = QGroupBox("Người dùng tự định nghĩa")
     requirements_layout = QVBoxLayout(requirements_group)
-    requirements_help = QLabel("Ưu tiên cao nhất. Nếu để trống thì bỏ qua. Dùng để bổ sung quan hệ nhân vật, cách xưng hô, thuật ngữ bắt buộc, tên riêng, yêu cầu dịch đặc biệt hoặc thông tin AI khó suy ra từ transcript.")
+    requirements_help = QLabel("Ba quy tắc độc lập. Chỉ quy tắc có selector Tùy chỉnh mới được gửi cho AI. Có thể để trống.")
     requirements_help.setWordWrap(True); requirements_layout.addWidget(requirements_help)
     editors = QHBoxLayout()
+    # Hidden legacy stores keep old projects and saved mappings intact while
+    # the visible interface has exactly the three requested custom controls.
     widget.prompt, widget.glossary = QPlainTextEdit(), QPlainTextEdit()
-    for edit, label, placeholder in ((widget.prompt, "Yêu cầu riêng", "Ví dụ: A và B là sư huynh đệ. Không dùng mày/tao. Nhân vật chính nói lạnh lùng nhưng không quá cổ."),
-                                     (widget.glossary, "Mapping tên riêng / thuật ngữ — ưu tiên sau yêu cầu riêng", "顾沉 = Cố Trầm\n青云宗 -> Thanh Vân Tông\n灵石 = linh thạch")):
+    widget.custom_genre, widget.custom_style, widget.custom_name_rule = (
+        QPlainTextEdit(), QPlainTextEdit(), QPlainTextEdit())
+    for edit, label, placeholder in (
+        (widget.custom_genre, "Thể loại chính", "Ví dụ: Tiên hiệp hài, hệ thống nhiệm vụ và nhịp thoại nhanh."),
+        (widget.custom_style, "Văn phong chính", "Ví dụ: Câu Việt ngắn, tự nhiên, giữ chất châm biếm nhẹ."),
+        (widget.custom_name_rule, "Quy tắc tên riêng", "Ví dụ: Giữ tên theo pinyin; danh xưng dịch Hán Việt."),
+    ):
         box = QVBoxLayout()
         box.addWidget(QLabel(label))
         edit.setPlaceholderText(placeholder)
         edit.setMaximumHeight(120)
         box.addWidget(edit)
-        editors.addLayout(box)
+        editors.addLayout(box, 1)
     requirements_layout.addLayout(editors)
     layout.addWidget(requirements_group)
 
-    constraints_group = QGroupBox("Ràng buộc từ lựa chọn")
-    constraints_layout = QVBoxLayout(constraints_group)
     widget.selected_contexts = QLabel("Primary genre: Chưa chọn")
-    widget.selected_contexts.setWordWrap(True); constraints_layout.addWidget(widget.selected_contexts)
+    widget.selected_contexts.setWordWrap(True)
     widget.context_descriptions = QPlainTextEdit(); widget.context_descriptions.setReadOnly(True)
     widget.context_descriptions.setMaximumHeight(240)
-    constraints_layout.addWidget(widget.context_descriptions)
-    layout.addWidget(constraints_group)
+    widget.selected_contexts.hide(); widget.context_descriptions.hide()
 
-    ai_group = QGroupBox("Ngữ cảnh AI")
-    ai_layout = QVBoxLayout(ai_group)
-    row = QHBoxLayout()
-    widget.analyze_button = QPushButton("Phân tích ngữ cảnh bằng AI")
-    widget.analyze_button.setToolTip("Đối chiếu transcript với video để xác định nhân vật, người nói, người được nhắc tới, quan hệ, đại từ và bối cảnh cảnh quay.")
+    # Legacy actions stay as hidden compatibility attributes for old projects
+    # and controller wiring; they are no longer part of the normal workflow.
+    widget.analyze_button = QPushButton("Phân tích Speaker & Ngữ cảnh AI")
     widget.proposal_button = QPushButton("Duyệt & lưu ngữ cảnh AI")
-    for control in (widget.analyze_button, widget.proposal_button):
-        row.addWidget(control)
-    ai_layout.addLayout(row)
+    widget.analyze_button.hide(); widget.proposal_button.hide()
     widget.summary = QLabel()
     widget.summary.setTextFormat(Qt.TextFormat.PlainText)
     widget.summary.setWordWrap(True)
     widget.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    ai_layout.addWidget(widget.summary)
-    layout.addWidget(ai_group)
-    widget.translate_button = QPushButton("Dịch / tiếp tục bản Việt bằng Gemini")
+    widget.translate_button = QPushButton("Dịch")
     widget.qa_button = QPushButton("QA/QC bản dịch")
     widget.qa_button.setToolTip("Chạy local checks cho toàn bộ bản dịch; chỉ gọi AI cho dòng lỗi hoặc đáng nghi.")
     widget.import_vi_button = QPushButton("Import Vietnamese SRT")
     layout.addWidget(widget.import_vi_button)
     layout.addWidget(widget.translate_button)
     layout.addWidget(widget.qa_button)
-    note = QLabel("Phân tích ngữ cảnh chỉ hoàn tất khi video đã được đối chiếu; nếu video/model/API lỗi, tool báo nguyên nhân và không tạo candidate transcript-only. "
-                  "Dịch dùng cache khi dữ liệu không đổi. Đổi hồ sơ/glossary/model sẽ cần cập nhật bản dịch. "
-                  "Hoàn tất tự lưu subtitle/vi.srt; cảnh báo cần biên tập không tự sửa nội dung.")
+    layout.addWidget(widget.summary)
+    note = QLabel("Dịch dùng cache khi dữ liệu không đổi. Đổi thể loại, văn phong, quy tắc tên, bối cảnh người dùng "
+                  "hoặc model sẽ làm Translation/QA cần chạy lại nhưng không ảnh hưởng STT hay Master Timeline. "
+                  "Hoàn tất sẽ tự lưu subtitle/vi.srt.")
     note.setWordWrap(True)
     layout.addWidget(note)
     layout.addStretch()
@@ -162,15 +172,17 @@ def build():
         check.toggled.connect(lambda checked, genre_key=key: on_genre_toggled(genre_key, checked))
     widget.preset.currentIndexChanged.connect(update_context_description)
     widget.proper_name_mode.currentIndexChanged.connect(update_context_description)
-    widget.prompt.textChanged.connect(update_context_description)
-    widget.glossary.textChanged.connect(update_context_description)
-    from cartoon_sub.ui.timeline_table import create_table
+    for edit in (widget.prompt, widget.glossary, widget.custom_genre,
+                 widget.custom_style, widget.custom_name_rule):
+        edit.textChanged.connect(update_context_description)
+    from cartoon_sub.ui.timeline_table import create_table, install_delta_target_filter
     timeline=QWidget(); timeline_layout=QVBoxLayout(timeline)
     toolbar=QHBoxLayout()
     widget.view=QComboBox()
     for label,key in [("Both","both"),("Subtitle","subtitle"),("Dubbing","dubbing")]: widget.view.addItem(label,key)
     widget.edit_button=QPushButton("Sửa câu chọn / mode / target")
     widget.optimize_button=QPushButton("Tối ưu dubbing đã chọn")
+    widget.optimize_bulk_button=QPushButton("Tối ưu dubbing hàng loạt")
     widget.manual_qa_button=QPushButton("QA/QC AI dòng đã chọn")
     widget.manual_qa_button.setToolTip("Luôn gọi AI để kiểm tra riêng các dòng đang chọn; dòng PASS giữ nguyên.")
     widget.revert_optimize_button=QPushButton("Revert selected dubbing optimization")
@@ -183,11 +195,12 @@ def build():
     widget.revert_edits_button.setEnabled(False)
     widget.edits_status_label=QLabel("")
     widget.edits_status_label.setStyleSheet("color: #666; font-size: 11px;")
-    for control in (widget.view,widget.edit_button,widget.optimize_button,widget.manual_qa_button,widget.revert_optimize_button,widget.apply_edits_button,widget.revert_edits_button,widget.edits_status_label): toolbar.addWidget(control)
+    for control in (widget.view,widget.edit_button,widget.optimize_button,widget.optimize_bulk_button,widget.manual_qa_button,widget.revert_optimize_button,widget.apply_edits_button,widget.revert_edits_button,widget.edits_status_label): toolbar.addWidget(control)
     toolbar.addStretch()
     timeline_layout.addLayout(toolbar)
     widget.table=create_table()
     widget.search_edit, widget.search_clear = add_table_search(timeline_layout, widget.table, (0,4,5,7,8))
+    widget.delta_min, widget.delta_max = install_delta_target_filter(widget.table)
     def on_dirty_changed(count):
         widget.apply_edits_button.setEnabled(count > 0)
         widget.revert_edits_button.setEnabled(count > 0)

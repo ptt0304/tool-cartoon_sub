@@ -52,8 +52,8 @@ class SegmentationPhase4Tests(unittest.TestCase):
         service.merge_manual(project, 1, [item.id for item in utterance.display_segments[:2]])
         self.assertTrue(all(item.speaker_id == "SPK_01" for item in utterance.display_segments))
         service.reset(project, [1])
-        self.assertEqual([(item.start, item.end, item.vi_text) for item in utterance.display_segments],
-            [(0, 8, utterance.vi_subtitle)])
+        self.assertEqual("".join(item.vi_text for item in utterance.display_segments), utterance.vi_subtitle)
+        self.assertGreater(len(utterance.display_segments), 1)
         self.assertIn("1", project.segmentation_cache)
 
     def test_vietnamese_srt_exports_display_segments_and_keeps_overlap(self):

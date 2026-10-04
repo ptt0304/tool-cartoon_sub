@@ -58,8 +58,20 @@ _VOICE_IDENTITY_FIELDS = (
     "voice_version", "revision", "reference_id", "reference_hash", "source_hash",
 )
 
+TTS_SOURCE_SUBTITLE = "vi_subtitle"
+TTS_SOURCE_DUBBING = "vi_dubbing"
 
-def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metadata=None) -> str:
+
+def resolve_tts_text(utterance, source: str) -> str:
+    if source == TTS_SOURCE_SUBTITLE:
+        return normalize_tts_text(utterance.vi_subtitle)
+    if source == TTS_SOURCE_DUBBING:
+        return normalize_tts_text(utterance.vi_dubbing)
+    raise ValueError("Nguồn TTS không hợp lệ")
+
+
+def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metadata=None,
+                          source: str = TTS_SOURCE_DUBBING) -> str:
     """Hash only inputs that can change the raw waveform; timing/row number are excluded."""
     metadata = voice_metadata if isinstance(voice_metadata, dict) else {}
     voice_identity = {field: metadata.get(field) for field in _VOICE_IDENTITY_FIELDS}
@@ -68,7 +80,8 @@ def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metada
         "version": 1,
         "server": normalize_local_tts_base_url(server_base_url),
         "language": "vi",
-        "text": normalize_tts_text(utterance.vi_dubbing),
+        "source": source,
+        "text": resolve_tts_text(utterance, source),
         "voice": voice_identity,
         "speed": float(speaker.tts_speed),
     }
@@ -78,5 +91,6 @@ def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metada
     return hashlib.sha256(encoded).hexdigest()
 
 
-def build_cached_segment_id(utterance) -> str:
-    return f"utt_{utterance.tts_cache_key}"
+def build_cached_segment_id(utterance, source: str | None = None) -> str:
+    suffix = f"_{source}" if source else ""
+    return f"utt_{utterance.tts_cache_key}{suffix}"

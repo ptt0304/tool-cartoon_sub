@@ -508,6 +508,7 @@ def main():
     window = MainWindow()
     window.setWindowIcon(icon)
     window.show()
+    window.start_openrouter_catalog_sync()
     return application.exec()
 
 if __name__ == "__main__":

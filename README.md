@@ -264,7 +264,7 @@ Chi tiết: [Project, cache và tiếp tục công việc](docs/CACHE_RESUME.md)
 
 ## Portable ZIP / Chuyển sang máy khác
 
-Cartoon_Sub hiện **chưa có** PyInstaller `.spec`, build script hoặc `Cartoon_Sub.exe` được định nghĩa/kiểm thử. Build mode thật là chạy từ source qua Python `>=3.11`; vì vậy chưa thể gọi ZIP hiện tại là binary standalone. Source-transfer sang PC khác phải mang `pyproject.toml`, `Cartoon_Sub_GUI.pyw`, toàn bộ `src/cartoon_sub/` (gồm assets/prompts), rồi tạo venv và `pip install .` trên máy đích.
+Cartoon_Sub có PyInstaller spec `Cartoon_Sub.spec` và script `build_exe.ps1`. Script tạo `Cartoon_Sub.exe` cùng thư mục `_internal/` ở root. Hai artifact này là output local, không theo Git; cần build lại bằng `powershell -ExecutionPolicy Bypass -File .\build_exe.ps1` khi đóng gói phát hành. Source-transfer vẫn cần `pyproject.toml`, `Cartoon_Sub_GUI.pyw`, toàn bộ `src/cartoon_sub/`, Python `>=3.11` và `pip install .` trên máy đích.
 
 `ffmpeg` và `ffprobe` không được bundle và phải có trong `PATH`. Font subtitle cũng lấy từ Windows. Local_TTS có thể auto-discover một số layout source tương đối; cách chắc chắn sau khi chuyển là **Audio → Select Local_TTS…**, chọn `Local_TTS.exe`, rồi **Test connection** tại `http://127.0.0.1:8765`.
 
@@ -274,7 +274,7 @@ Guide chi tiết gồm bảng REQUIRED/OPTIONAL/PRIVATE/DEV, source-transfer com
 
 ### BEFORE ZIP
 
-- [ ] Build Release (hiện Cartoon_Sub chưa có binary build)
+- [ ] Build Release: `powershell -ExecutionPolicy Bypass -File .\build_exe.ps1`
 - [ ] Remove secrets, `.env`, project và media cá nhân
 - [ ] Verify Local_TTS assets
 - [ ] Verify FFmpeg/ffprobe trong PATH

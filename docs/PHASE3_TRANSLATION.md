@@ -46,7 +46,7 @@ Ví dụ glossary có chủ đích: `筑基 -> Trúc Cơ` khi đó là cảnh gi
 5. Bấm **Phân tích ngữ cảnh bằng AI**. Tool đối chiếu transcript với video proxy 480p theo chunk 60 giây, tạo visual context theo từng ID và chỉ quét lại vùng confidence thấp. Kết quả là đề xuất để người dùng duyệt; bước này có dùng quota Gemini video riêng.
 6. Bấm **Duyệt đề xuất AI**. Kiểm tra bốn tab Tổng quan, Nhân vật, Thuật ngữ, Xưng hô; sửa chỗ sai hoặc để trống thông tin chưa rõ. **Áp dụng hồ sơ** để chốt dùng cho bản dịch.
 7. Có thể bỏ bước 5 và mở **Hồ sơ đang áp dụng / tự nhập**, tự điền hoặc giữ hồ sơ trống rồi Áp dụng. Khi đó chất lượng phụ thuộc chủ yếu glossary và ngữ cảnh gần.
-8. Bấm **Dịch / tiếp tục bản Việt bằng Gemini**.
+8. Bấm **Dịch bằng AI**.
 9. Xem song ngữ và cảnh báo tại **Subtitle**. Bảng hiện chỉ đọc; biên tập text/timestamp đầy đủ là Phase 4. Có thể chỉnh file SRT bên ngoài, nhưng lần Save/dịch tiếp theo sẽ xuất lại từ dữ liệu project.
 
 Đề xuất AI mới không tự ghi đè hồ sơ đã áp dụng. Khi transcript thay đổi, tool yêu cầu kiểm tra và áp dụng hồ sơ cho transcript mới. Đổi thể loại/văn phong/glossary/hồ sơ khiến bản dịch cũ được đánh dấu cần cập nhật khi lưu hoặc bắt đầu tác vụ.

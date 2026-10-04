@@ -1,1 +1,0 @@
-Fit the duration-derived Vietnamese target at the configured speech rate. Keep meaning and natural delivery; if a fit is impossible, flag for review instead of inventing words.

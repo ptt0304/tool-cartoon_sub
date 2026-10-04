@@ -7,11 +7,9 @@ from .prompts import dubbing_prompt, dubbing_system, duration_rewrite_prompt, PR
 from .gemini_translator import TRANSLATION_SCHEMA, TranslationValidationError, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
-from .context_service import source_fingerprint
-from .context_models import StoryContext
 from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import text_client_factory
-from cartoon_sub.speaker.service import refresh_timeline, review_complete
+from cartoon_sub.speaker.service import refresh_timeline
 from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.syllable.vietnamese import count_syllables
 from cartoon_sub.project.cache import check_cancel, content_hash
@@ -24,6 +22,66 @@ from cartoon_sub.tts.local_tts_client import LocalTTSClient
 logger = logging.getLogger(__name__)
 
 
+_SEMANTIC_TERM_GROUPS = {
+    "động vật": {
+        "chó", "mèo", "lợn", "heo", "nhện", "ngựa", "trâu", "bò", "dê", "gà", "vịt",
+        "rắn", "hổ", "sói", "cáo", "chim", "cá", "khỉ", "chuột", "thỏ",
+    },
+    "quan hệ/xưng hô": {
+        "anh", "chị", "em", "cô", "chú", "bác", "ông", "bà", "cha", "mẹ", "vợ", "chồng",
+        "con", "huynh", "muội", "sư huynh", "sư tỷ", "sư đệ", "sư muội",
+    },
+    "chức danh": {"chủ nhân", "sư phụ", "hoàng thượng", "bệ hạ", "điện hạ", "thiếu gia", "tiểu thư"},
+    "sự kiện": {"chết", "bị thương", "bảo vệ", "tấn công", "giết", "cứu", "bắt", "thả"},
+    "phủ định": {"không", "chẳng", "chưa", "đừng", "chớ"},
+}
+
+
+def _normalized_terms(text):
+    return " ".join(re.findall(r"[^\W\d_]+|\d+(?:[.,]\d+)?", str(text).casefold()))
+
+
+def _present_terms(text, candidates):
+    value = f" {_normalized_terms(text)} "
+    return {term for term in candidates if f" {term} " in value}
+
+
+def _proper_names(text):
+    return set(re.findall(r"\b(?:[A-ZĐ][^\W\d_]*)(?:\s+[A-ZĐ][^\W\d_]*)+\b", str(text)))
+
+
+def semantic_preservation_issue(project, segment, candidate):
+    """Reject high-confidence semantic substitutions without requiring identical wording."""
+    reference = f"{segment.vi_subtitle}\n{segment.vi_dubbing}"
+    for category, terms in _SEMANTIC_TERM_GROUPS.items():
+        expected = _present_terms(reference, terms)
+        actual = _present_terms(candidate, terms)
+        missing, added = sorted(expected - actual), sorted(actual - expected)
+        if missing or added:
+            before = ", ".join(missing) or "không có"
+            after = ", ".join(added) or "bị bỏ"
+            return f"{category}: {before} → {after}"
+
+    reference_numbers = set(re.findall(r"\b\d+(?:[.,]\d+)?\b", reference))
+    candidate_numbers = set(re.findall(r"\b\d+(?:[.,]\d+)?\b", candidate))
+    if reference_numbers != candidate_numbers:
+        return "con số/số lượng: " + ", ".join(sorted(reference_numbers ^ candidate_numbers))
+
+    missing_names = sorted(_proper_names(reference) - _proper_names(candidate))
+    if missing_names:
+        return "tên riêng bị mất: " + ", ".join(missing_names)
+
+    glossary_terms = {
+        value.casefold().strip() for value in getattr(project, "glossary", {}).values()
+        if isinstance(value, str) and value.strip() and not re.search(r"[\u4e00-\u9fff]", value)
+    }
+    expected_glossary = _present_terms(reference, glossary_terms)
+    missing_glossary = sorted(expected_glossary - _present_terms(candidate, glossary_terms))
+    if missing_glossary:
+        return "thuật ngữ bắt buộc bị mất: " + ", ".join(missing_glossary)
+    return None
+
+
 def parse_dubbing_threshold(value):
     raw = str(value).strip()
     if not re.fullmatch(r"\+?[1-9]\d*", raw):
@@ -31,14 +89,14 @@ def parse_dubbing_threshold(value):
     return int(raw.lstrip("+"))
 
 
-def eligible_dubbing_ids(project, ids, threshold):
+def eligible_dubbing_ids(project, ids, threshold, *, apply_threshold=True):
     if type(threshold) is not int or threshold <= 0:
         raise ValueError("Ngưỡng Δ target phải là số nguyên dương, ví dụ +5")
     selected = set(ids)
     return [
         segment.id for segment in project.segments
-        if segment.id in selected and segment.syllable_delta > 0
-        and segment.syllable_delta >= threshold
+        if segment.id in selected
+        and (not apply_threshold or segment.syllable_delta >= threshold)
     ]
 
 
@@ -95,37 +153,51 @@ class DubbingService:
             )
             row.recalculate(budget)
 
-    def optimize(self, project, directory, ids, *, threshold=1, cancel=None, progress=None):
+    def optimize(self, project, directory, ids, *, threshold=1, maximum_delta=0,
+                 apply_threshold=True, model=None,
+                 cancel=None, progress=None):
+        if type(maximum_delta) is not int or maximum_delta < 0:
+            raise ValueError("Delta được lệch tối đa phải là số nguyên từ 0 trở lên")
+        if apply_threshold and maximum_delta >= threshold:
+            raise ValueError("Delta được lệch tối đa phải nhỏ hơn Delta target sẽ áp dụng")
         project=Project.from_dict(project.to_dict())
         refresh_timeline(project)
-        if not review_complete(project): raise ValueError("Cần duyệt speaker trước khi tối ưu dubbing")
-        if project.context_source_hash != source_fingerprint(project):
-            raise ValueError("Hãy kiểm tra và áp dụng hồ sơ ngữ cảnh cho transcript hiện tại")
-        StoryContext.from_dict(project.story_context, {s.id for s in project.segments})
-        chosen=set(eligible_dubbing_ids(project, ids, threshold))
+        chosen=set(eligible_dubbing_ids(project, ids, threshold, apply_threshold=apply_threshold))
         if not chosen:
             return project,Path(directory)
         if not chosen or not chosen.issubset({s.id for s in project.segments}): raise ValueError("Chọn các câu cần tối ưu")
-        if any(not s.vi_subtitle.strip() for s in project.segments if s.id in chosen):
-            raise ValueError("Hãy dịch bản subtitle trước khi tối ưu dubbing")
         settings=self.store.load()
+        if model is None:
+            from cartoon_sub.ai.model_resolver import AIModelResolver
+            model = AIModelResolver(self.store).resolve(
+                "DUBBING_OPTIMIZE", "translate", ("text",)).model_id
         budget=DubbingSettings(**project.dubbing_settings)
         self._apply_voice_budgets(project, directory, chosen, budget, progress)
-        factory=self.factory if self.factory is not GeminiClient else (GeminiClient if settings.translation_provider == "gemini" else text_client_factory(settings.translation_provider))
-        requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",settings.translation_model,
+        factory=(self.factory if self.factory is not GeminiClient
+                 else text_client_factory(settings.translation_provider))
+        requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",model,
             settings.retry_count,cancel,progress,factory,settings.translation_provider)
         all_rows=source_rows(project.segments)
         by_id={s.id:s for s in project.segments}
         def fingerprint(segment):
             return content_hash({"version":PROMPT_VERSION,"source":all_rows,"id":segment.id,
                 "current_vi":segment.vi_dubbing,"subtitle":segment.vi_subtitle,"editorial":editorial(project),
-                "budget":project.dubbing_settings,"system":dubbing_system(),"provider":settings.translation_provider,"model":settings.translation_model,
+                "budget":project.dubbing_settings,"system":dubbing_system(),"provider":settings.translation_provider,"model":model,
+                "maximum_delta":maximum_delta,
                 "mode_prompt":dubbing_prompt(project,[next(r for r in all_rows if r['id']==segment.id)],[],[])})
         chosen={sid for sid in chosen if by_id[sid].dubbing_status!="completed" or by_id[sid].dubbing_fingerprint!=fingerprint(by_id[sid])}
         try:
             for targets,before,after in translation_batches(project.segments,settings.translation_chunk_size):
-                targets=[{**row,"current_vi":by_id[row["id"]].vi_dubbing,
-                          "vi_subtitle":by_id[row["id"]].vi_subtitle} for row in targets if row["id"] in chosen]
+                targets=[{
+                    **row,
+                    "chinese_source":row["zh"],
+                    "current_vi":by_id[row["id"]].vi_dubbing,
+                    "vi_subtitle":by_id[row["id"]].vi_subtitle,
+                    "current_vi_syllables":by_id[row["id"]].vi_syllables,
+                    "current_delta":by_id[row["id"]].syllable_delta,
+                    "maximum_allowed_delta":maximum_delta,
+                    "maximum_syllables":by_id[row["id"]].target_syllables + maximum_delta,
+                } for row in targets if row["id"] in chosen]
                 if not targets: continue
                 target_ids=[r["id"] for r in targets]
                 prompt=dubbing_prompt(project,targets,before,after)
@@ -133,12 +205,13 @@ class DubbingService:
                     lambda p:validate_translation(p,target_ids),f"Tối ưu dubbing ID {target_ids[0]}–{target_ids[-1]}")
                 for attempt in range(2):
                     failed=[r for r in result
-                            if count_syllables(r["vi"])>by_id[r["id"]].target_syllables]
+                            if count_syllables(r["vi"])-by_id[r["id"]].target_syllables > maximum_delta]
                     if not failed: break
                     retry_ids=[r["id"] for r in failed]
                     import json
                     feedback=[{"id":r["id"],"previous_vi":r["vi"],"actual_syllables":count_syllables(r["vi"]),
-                               "target_at_most":by_id[r["id"]].target_syllables} for r in failed]
+                               "target_at_most":by_id[r["id"]].target_syllables + maximum_delta,
+                               "maximum_allowed_delta":maximum_delta} for r in failed]
                     correction=(prompt+"\nSHORTENING RETRY: return ONLY these failed IDs. Local counts are authoritative. "
                                 "Rewrite at or below the required target; never reverse meaning, negation, names, "
                                 "numbers, terminology, actors, or cause/result. "
@@ -148,21 +221,52 @@ class DubbingService:
                     replacements={r["id"]:r for r in revised}
                     result=[replacements.get(r["id"],r) for r in result]
                 check_cancel(cancel)
+                changed_dubbing = False
                 for row in result:
                     segment=by_id[row["id"]]
+                    semantic_issue = semantic_preservation_issue(project, segment, row["vi"])
+                    if semantic_issue:
+                        segment.dubbing_status = "needs_review"
+                        project.translation_notes[f"dub:{segment.id}"] = (
+                            "Không áp dụng: bản tối ưu có nguy cơ thay đổi nghĩa ("
+                            f"{semantic_issue})."
+                        )
+                        continue
+                    if count_syllables(row["vi"]) >= segment.vi_syllables:
+                        segment.dubbing_status = "needs_review"
+                        project.translation_notes[f"dub:{segment.id}"] = (
+                            "Không áp dụng: bản tối ưu không giảm Delta target."
+                        )
+                        continue
                     # Keep the pre-optimization master texts once so a user
                     # can explicitly undo this AI-only operation later.
                     if segment.pre_optimization_vi_dubbing is None:
                         segment.pre_optimization_vi_subtitle = segment.vi_subtitle
                         segment.pre_optimization_vi_dubbing = segment.vi_dubbing
+                    if segment.vi_dubbing != row["vi"]:
+                        changed_dubbing = True
+                        if segment.tts_generation_status in {"generated", "cached"}:
+                            segment.tts_generation_status = "stale"
+                            segment.tts_error = ""
                     segment.vi_dubbing=row["vi"]
                     segment.dubbing_optimized=True
                     segment.semantic_compression=row["compressed"] or segment.translation_mode=="short_dub"
                     segment.meaning_preservation=row["meaning_preservation"]
                     segment.recalculate(budget)
-                    segment.dubbing_status=("failed" if segment.translation_mode=="strict_iso_syllabic" and segment.syllable_delta!=0 else "completed")
+                    over_maximum = segment.syllable_delta > maximum_delta
+                    segment.dubbing_status=(
+                        "needs_review" if over_maximum else
+                        ("failed" if segment.translation_mode=="strict_iso_syllabic" and segment.syllable_delta!=0 else "completed")
+                    )
                     segment.dubbing_fingerprint=fingerprint(segment)
-                    project.translation_notes[f"dub:{segment.id}"]=row["review_note"]
+                    note = row["review_note"]
+                    if over_maximum:
+                        warning = f"Vượt Δ tối đa +{maximum_delta}: hiện {segment.syllable_delta:+d}; cần kiểm tra"
+                        note = f"{note} | {warning}" if note else warning
+                    project.translation_notes[f"dub:{segment.id}"]=note
+                if changed_dubbing:
+                    project.final_audio_status = "stale"
+                    project.final_audio_fingerprint = ""
                 project.chunk_states.setdefault("dubbing",{})[key]={"ids":target_ids,"status":"completed_with_qc"}
                 ProjectManager().save(project,directory)
             save_translation_artifacts(project,directory)
@@ -170,19 +274,23 @@ class DubbingService:
         finally:
             requests.close()
 
-    def rewrite_duration_failures(self, project, directory, ids, *, cancel=None, progress=None):
+    def rewrite_duration_failures(self, project, directory, ids, *, model=None,
+                                  cancel=None, progress=None):
         chosen = [row for row in project.utterances if row.id in set(ids)
                   and row.dubbing_rewrite_attempts < MAX_SEMANTIC_REWRITES
                   and row.dubbing_fit_status in {"REWRITE_SHORTER", "STRONG_REWRITE"}]
         if not chosen:
             return []
         settings = self.store.load()
+        if model is None:
+            from cartoon_sub.ai.model_resolver import AIModelResolver
+            model = AIModelResolver(self.store).resolve(
+                "DUBBING_DURATION_REWRITE", "translate", ("text",)).model_id
         factory = self.factory if self.factory is not GeminiClient else (
-            GeminiClient if settings.translation_provider == "gemini"
-            else text_client_factory(settings.translation_provider)
+            text_client_factory(settings.translation_provider)
         )
         requests = CachedRequests(
-            self.store, Path(directory) / "cache" / "dubbing_duration", settings.translation_model,
+            self.store, Path(directory) / "cache" / "dubbing_duration", model,
             settings.retry_count, cancel, progress, factory, settings.translation_provider,
         )
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))

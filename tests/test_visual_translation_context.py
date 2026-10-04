@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from cartoon_sub.app.controller import Controller
 from cartoon_sub.app.settings import AISettings
 from cartoon_sub.speaker.models import Speaker
+from cartoon_sub.speaker.service import apply_speaker_review_state
 from cartoon_sub.subtitle.models import Project, Utterance
 from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.context_service import ContextService
@@ -53,12 +55,37 @@ class FakeVisualClient:
         targeted = payload["analysis_pass"] == "targeted_rescan"
         rows = []
         for source in payload["target_transcript_rows"]:
-            row = dict(self.scenarios[source["id"]])
+            row = deepcopy(self.scenarios[source["id"]])
             if source["id"] in self.low_first and not targeted:
                 row["confidence"] = 0.4
                 row["analysis_status"] = "LOW_CONFIDENCE"
             rows.append(row)
-        return context(rows)
+        value = context(rows)
+        candidates = {}
+        for row in rows:
+            identities = [
+                (row["speaker"].get("character_id"), "speaker"),
+                (row["addressee"].get("character_id"), "addressee"),
+            ]
+            identities.extend((item.get("character_id"), "visible")
+                              for item in row.get("visible_characters", []))
+            identities.extend((item.get("character_id"), None)
+                              for item in row.get("referents", []))
+            for temporary_id, role in identities:
+                if not temporary_id or temporary_id == "UNKNOWN":
+                    continue
+                candidate = candidates.setdefault(temporary_id, {
+                    "temporary_id": temporary_id,
+                    "description": f"visual identity {temporary_id}",
+                    "aliases": [temporary_id], "gender_context": "unknown",
+                    "confidence": .95, "uncertain": False, "evidence_ids": [], "bindings": [],
+                })
+                if row["id"] not in candidate["evidence_ids"]:
+                    candidate["evidence_ids"].append(row["id"])
+                if role in {"speaker", "addressee"}:
+                    candidate["bindings"].append({"id": row["id"], "role": role})
+        value["new_character_candidates"] = list(candidates.values())
+        return value
 
 
 class FakeProxyAnalyzer(VisualContextAnalyzer):
@@ -100,9 +127,9 @@ class VisualTranslationContextTests(unittest.TestCase):
             client = FakeVisualClient(scenarios)
             result = FakeProxyAnalyzer(client, "model").analyze(make_project(video, rows), root)
             by_id = {row["id"]: row for row in result["visual_contexts"]}
-            self.assertEqual(by_id[1]["speaker"]["character_id"], "CHAR_A")
-            self.assertEqual(by_id[2]["speaker"]["character_id"], "CHAR_B")
-            self.assertTrue(all(row["visible_characters"][0]["character_id"] == "CHAR_C" for row in by_id.values()))
+            self.assertEqual(by_id[1]["speaker"]["character_id"], "CHAR_01")
+            self.assertEqual(by_id[2]["speaker"]["character_id"], "CHAR_02")
+            self.assertTrue(all(row["visible_characters"][0]["character_id"] == "CHAR_03" for row in by_id.values()))
             self.assertTrue(all(row["scene_mode"] == "FLASHBACK" for row in by_id.values()))
 
     def test_listener_camera_offscreen_and_narrator_remain_separate(self):
@@ -120,9 +147,9 @@ class VisualTranslationContextTests(unittest.TestCase):
             }
             result = FakeProxyAnalyzer(FakeVisualClient(scenarios), "model").analyze(make_project(video, rows), root)
             values = {row["id"]: row for row in result["visual_contexts"]}
-            self.assertEqual(values[1]["speaker"]["character_id"], "CHAR_A")
-            self.assertEqual(values[2]["speaker"]["character_id"], "CHAR_D")
-            self.assertEqual(values[3]["speaker"]["character_id"], "NARRATOR")
+            self.assertEqual(values[1]["speaker"]["character_id"], "CHAR_01")
+            self.assertEqual(values[2]["speaker"]["character_id"], "CHAR_03")
+            self.assertEqual(values[3]["speaker"]["character_id"], "CHAR_04")
             self.assertEqual(values[3]["scene_mode"], "NARRATION_VISUAL")
 
     def test_adaptive_rescan_only_low_confidence_and_cache_reuses_both_passes(self):
@@ -149,21 +176,23 @@ class VisualTranslationContextTests(unittest.TestCase):
             )
             self.assertEqual(result["visual_contexts"][0]["analysis_status"], "ANALYZED")
 
-    def test_cache_is_partial_per_60_second_chunk(self):
+    def test_cache_is_partial_per_bounded_target_chunk(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); video = root / "v.mp4"; video.write_bytes(b"source")
-            rows = [Utterance(1, 5, 7, "甲", speaker_id="SPK_01"),
-                    Utterance(2, 65, 67, "乙", speaker_id="SPK_02")]
-            scenarios = {1: visual_row(1, "SPK_01", "CHAR_A", ""), 2: visual_row(2, "SPK_02", "CHAR_B", "")}
+            rows = [Utterance(index, index, index + .5, f"句{index}", speaker_id="SPK_01")
+                    for index in range(1, 18)]
+            scenarios = {row.id: visual_row(row.id, "SPK_01", "CHAR_A", "") for row in rows}
             client = FakeVisualClient(scenarios)
             FakeProxyAnalyzer(client, "model").analyze(make_project(video, rows), root)
             self.assertEqual(len(client.calls), 2)
-            rows[1].zh = "乙已修改"
+            rows[-1].zh = "末句已修改"
             FakeProxyAnalyzer(client, "model").analyze(make_project(video, rows), root)
-            self.assertEqual(len(client.calls), 3)
-            self.assertEqual(client.calls[-1]["target_transcript_rows"][0]["id"], 2)
+            # ID 17 is both the second chunk target and forward dialogue
+            # context for chunk 1, so both affected cache entries refresh.
+            self.assertEqual(len(client.calls), 4)
+            self.assertEqual(client.calls[-1]["target_transcript_rows"][0]["id"], 17)
 
-    def test_qa_detects_female_referent_translated_with_male_pronoun(self):
+    def test_qa_no_longer_depends_on_legacy_visual_referent(self):
         row = Utterance(1, 0, 2, "他来了。", vi_subtitle="Hắn đến rồi.", speaker_id="SPK_01")
         visual = visual_row(1, "SPK_01", "CHAR_A", "", [
             {"source_expression": "他", "character_id": "CHAR_C", "gender_context": "female", "confidence": 0.97}
@@ -172,14 +201,14 @@ class VisualTranslationContextTests(unittest.TestCase):
         p.story_context = context([visual])
         p.visual_context_status = "applied"
         issues = local_translation_qa(p, row)["issues"]
-        self.assertIn("PRONOUN_CONTEXT_MISMATCH", {item["type"] for item in issues})
+        self.assertNotIn("PRONOUN_CONTEXT_MISMATCH", {item["type"] for item in issues})
 
     def test_unknown_visual_context_never_defaults_male(self):
         row = visual_row(1, "SPK_01", "", "", confidence=0.4, status="LOW_CONFIDENCE")
         self.assertEqual(row["speaker"]["character_id"], "")
         self.assertNotIn("gender", row["speaker"])
 
-    def test_visual_context_change_invalidates_saved_qa(self):
+    def test_legacy_visual_context_change_does_not_invalidate_translation_qa(self):
         segment = Utterance(1, 0, 2, "他来了。", vi_subtitle="Người đó đến rồi.", speaker_id="SPK_01")
         project = make_project(Path("missing.mp4"), [segment])
         project.story_context = context([visual_row(1, "SPK_01", "CHAR_A", "")])
@@ -187,9 +216,9 @@ class VisualTranslationContextTests(unittest.TestCase):
         entry = store_qa_result(project, segment, "PASS")
         self.assertTrue(qa_entry_is_current(segment, entry, project))
         project.story_context["visual_contexts"][0]["scene_mode"] = "FLASHBACK"
-        self.assertFalse(qa_entry_is_current(segment, entry, project))
+        self.assertTrue(qa_entry_is_current(segment, entry, project))
 
-    def test_translation_prompt_prioritizes_user_and_passes_only_relevant_visual_rows(self):
+    def test_translation_prompt_prioritizes_user_and_ignores_legacy_visual_rows(self):
         rows = [Utterance(1, 0, 1, "他", speaker_id="SPK_01"), Utterance(2, 1, 2, "她", speaker_id="SPK_02")]
         p = make_project(Path("missing.mp4"), rows)
         p.translation_prompt = "SPK_01 là A; ưu tiên cách xưng hô do user duyệt."
@@ -197,22 +226,29 @@ class VisualTranslationContextTests(unittest.TestCase):
         text = translation_prompt(p, [{"id": 1}], [], [], [])
         payload = json.loads(text[text.index("{"):])
         self.assertIn("PRIORITY 1", payload["editorial"]["context_instruction"])
-        self.assertEqual([item["id"] for item in payload["editorial"]["approved_context"]["visual_contexts"]], [1])
+        self.assertNotIn("approved_context", payload["editorial"])
 
     def test_visual_failure_is_explicit_and_never_creates_text_only_candidate(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
             project = make_project(video, [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
             config = Mock()
-            config.load.return_value = AISettings(translation_model="gemini-3.5-flash-lite")
-            config.get_key.return_value = "test"
+            config.load.return_value = AISettings(default_ai_model="vendor/vision")
+            config.openrouter_catalog_cache.return_value = {"models": [{
+                "id": "vendor/vision",
+                "architecture": {"input_modalities": ["text", "image"],
+                                 "output_modalities": ["text"]},
+            }]}
+            config.openrouter_key_pool.return_value = Mock()
             client = Mock()
             factory = Mock(return_value=client)
             with patch("cartoon_sub.translation.context_service.VisualContextAnalyzer.analyze",
                        side_effect=ValueError("response parse lỗi")):
                 with self.assertRaisesRegex(ValueError, "chưa đối chiếu được video"):
-                    ContextService(config, factory).analyze(project, root)
+                    ContextService(config, openrouter_factory=factory).analyze(project, root)
             saved = ProjectManager().load(root)
+            self.assertEqual([(row.id, row.zh, row.start, row.end) for row in saved.utterances],
+                             [(1, "你好", 0.0, 1.0)])
             self.assertEqual(saved.visual_context_status, "VISUAL_CONTEXT_FAILED")
             self.assertEqual(saved.context_status, "VISUAL_CONTEXT_FAILED")
             self.assertEqual(saved.context_proposal, {})
@@ -223,7 +259,12 @@ class VisualTranslationContextTests(unittest.TestCase):
             root = Path(temp)
             project = make_project(root / "missing.mp4", [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
             config = Mock()
-            config.load.return_value = AISettings(translation_model="gemini-3.5-flash-lite")
+            config.load.return_value = AISettings(default_ai_model="vendor/vision")
+            config.openrouter_catalog_cache.return_value = {"models": [{
+                "id": "vendor/vision",
+                "architecture": {"input_modalities": ["text", "image"],
+                                 "output_modalities": ["text"]},
+            }]}
             factory = Mock()
             with self.assertRaisesRegex(ValueError, "Không tìm thấy video"):
                 ContextService(config, factory).analyze(project, root)
@@ -233,9 +274,14 @@ class VisualTranslationContextTests(unittest.TestCase):
             root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
             project = make_project(video, [Utterance(1, 0, 1, "你好", speaker_id="SPK_01")])
             config = Mock()
-            config.load.return_value = AISettings(translation_model="gemini-3.5-transcribe")
+            config.load.return_value = AISettings(default_ai_model="vendor/transcribe")
+            config.openrouter_catalog_cache.return_value = {"models": [{
+                "id": "vendor/transcribe",
+                "architecture": {"input_modalities": ["audio"],
+                                 "output_modalities": ["transcription"]},
+            }]}
             factory = Mock()
-            with self.assertRaisesRegex(ValueError, "không hỗ trợ phân tích video"):
+            with self.assertRaisesRegex(ValueError, "không hỗ trợ hình ảnh"):
                 ContextService(config, factory).analyze(project, root)
             factory.assert_not_called()
 
@@ -249,7 +295,7 @@ class VisualTranslationContextTests(unittest.TestCase):
             "confidence": 0.9, "evidence_ids": [1],
         }]
         dialog = ContextDialog(candidate, {1}, proposal=True, visual_ready=True)
-        self.assertEqual(dialog.apply_button.text(), "Lưu ngữ cảnh")
+        self.assertEqual(dialog.apply_button.text(), "Phê duyệt & lưu ngữ cảnh")
         self.assertEqual(dialog.tables["character_profiles"][0].item(0, 7).text(), "0.9")
         dialog.visual_json.setPlainText("[{broken]")
         with patch("cartoon_sub.ui.context_dialog.QMessageBox.warning") as warning:
@@ -268,6 +314,7 @@ class VisualTranslationContextTests(unittest.TestCase):
             root = Path(temp); video = root / "video.mp4"; video.write_bytes(b"source")
             project = make_project(video, [row])
             project.visual_context_status = "proposal_ready"
+            apply_speaker_review_state(project, project.speakers, {1: "SPK_01"})
             ProjectManager().save(project, root)
             controller = Controller()
             controller.accept((project, root))

@@ -134,6 +134,21 @@ class AudioPageVoiceTests(unittest.TestCase):
         self.assertIsNone(project.speakers["SPK_03"]["tts_voice_id"])
         self.assertEqual(changes, [])
 
+    def test_display_name_maps_to_canonical_local_tts_voice_id(self):
+        voice_id = "vieneu_user_capcut_co_gai_hoat_ngon"
+        project = Project("voice", "source.mp4", speakers={
+            "SPK_UNKNOWN": {"id": "SPK_UNKNOWN", "name": "Unknown",
+                            "tts_voice_id": voice_id, "tts_speed": 1.0},
+        })
+        page = AudioPage()
+        page.populate(project, [{
+            "voice_id": voice_id, "display_name": "capcut_cô gái hoạt ngôn",
+            "status": "READY", "engine": "vieneu_v3", "favorite": True,
+        }])
+        combo = page.tts_table.cellWidget(0, 3)
+        self.assertEqual(combo.currentText(), "capcut_cô gái hoạt ngôn")
+        self.assertEqual(combo.currentData(), voice_id)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -65,6 +65,6 @@ def normalize_context_ids(value):
         return []
     result = []
     for key in value:
-        if key in PROFILES: result.append(key)
+        if key in PROFILES or key == "custom": result.append(key)
         else: result.extend(LEGACY_CONTEXT_ALIASES.get(key, ()))
     return list(dict.fromkeys(result))

@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from cartoon_sub.app.settings import AISettings
 from cartoon_sub.project.project_manager import ProjectManager
@@ -154,8 +154,11 @@ class TranslationContextProfilesTests(unittest.TestCase):
         self.assertEqual(page.proper_name_mode.count(), 3)
         self.assertFalse(hasattr(page, "apply_context_button"))
         self.assertFalse(hasattr(page, "context_button"))
-        self.assertEqual(page.analyze_button.text(), "Phân tích ngữ cảnh bằng AI")
-        self.assertEqual(page.proposal_button.text(), "Duyệt & lưu ngữ cảnh AI")
+        self.assertTrue(page.analyze_button.isHidden())
+        self.assertTrue(page.proposal_button.isHidden())
+        self.assertIn("Thể loại chính",
+                      [label.text() for label in page.findChildren(QLabel)])
+        self.assertEqual(page.translate_button.text(), "Dịch")
         self.assertEqual(page.qa_button.text(), "QA/QC bản dịch")
 
     def test_ui_enforces_three_genres_and_describes_style_and_name_rule(self):
@@ -171,7 +174,7 @@ class TranslationContextProfilesTests(unittest.TestCase):
         page.proper_name_mode.setCurrentIndex(page.proper_name_mode.findData("preserve_source"))
         self.assertIn("Giữ nguyên tên", page.proper_name_description.text())
 
-    def test_empty_supplemental_is_omitted_and_approved_context_is_explicit(self):
+    def test_empty_user_context_is_omitted_and_legacy_context_is_not_in_prompt(self):
         project = Project("demo", "video.mp4", translation_genres=["cultivation"],
                           glossary={"顾沉": "Cố Trầm"})
         instruction = build_context_instruction(project)
@@ -179,8 +182,8 @@ class TranslationContextProfilesTests(unittest.TestCase):
         self.assertNotIn("None", instruction)
         self.assertNotIn("null", instruction)
         payload = editorial(project)
-        self.assertIn("approved_context", payload)
-        self.assertNotIn("context", payload)
+        self.assertNotIn("approved_context", payload)
+        self.assertEqual(payload["user_defined_context"], "")
 
     def test_translation_prompt_is_natural_context_aware_and_id_scoped(self):
         project = Project(
@@ -200,7 +203,7 @@ class TranslationContextProfilesTests(unittest.TestCase):
         self.assertIn("bê cấu trúc tiếng Trung", prompt)
         self.assertIn("Không dùng mày/tao.", prompt)
         self.assertIn("顾沉 => Cố Trầm", prompt)
-        self.assertIn("顾沉 là sư huynh", prompt)
+        self.assertNotIn("顾沉 là sư huynh", prompt)
         self.assertIn('"reference_before": [{"id": 105', prompt)
         self.assertIn('"reference_after": [{"id": 107', prompt)
         self.assertIn("chỉ dịch targets", prompt)

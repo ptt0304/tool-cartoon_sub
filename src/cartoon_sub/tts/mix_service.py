@@ -16,8 +16,11 @@ from cartoon_sub.tts.cache_identity import (
     build_tts_fingerprint,
     build_tts_segment_id,
     normalize_tts_text,
+    resolve_tts_text,
+    TTS_SOURCE_DUBBING,
 )
 from cartoon_sub.tts.cache_manifest import load_manifest, project_audio_path
+from cartoon_sub.tts.cache_manifest import find_segment_entry
 from cartoon_sub.tts.duration_fit import DurationFitPlanner
 
 
@@ -116,6 +119,7 @@ class TTSTimelineMixService:
         if not project.utterances:
             raise ValueError("Project không có Utterance để mix")
         cache_manifest, cache_state = load_manifest(root)
+        text_source = getattr(project.audio_settings, "tts_text_source", TTS_SOURCE_DUBBING)
 
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
         false_overlaps = [(left, right) for left, right in zip(ordered, ordered[1:])
@@ -141,7 +145,9 @@ class TTSTimelineMixService:
             speaker = Speaker(**raw_speaker) if raw_speaker else None
             current = False
             if cache_state == "valid" and speaker and speaker.tts_voice_id:
-                entry = cache_manifest["segments"].get(utterance.tts_cache_key)
+                _, entry = find_segment_entry(
+                    cache_manifest["segments"], utterance.tts_cache_key, text_source,
+                )
                 try:
                     entry_path = project_audio_path(root, entry.get("file", "")) if entry else None
                     stored_path = (root / utterance.tts_audio_path).resolve() if utterance.tts_audio_path else None
@@ -153,11 +159,12 @@ class TTSTimelineMixService:
                     and utterance.tts_fingerprint == entry.get("signature")
                     and utterance.tts_segment_id == entry.get("segment_id")
                     and entry.get("voice_id") == speaker.tts_voice_id
-                    and entry.get("text") == normalize_tts_text(utterance.vi_dubbing)
+                    and entry.get("source", TTS_SOURCE_DUBBING) == text_source
+                    and entry.get("text") == resolve_tts_text(utterance, text_source)
                     and float(entry.get("speed", -1)) == float(speaker.tts_speed)
                     and entry_path == stored_path
                 )
-            elif cache_state == "missing":
+            elif cache_state == "missing" and text_source == TTS_SOURCE_DUBBING:
                 try:
                     current_fingerprint = (
                         build_tts_fingerprint(utterance, speaker, server_base_url)
@@ -182,7 +189,8 @@ class TTSTimelineMixService:
                 )
             if not current:
                 raise ValueError(
-                    f"TTS_AUDIO_STALE: Utterance {utterance.id} must be regenerated before mixing."
+                    f"TTS_AUDIO_STALE: Utterance {utterance.id} chưa có TTS hợp lệ cho nguồn "
+                    f"{text_source}. Hãy chạy Generate / Resume TTS trước."
                 )
             path = (root / utterance.tts_audio_path).resolve()
             try:
@@ -268,6 +276,8 @@ class TTSTimelineMixService:
             if not self._valid_wav(temporary):
                 raise RuntimeError("FFmpeg không tạo WAV mix hợp lệ")
             os.replace(temporary, destination)
+            from cartoon_sub.project.cache_status_service import write_dubbed_mix_state
+            write_dubbed_mix_state(project, root, text_source)
             finalize_time = perf_counter() - finalize_started
             self.last_diagnostics = MixDiagnostics(
                 segments_total=len(project.utterances), segments_ready=ready_count,

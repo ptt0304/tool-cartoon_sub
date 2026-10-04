@@ -23,10 +23,32 @@ def batches(rows, max_rows, max_chars=16000):
         yield batch
 
 
-def translation_batches(segments, chunk_size):
+def translation_batches(segments, chunk_size, *, max_duration=45.0, gap_seconds=3.0,
+                        max_chars=6000, neighbor_count=5):
+    """Adaptive conversation batches; gaps/duration can close a group before row limit."""
     rows = source_rows(segments)
-    offset = 0
-    for target in batches(rows, chunk_size, 8000):
-        end = offset + len(target)
-        yield target, rows[max(0, offset - 5):offset], rows[end:end + 5]
-        offset = end
+    groups, current, chars = [], [], 0
+    for row in rows:
+        row_chars = len(row["zh"])
+        if row_chars > max_chars:
+            raise ValueError(f"Subtitle {row['id']} quá dài; cần tách trước khi dịch")
+        gap = (float(row["start"]) - float(current[-1]["end"])) if current else 0.0
+        duration = (float(row["end"]) - float(current[0]["start"])) if current else 0.0
+        should_close = bool(current) and (
+            len(current) >= chunk_size or chars + row_chars > max_chars
+            or gap > gap_seconds or duration > max_duration
+        )
+        if should_close:
+            groups.append(current)
+            current, chars = [], 0
+        current.append(row)
+        chars += row_chars
+    if current:
+        groups.append(current)
+
+    offsets = {row["id"]: index for index, row in enumerate(rows)}
+    for target in groups:
+        start = offsets[target[0]["id"]]
+        end = offsets[target[-1]["id"]] + 1
+        yield (target, rows[max(0, start - neighbor_count):start],
+               rows[end:end + neighbor_count])

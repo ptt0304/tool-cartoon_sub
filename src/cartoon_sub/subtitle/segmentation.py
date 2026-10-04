@@ -86,7 +86,11 @@ class SegmentationPlan:
 
 
 STRONG_PUNCTUATION = ".?!…。？！"
-SOFT_PUNCTUATION = ",;:，；："
+PUNCTUATION_KINDS = {
+    ";": "semicolon_boundary", "；": "semicolon_boundary",
+    ":": "colon_boundary", "：": "colon_boundary",
+    ",": "comma_boundary", "，": "comma_boundary",
+}
 SEMANTIC_PHRASES = (
     "tuy nhiên", "vì vậy", "do đó", "sau đó", "hôm nay", "ngày mai", "thế nhưng",
     "trong khi", "chỉ vì", "nhưng", "rồi", "còn", "để",
@@ -152,8 +156,8 @@ def _raw_candidates(text):
                     run_start -= 1
                 run = text[run_start:index + 1]
                 found[index + 1] = "pause_boundary" if len(run) > 1 and set(run) <= {".", "…"} else "sentence_boundary"
-        elif char in SOFT_PUNCTUATION:
-            found[index + 1] = "comma_boundary"
+        elif char in PUNCTUATION_KINDS:
+            found[index + 1] = PUNCTUATION_KINDS[char]
     phrase_pattern = r"(?<!\w)(?:" + "|".join(re.escape(item) for item in SEMANTIC_PHRASES) + r")(?!\w)"
     for match in re.finditer(phrase_pattern, text, re.IGNORECASE):
         found.setdefault(match.start(), "semantic_boundary")
@@ -168,12 +172,27 @@ def _projected_duration(text, total_text, total_duration):
     return total_duration * len(text) / max(1, len(total_text))
 
 
-def _part_is_acceptable(text, duration, settings):
+def hard_limit_failures(text, duration, settings):
+    """Return only constraints that are authoritative for automatic splitting."""
     syllables = count_syllables(text)
+    lines = text.splitlines() or [text]
     visual_capacity = settings.hard_max_chars_per_line * settings.max_lines
-    # Duration alone is not a reason to fragment short, readable dialogue.
-    # It remains a scoring signal once a hard text-density limit requires a split.
-    return syllables <= settings.max_syllables and len(normalize_text(text)) <= visual_capacity
+    failures = []
+    if duration > settings.max_duration:
+        failures.append("max_duration")
+    if syllables > settings.max_syllables:
+        failures.append("max_syllables")
+    if len(lines) > settings.max_lines:
+        failures.append("max_lines")
+    visual_chars = sum(len(normalize_text(line)) for line in lines)
+    if ((len(lines) > 1 and any(len(normalize_text(line)) > settings.hard_max_chars_per_line for line in lines))
+            or visual_chars > visual_capacity):
+        failures.append("hard_chars_per_line")
+    return tuple(failures)
+
+
+def part_is_hard_valid(text, duration, settings):
+    return not hard_limit_failures(text, duration, settings)
 
 
 def _duration_fit(duration, settings):
@@ -209,10 +228,14 @@ def _candidate_score(text, position, kind, duration, settings):
     left, right = text[:position], text[position:]
     if _inside_protected(position, protected_spans(text)):
         return -1000.0
-    punctuation = {"sentence_boundary": 12.0, "comma_boundary": 7.0,
-                   "pause_boundary": 5.0, "semantic_boundary": 9.0, "whitespace_boundary": 0.0}[kind]
-    semantic = {"sentence_boundary": 7.0, "comma_boundary": 3.0,
-                "pause_boundary": 2.0, "semantic_boundary": 8.0, "whitespace_boundary": 0.0}[kind]
+    punctuation = {"sentence_boundary": 14.0, "semicolon_boundary": 11.0,
+                   "colon_boundary": 9.0, "comma_boundary": 7.0,
+                   "pause_boundary": 6.0, "semantic_boundary": 4.0,
+                   "whitespace_boundary": 0.0}[kind]
+    semantic = {"sentence_boundary": 7.0, "semicolon_boundary": 6.0,
+                "colon_boundary": 5.0, "comma_boundary": 3.0,
+                "pause_boundary": 2.0, "semantic_boundary": 4.0,
+                "whitespace_boundary": 0.0}[kind]
     left_duration = _projected_duration(left, text, duration)
     right_duration = _projected_duration(right, text, duration)
     score = punctuation + semantic
@@ -235,7 +258,7 @@ class LocalSegmentationEngine:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Utterance must contain Vietnamese subtitle text")
         candidates = self._candidates(text, utterance.duration)
-        if _part_is_acceptable(text, utterance.duration, self.settings):
+        if part_is_hard_valid(text, utterance.duration, self.settings):
             return SegmentationPlan(utterance.id, utterance.speaker_id, text, (text,), (), tuple(candidates), True, False)
         parts, reasons, unresolved = self._split(text, utterance.duration, candidates)
         flags = ("MANUAL_REVIEW",) if unresolved else ()
@@ -250,24 +273,33 @@ class LocalSegmentationEngine:
                 for position, kind in _raw_candidates(text)]
 
     def _split(self, text, duration, candidates):
-        priority = ("sentence_boundary", "comma_boundary", "pause_boundary",
-                    "semantic_boundary", "whitespace_boundary")
+        priority = ("sentence_boundary", "semicolon_boundary", "colon_boundary",
+                    "comma_boundary", "pause_boundary", "semantic_boundary",
+                    "whitespace_boundary")
+        spans = protected_spans(text)
+        whitespace = [BoundaryCandidate(index, "whitespace_boundary", 0.0)
+                      for index in range(1, len(text))
+                      if text[index - 1].isspace() and not _inside_protected(index, spans)]
+        all_candidates = list(candidates) + whitespace
+
+        def is_orphan(fragment):
+            return len(re.findall(r"[^\W\d_]+", normalize_text(fragment), re.UNICODE)) <= 1
 
         def recurse(start, end, depth=0):
             fragment = text[start:end]
             estimate = _projected_duration(fragment, text, duration)
-            if _part_is_acceptable(fragment, estimate, self.settings):
+            if part_is_hard_valid(fragment, estimate, self.settings):
                 return [(start, end)], [], False
             if depth >= 64:
                 return [(start, end)], [], True
-            available = [candidate for candidate in candidates if start < candidate.position < end]
-            if not available:
-                spans = protected_spans(text)
-                available = [BoundaryCandidate(index, "whitespace_boundary", 0.0)
-                             for index in range(start + 1, end)
-                             if text[index - 1].isspace() and not _inside_protected(index, spans)]
+            available = [candidate for candidate in all_candidates if start < candidate.position < end]
             if not available:
                 return [(start, end)], [], True
+            non_orphan = [candidate for candidate in available
+                          if not is_orphan(text[start:candidate.position])
+                          and not is_orphan(text[candidate.position:end])]
+            if non_orphan:
+                available = non_orphan
             best_kind = next(kind for kind in priority if any(item.kind == kind for item in available))
             same_priority = [item for item in available if item.kind == best_kind]
             candidate = max(same_priority, key=lambda item: self._range_score(text, start, end, item, duration))
@@ -276,7 +308,46 @@ class LocalSegmentationEngine:
             return left + right, left_reasons + [candidate.kind] + right_reasons, left_unresolved or right_unresolved
 
         ranges, reasons, unresolved = recurse(0, len(text))
+        ranges, reasons = self._merge_orphans(text, duration, ranges, reasons)
         return [text[start:end] for start, end in ranges], reasons, unresolved
+
+    def _merge_orphans(self, text, duration, ranges, reasons):
+        """Attach tiny children to a neighbour whenever the merged child stays hard-valid."""
+        ranges, reasons = list(ranges), list(reasons)
+
+        def orphan(item):
+            start, end = item
+            return len(re.findall(r"[^\W\d_]+", normalize_text(text[start:end]), re.UNICODE)) <= 1
+
+        changed = True
+        while changed and len(ranges) > 1:
+            changed = False
+            for index, item in enumerate(ranges):
+                if not orphan(item):
+                    continue
+                choices = []
+                if index > 0:
+                    merged = (ranges[index - 1][0], item[1])
+                    estimate = _projected_duration(text[merged[0]:merged[1]], text, duration)
+                    if part_is_hard_valid(text[merged[0]:merged[1]], estimate, self.settings):
+                        choices.append((merged[1] - merged[0], "left", merged))
+                if index + 1 < len(ranges):
+                    merged = (item[0], ranges[index + 1][1])
+                    estimate = _projected_duration(text[merged[0]:merged[1]], text, duration)
+                    if part_is_hard_valid(text[merged[0]:merged[1]], estimate, self.settings):
+                        choices.append((merged[1] - merged[0], "right", merged))
+                if not choices:
+                    continue
+                _, side, merged = min(choices, key=lambda value: value[0])
+                if side == "left":
+                    ranges[index - 1:index + 1] = [merged]
+                    reasons.pop(index - 1)
+                else:
+                    ranges[index:index + 2] = [merged]
+                    reasons.pop(index)
+                changed = True
+                break
+        return ranges, reasons
 
     def _range_score(self, text, start, end, candidate, duration):
         fragment = text[start:end]

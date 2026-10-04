@@ -1,11 +1,12 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,QLineEdit,
     QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView,QGroupBox)
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService, subtitle_source_text, subtitle_source_warning
 from cartoon_sub.subtitle.timestamps import format_srt_timestamp
 from cartoon_sub.ui.table_search import add_tree_search, apply_tree_search
+from cartoon_sub.ui.cache_status_widget import CacheStatusBox
 
 
 PROFILE_LABELS = {
@@ -25,6 +26,12 @@ class SubtitlePage(QWidget):
                       "không sửa transcript/dịch và giữ timestamp overlap giữa speaker. Chọn câu dài rồi bấm "
                       "‘Căn timing audio’ để Gemini nghe audio và đặt mốc hiển thị chi tiết.")
         note.setWordWrap(True); layout.addWidget(note)
+        model_row = QHBoxLayout(); self.ai_model_search = QLineEdit(); self.ai_model = QComboBox(); self.ai_model_effective = QLabel()
+        self.ai_model_search.setPlaceholderText("Tìm model theo provider, tên hoặc ID…")
+        model_row.addWidget(QLabel("Model AI cho tab")); model_row.addWidget(self.ai_model_search, 1); model_row.addWidget(self.ai_model, 2)
+        self.reset_ai_button = QPushButton("Xóa dữ liệu AI / Chạy lại")
+        model_row.addWidget(self.ai_model_effective); model_row.addWidget(self.reset_ai_button); layout.addLayout(model_row)
+        self.cache_status = CacheStatusBox(); layout.addWidget(self.cache_status)
         source_row = QHBoxLayout();self.text_source = QComboBox()
         self.text_source.addItem("VI Subtitle", "vi_subtitle");self.text_source.addItem("VI Dubbing", "vi_dubbing")
         source_row.addWidget(QLabel("Nguồn nội dung phụ đề"));source_row.addWidget(self.text_source);source_row.addStretch();layout.addLayout(source_row)

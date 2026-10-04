@@ -10,7 +10,7 @@ from cartoon_sub.syllable.chinese import count as count_zh
 from cartoon_sub.syllable.vietnamese import count as count_vi
 from cartoon_sub.syllable.target import DubbingSettings, target_syllables, allowed_delta
 from cartoon_sub.project.project_manager import ProjectManager
-from cartoon_sub.translation.dubbing_service import DubbingService, eligible_dubbing_ids, parse_dubbing_threshold
+from cartoon_sub.translation.dubbing_service import DubbingService, eligible_dubbing_ids, parse_dubbing_threshold, semantic_preservation_issue
 from cartoon_sub.ui.timeline_table import delta_target_color
 from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.translation.context_service import source_fingerprint
@@ -61,6 +61,18 @@ class MasterTimelineTests(unittest.TestCase):
         self.assertEqual(delta_target_color(3), "#fff0be")
         self.assertEqual(delta_target_color(4), "#ffd0d0")
 
+    def test_bulk_threshold_filters_locally_and_individual_selection_overrides_it(self):
+        project = Project("threshold", "missing.mp4", segments=[
+            Segment(1, 0, 1, "甲", vi="một hai", target_override=1),
+            Segment(2, 1, 2, "乙", vi="một hai ba", target_override=1),
+            Segment(3, 2, 3, "丙", vi="một hai ba bốn", target_override=1),
+            Segment(4, 3, 4, "丁", vi="một hai ba bốn năm", target_override=1),
+            Segment(5, 4, 5, "戊", vi="một hai ba bốn năm sáu", target_override=1),
+        ])
+        ids = [1, 2, 3, 4, 5]
+        self.assertEqual(eligible_dubbing_ids(project, ids, 3), [3, 4, 5])
+        self.assertEqual(eligible_dubbing_ids(project, [1], 1, apply_threshold=False), [1])
+
     def test_threshold_five_sends_only_eligible_row_and_preserves_subtitle(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Project("threshold", "missing.mp4", segments=[
@@ -85,6 +97,80 @@ class MasterTimelineTests(unittest.TestCase):
             self.assertEqual(result.segments[0].vi_dubbing, "một hai")
             self.assertEqual(result.segments[0].vi_syllables, 2)
             self.assertEqual(result.segments[0].syllable_delta, 0)
+
+    def test_dubbing_optimization_needs_no_legacy_context_or_speaker_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Project("dubbing", "missing.mp4", segments=[
+                Segment(1, 4, 6, "跟你没关系", vi="Chuyện này không liên quan đến cô",
+                        speaker_id="SPK_01", target_override=5),
+            ])
+            row = project.segments[0]
+            row.tts_generation_status = "generated"
+            project.final_audio_status = "ready"
+            before = (row.id, row.zh, row.start, row.end, row.vi_subtitle)
+            client = Mock()
+            client.generate_json.return_value = reply("Không liên quan đến cô", True)
+
+            result, _ = DubbingService(store(), lambda key: client).optimize(
+                project, directory, [1], threshold=1, model="mock-dubbing",
+            )
+
+            changed = result.segments[0]
+            self.assertEqual(client.generate_json.call_count, 1)
+            self.assertEqual((changed.id, changed.zh, changed.start, changed.end, changed.vi_subtitle), before)
+            self.assertEqual(changed.vi_dubbing, "Không liên quan đến cô")
+            self.assertEqual(changed.tts_generation_status, "stale")
+            self.assertEqual(result.final_audio_status, "stale")
+
+    def test_maximum_delta_is_sent_and_overage_is_marked_for_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Project("dubbing", "missing.mp4", segments=[
+                Segment(1, 4, 6, "跟你没关系", vi="một hai ba bốn năm sáu bảy tám chín mười",
+                        speaker_id="SPK_01", target_override=5),
+            ])
+            client = Mock()
+            client.generate_json.return_value = reply("một hai ba bốn năm sáu bảy tám", True)
+
+            result, _ = DubbingService(store(), lambda key: client).optimize(
+                project, directory, [1], threshold=1, maximum_delta=2,
+                apply_threshold=False, model="mock-dubbing",
+            )
+
+            row = result.segments[0]
+            self.assertIn('"maximum_allowed_delta": 2', client.generate_json.call_args.args[1])
+            self.assertEqual(client.generate_json.call_count, 3)
+            self.assertEqual(row.syllable_delta, 3)
+            self.assertEqual(row.dubbing_status, "needs_review")
+            self.assertIn("Vượt Δ tối đa +2", result.translation_notes["dub:1"])
+
+    def test_dubbing_optimizer_rejects_animal_substitution_without_staling_tts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = "Dạo này em béo lên rồi, đúng là rất giống một con lợn đấy."
+            candidate = "Dạo này em béo thật đấy, trông như con nhện."
+            project = Project("semantic", "missing.mp4", segments=[
+                Segment(1, 0, 5, "最近你胖了，真像一头猪", vi=original,
+                        speaker_id="SPK_01", target_override=30),
+            ])
+            row = project.segments[0]
+            row.tts_generation_status = "generated"
+            project.final_audio_status = "ready"
+            self.assertEqual(semantic_preservation_issue(project, row, candidate), "động vật: lợn → nhện")
+            client = Mock()
+            client.generate_json.return_value = reply(candidate, True)
+
+            result, _ = DubbingService(store(), lambda key: client).optimize(
+                project, directory, [1], threshold=1, maximum_delta=20,
+                apply_threshold=False, model="mock-dubbing",
+            )
+
+            rejected = result.segments[0]
+            self.assertEqual(client.generate_json.call_count, 1)
+            self.assertEqual(rejected.vi_subtitle, original)
+            self.assertEqual(rejected.vi_dubbing, original)
+            self.assertEqual(rejected.tts_generation_status, "generated")
+            self.assertEqual(result.final_audio_status, "ready")
+            self.assertEqual(rejected.dubbing_status, "needs_review")
+            self.assertIn("lợn → nhện", result.translation_notes["dub:1"])
 
     def test_no_threshold_eligible_rows_makes_no_ai_call(self):
         with tempfile.TemporaryDirectory() as directory:

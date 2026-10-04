@@ -188,23 +188,19 @@ class Phase5Tests(unittest.TestCase):
         from cartoon_sub.app.main import Path
         self.assertTrue((Path(__file__).resolve().parents[1] / "src" / "cartoon_sub" / "assets" / "cartoon_sub.ico").is_file())
 
-    def test_text_provider_registry_has_ten_supported_choices(self):
+    def test_legacy_provider_registry_is_kept_only_for_compatibility(self):
         from cartoon_sub.app.settings import AISettings
         self.assertEqual(len(PROVIDER_CATALOG),10)
-        for provider in ("gemini",*PROVIDERS):
-            self.assertEqual(AISettings(translation_provider=provider).validate().translation_provider,provider)
-            self.assertTrue(MODEL_PRESETS[provider])
+        self.assertEqual(AISettings().validate().translation_provider, "openrouter")
+        self.assertEqual(MODEL_PRESETS["openrouter"], ())
+        for provider in ("gemini", *PROVIDERS):
+            model = MODEL_PRESETS[provider][0]
+            self.assertEqual(AISettings(translation_provider=provider,
+                                        translation_model=model).validate().translation_provider, provider)
 
-    def test_settings_switches_translation_model_presets_by_provider(self):
-        with tempfile.TemporaryDirectory() as directory:
-            key_file=Path(directory)/"api_key.txt"
-            key_file.write_text("gemini_key: TEST\ndeepseek_key: TEST\nclaude_key: TEST\n",encoding="utf-8")
-            window=MainWindow();dialog=SettingsDialog(window.controller);dialog.key_file.setText(str(key_file))
-            dialog.provider.setCurrentIndex(dialog.provider.findData("deepseek"))
-            self.assertEqual(dialog.translation_model.currentText(),"deepseek-v4-pro")
-            dialog.provider.setCurrentIndex(dialog.provider.findData("anthropic"))
-            self.assertIn(dialog.translation_model.currentText(),MODEL_PRESETS["anthropic"])
-            dialog.close();window.close()
+    def test_settings_has_no_hard_coded_openrouter_model_presets(self):
+        self.assertEqual(PROVIDER_CATALOG["openrouter"]["models"], ())
+        self.assertEqual(MODEL_PRESETS["openrouter"], ())
 
     def test_invalid_mask_rejected(self):
         p=self.project();p.mask=Mask(True,'gaussian',300,150,40,40)

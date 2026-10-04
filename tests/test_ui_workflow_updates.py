@@ -13,7 +13,7 @@ from cartoon_sub.app.settings import AISettings
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.speaker.service import approve_review
 from cartoon_sub.subtitle.models import Project, Segment
-from cartoon_sub.translation.context_service import source_fingerprint
+from cartoon_sub.translation.context_service import source_fingerprint, context_config_fingerprint
 from cartoon_sub.translation.pipeline import TranslationPipeline
 from cartoon_sub.ui.main_window import MainWindow
 from cartoon_sub.ui.no_wheel import NoWheelNumericFilter
@@ -56,6 +56,8 @@ class UIWorkflowUpdateTests(unittest.TestCase):
             project.speakers = {"SPK_01": {"id":"SPK_01", "name":"One"}}
             for segment in project.utterances: segment.speaker_id = "SPK_01"
             approve_review(project); project.context_source_hash = source_fingerprint(project)
+            project.context_status = "applied"
+            project.context_approved_config_hash = context_config_fingerprint(project)
             ProjectManager().save(project, root)
             store = Mock(); store.load.return_value = AISettings()
             factory = Mock(side_effect=AssertionError("AI must not be called for imported rows"))
@@ -70,6 +72,8 @@ class UIWorkflowUpdateTests(unittest.TestCase):
         self.assertEqual(len(window.tab_scrolls), 7)
         self.assertTrue(all(isinstance(scroll, QScrollArea) and scroll.widgetResizable()
                             for scroll in window.tab_scrolls))
+        self.assertEqual(window.pages[2].optimize_button.text(), "Tối ưu dubbing đã chọn")
+        self.assertEqual(window.pages[2].optimize_bulk_button.text(), "Tối ưu dubbing hàng loạt")
         window.close()
 
     def test_tab_progress_is_determinate_and_cancel_feedback_is_immediate(self):

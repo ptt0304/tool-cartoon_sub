@@ -152,7 +152,10 @@ class DisplaySegmentAllocator:
             source = "source_clause_position"
         if boundaries is None:
             boundaries, source = _proportional_boundaries(utterance, plan)
-        boundaries = _rebalance(utterance, boundaries, self.settings.min_duration)
+        # Exact word/clause anchors are timing authority. Rebalancing is only
+        # allowed for locally estimated proportional timings.
+        if source in {"syllable_proportion", "character_proportion", "even_proportion"}:
+            boundaries = _rebalance(utterance, boundaries, self.settings.min_duration)
         times = [utterance.start, *boundaries, utterance.end]
         if any(left >= right for left, right in zip(times, times[1:])):
             raise ValueError("Unable to allocate positive display segment durations")

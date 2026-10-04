@@ -162,6 +162,19 @@ CONTEXT_SCHEMA = {"type": "OBJECT", "properties": {
         "spk_id": {"type": "STRING"}, "character_id": {"type": "STRING"}, "confidence": {"type": "NUMBER"},
         "evidence_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}}, "notes": {"type": "STRING"}},
         "required": ["spk_id", "character_id", "confidence", "evidence_ids", "notes"]}},
+    "new_character_candidates": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+        "temporary_id": {"type": "STRING"}, "description": {"type": "STRING"},
+        "aliases": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "gender_context": {"type": "STRING", "enum": sorted(GENDER_CONTEXTS)},
+        "confidence": {"type": "NUMBER"},
+        "uncertain": {"type": "BOOLEAN"},
+        "evidence_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}},
+        "bindings": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "id": {"type": "INTEGER"},
+            "role": {"type": "STRING", "enum": ["speaker", "addressee", "visible"]}},
+            "required": ["id", "role"]}}},
+        "required": ["temporary_id", "description", "aliases", "gender_context", "confidence",
+                     "uncertain", "evidence_ids", "bindings"]}},
     "visual_contexts": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
         "id": {"type": "INTEGER"}, "scene_mode": {"type": "STRING", "enum": sorted(SCENE_MODES)},
         "speaker": {"type": "OBJECT", "properties": {"spk_id": {"type": "STRING"}, "character_id": {"type": "STRING"}, "confidence": {"type": "NUMBER"}}, "required": ["spk_id", "character_id", "confidence"]},

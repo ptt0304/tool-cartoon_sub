@@ -26,7 +26,12 @@ FIXED_TARGET = "Hắn còn có một kiện pháp khí trung phẩm tên là Lư
 
 def settings_store():
     store = Mock()
-    store.load.return_value = AISettings(translation_chunk_size=30, retry_count=0)
+    store.load.return_value = AISettings(
+        default_ai_model="qwen/test", translation_chunk_size=30, retry_count=0)
+    store.openrouter_catalog_cache.return_value = {"models": [{
+        "id": "qwen/test", "name": "Test",
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+    }]}
     store.get_key.return_value = "fake-key"
     return store
 
@@ -114,7 +119,7 @@ class TranslationQATests(unittest.TestCase):
         approved = Project("qa", "video.mp4", segments=[segment], story_context={
             "terms": [{"source": "青云宗", "target": "青云宗", "notes": "locked", "evidence_ids": [1]}]
         })
-        self.assertEqual(local_translation_qa(approved, segment)["status"], "PASS")
+        self.assertEqual(local_translation_qa(approved, segment)["status"], "FAIL")
 
     def test_unresolved_context_target_is_not_enforced_as_a_translation(self):
         segment = Segment(34, 0, 1, "堂堂圣兽。", vi="Đường đường là thánh thú.")
@@ -134,7 +139,7 @@ class TranslationQATests(unittest.TestCase):
                                           "Bản lỗi", [{"type": "UNTRANSLATED_HAN"}], 1)
         payload = prompt_payload(prompt)
         self.assertEqual([row["id"] for row in payload["targets"]], [34])
-        self.assertEqual([row["id"] for row in payload["editorial"]["approved_context"]["visual_contexts"]], [34])
+        self.assertNotIn("approved_context", payload["editorial"])
 
     def test_targeted_retry_fixes_only_bad_row_and_syncs_live_srt(self):
         bad = Segment(133, 12.25, 14.75, SOURCE, vi=BAD_TARGET)
@@ -174,7 +179,7 @@ class TranslationQATests(unittest.TestCase):
         self.assertTrue(all(result.translation_qa[str(index)]["status"] == "PASS" for index in range(1, 391)))
         self.assertTrue(all(result.translation_qa[str(index)]["status"] == "AUTO_FIXED" for index in range(391, 401)))
 
-    def test_failed_retry_stops_after_two_and_keeps_original_for_review(self):
+    def test_failed_retry_stops_after_one_and_keeps_original_for_review(self):
         segment = Segment(1, 0, 1, SOURCE, vi=BAD_TARGET)
         project = Project("qa", "video.mp4", segments=[segment], translation_status="completed")
         client = Mock()
@@ -184,10 +189,10 @@ class TranslationQATests(unittest.TestCase):
         }]}
         with tempfile.TemporaryDirectory() as directory:
             result, _ = TranslationQAService(settings_store(), lambda _key: client).run(project, directory)
-        self.assertEqual(client.generate_json.call_count, 2)
+        self.assertEqual(client.generate_json.call_count, 1)
         self.assertEqual(result.segments[0].vi_subtitle, BAD_TARGET)
         self.assertEqual(result.translation_qa["1"]["status"], "NEED_REVIEW")
-        self.assertEqual(result.translation_qa["1"]["attempts"], 2)
+        self.assertEqual(result.translation_qa["1"]["attempts"], 1)
 
     def test_qa_fingerprint_invalidates_only_changed_text(self):
         segment = Segment(1, 0, 1, "我不同意。", vi="Tôi không đồng ý.")
@@ -262,7 +267,7 @@ class TranslationQATests(unittest.TestCase):
                             for row in result.segments if row.id not in {2, 4}))
         self.assertEqual([row["id"] for row in payloads[0]["reference_before"]], [1])
         self.assertEqual([row["id"] for row in payloads[0]["reference_after"]], [3, 4, 5])
-        self.assertEqual([row["id"] for row in payloads[0]["editorial"]["approved_context"]["visual_contexts"]], [2])
+        self.assertNotIn("approved_context", payloads[0]["editorial"])
         self.assertEqual((result.segments[1].id, result.segments[1].start, result.segments[1].end),
                          (2, original[2]["start"], original[2]["end"]))
 

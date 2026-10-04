@@ -2,15 +2,15 @@
 
 ## Trạng thái build hiện tại
 
-Cartoon_Sub hiện là ứng dụng **chạy từ source**, chưa có pipeline binary portable:
+Cartoon_Sub có pipeline Windows binary qua `Cartoon_Sub.spec` và `build_exe.ps1`:
 
 - package Python được khai báo trong `pyproject.toml` (`cartoon-sub` v0.3.0);
-- GUI chạy bằng console script `cartoon-sub`, module `cartoon_sub.app.main` hoặc `Cartoon_Sub_GUI.pyw`;
-- repository không có PyInstaller `.spec`, build script hoặc artifact `Cartoon_Sub.exe` được định nghĩa;
-- `ffmpeg` và `ffprobe` được gọi bằng tên executable, tức phải có trong `PATH`;
-- font không được bundle; renderer dùng font đã cài trên Windows.
+- GUI chạy bằng `cartoon-sub`, module `cartoon_sub.app.main` hoặc `Cartoon_Sub_GUI.pyw`;
+- `powershell -ExecutionPolicy Bypass -File .\build_exe.ps1` tạo `Cartoon_Sub.exe` và `_internal/` tại root;
+- hai artifact build này bị Git ignore và phải được đưa cùng nhau khi phát hành binary;
+- `ffmpeg`/`ffprobe` vẫn cần có trong `PATH`; font vẫn dùng font đã cài trên Windows.
 
-Vì vậy hiện chưa thể tạo `Cartoon_Sub_Portable_v0.3.0.zip` dạng binary standalone chỉ bằng các file có sẵn trong repo. Không dùng lệnh PyInstaller tự đoán. Cho đến khi có build pipeline được kiểm thử, PC đích vẫn cần Python 3.11+, cài dependencies và FFmpeg/ffprobe.
+Không dùng lệnh PyInstaller tự đoán; dùng `build_exe.ps1` để build. Bản source-transfer vẫn cần Python 3.11+, dependencies và FFmpeg/ffprobe.
 
 ## Các file cần cho source-transfer hiện tại
 
@@ -27,7 +27,7 @@ Vì vậy hiện chưa thể tạo `Cartoon_Sub_Portable_v0.3.0.zip` dạng bina
 | project folders, `project.json`, source video, WAV/MP3/MP4, cache, preview, output, logs | PRIVATE — DO NOT PACKAGE | Dữ liệu người dùng/project |
 | `.env`, API keys, keyring export, `%USERPROFILE%\.cartoon_sub` | PRIVATE — DO NOT PACKAGE | Secrets và settings cá nhân |
 
-`src/cartoon_sub/assets/cartoon_sub.png` và `.ico`, cùng `src/cartoon_sub/prompts/*.txt`, là package data bắt buộc. Khi có binary build trong tương lai, build script phải bundle chúng và smoke test icon/prompts từ staging; task hiện tại không thêm pipeline đó.
+`src/cartoon_sub/assets/cartoon_sub.png` và `.ico`, cùng `src/cartoon_sub/prompts/*.txt`, là package data bắt buộc. `Cartoon_Sub.spec` dùng `collect_data_files("cartoon_sub")` để bundle package data; sau mỗi build cần smoke test icon và prompt từ thư mục phát hành.
 
 ## FFmpeg và fonts
 
@@ -167,7 +167,7 @@ Smoke này chứng minh source-transfer ở đường dẫn khác, không chứn
 
 ## Portability blockers
 
-1. Chưa có PyInstaller `.spec`/build script/`Cartoon_Sub.exe` được kiểm thử.
+1. `Cartoon_Sub.exe` phải luôn đi cùng toàn bộ `_internal/` cùng phiên bản; không chỉ copy riêng file `.exe`.
 2. FFmpeg/ffprobe là external `PATH` dependency, chưa có bundled resolver.
 3. `local_tts_executable` có thể là absolute user setting và cần chọn lại sau khi di chuyển.
 4. Project có thể tham chiếu absolute source video/logo/additional audio ở ngoài project.

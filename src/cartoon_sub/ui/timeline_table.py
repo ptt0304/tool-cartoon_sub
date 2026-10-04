@@ -1,12 +1,13 @@
-from PySide6.QtWidgets import QTableWidget,QAbstractItemView,QTableWidgetItem,QHeaderView
+from PySide6.QtWidgets import QTableWidget,QAbstractItemView,QTableWidgetItem,QHeaderView,QLineEdit,QLabel
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIntValidator
 from cartoon_sub.translation.qc import review_translation
 from cartoon_sub.translation.modes import MODE_LABELS
 from cartoon_sub.subtitle.timestamps import format_srt_timestamp
 from cartoon_sub.ui.table_search import apply_table_search
 
 EDITABLE_COLUMNS = {1, 2, 4, 5, 7, 8}  # Start, End, Speaker, Chinese, VI Subtitle, VI Dubbing
+DELTA_VALUE_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 def delta_target(segment):
@@ -20,6 +21,39 @@ def delta_target_color(delta):
     if delta <= 3:
         return "#fff0be"
     return "#ffd0d0"
+
+
+def install_delta_target_filter(table):
+    """Attach an inclusive, display-only range filter to the existing search row."""
+    minimum = QLineEdit(); maximum = QLineEdit()
+    validator = QIntValidator(-999999, 999999, table)
+    minimum.setValidator(validator); maximum.setValidator(validator)
+    minimum.setPlaceholderText("Min"); maximum.setPlaceholderText("Max")
+    minimum.setMaximumWidth(72); maximum.setMaximumWidth(72)
+    table.search_row.addWidget(QLabel("Δ target:"))
+    table.search_row.addWidget(minimum)
+    table.search_row.addWidget(QLabel("đến"))
+    table.search_row.addWidget(maximum)
+    table.delta_min_edit = minimum; table.delta_max_edit = maximum
+
+    def value(edit):
+        text = edit.text().strip()
+        return int(text) if text not in {"", "+", "-"} else None
+
+    def predicate(row):
+        low, high = value(minimum), value(maximum)
+        if low is not None and high is not None and low > high:
+            return False
+        item = table.item(row, 11)
+        delta = item.data(DELTA_VALUE_ROLE) if item is not None else None
+        if delta is None:
+            return low is None and high is None
+        return (low is None or delta >= low) and (high is None or delta <= high)
+
+    table.row_filter_predicate = predicate
+    minimum.textChanged.connect(lambda *_: apply_table_search(table))
+    maximum.textChanged.connect(lambda *_: apply_table_search(table))
+    return minimum, maximum
 
 
 def create_table():
@@ -147,6 +181,8 @@ def populate(table, project, view="both"):
             item = QTableWidgetItem(str(value))
             item.setToolTip(str(value))
             item.setData(Qt.ItemDataRole.UserRole, s.id)
+            if col == 11:
+                item.setData(DELTA_VALUE_ROLE, delta)
             if col not in EDITABLE_COLUMNS:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             else:

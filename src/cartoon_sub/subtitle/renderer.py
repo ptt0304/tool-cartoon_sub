@@ -1,7 +1,6 @@
 """ASS is derived from subtitle text; never modify the master timeline."""
 import math
 import re
-import textwrap
 from pathlib import Path
 import pysubs2
 from cartoon_sub.subtitle.canonical_timeline import canonical_timeline
@@ -22,8 +21,7 @@ def validate_visuals(project):
     if m.kind not in ('solid', 'gaussian', 'none'):
         raise ValueError('Kiểu mask không hợp lệ')
     _color(m.mask_color); _color(s.text_color); _color(s.outline_color)
-    needs_region = m.enabled and (m.kind != 'none' or s.center_in_mask)
-    if needs_region and (any(type(v) is not int for v in (m.x,m.y,m.width,m.height)) or
+    if (any(type(v) is not int for v in (m.x,m.y,m.width,m.height)) or
                          m.x < 0 or m.y < 0 or m.width < 2 or m.height < 2 or
                          m.x+m.width > width or m.y+m.height > height):
         raise ValueError('Vùng mask phải nằm trong video và rộng/cao ít nhất 2 pixel')
@@ -31,12 +29,10 @@ def validate_visuals(project):
         raise ValueError('Độ nhòe mask phải từ 1 đến 20')
     if not s.font.strip() or any(c in s.font for c in '\r\n,'):
         raise ValueError('Tên font không hợp lệ')
-    if not 8 <= s.font_size <= 300 or s.alignment not in range(1,10) or not 1 <= s.max_lines <= 4:
-        raise ValueError('Font 8–300; alignment 1–9; số dòng 1–4')
+    if not 8 <= s.font_size <= 300:
+        raise ValueError('Font phải từ 8–300')
     if any(not math.isfinite(v) or not 0 <= v <= 20 for v in (s.outline,s.shadow)) or not 0 <= s.margin_bottom < height:
         raise ValueError('Outline/shadow 0–20; margin phải nhỏ hơn chiều cao video')
-    if s.center_in_mask and not m.enabled:
-        raise ValueError('Bật vùng mask trước khi căn phụ đề vào giữa vùng đó')
     if getattr(s, 'speaker_label_mode', 'overlap_only') not in ('off', 'overlap_only', 'always', 'debug'):
         raise ValueError('Chế độ speaker label không hợp lệ')
     for logo in project.logos:
@@ -62,7 +58,7 @@ def save_ass(project, path, start=0, duration=None):
     subs = pysubs2.SSAFile()
     subs.info.update(PlayResX=str(width), PlayResY=str(height), WrapStyle='2', ScaledBorderAndShadow='yes')
     subs.styles['Default'] = pysubs2.SSAStyle(fontname=style.font, fontsize=style.font_size,
-        bold=style.bold, outline=style.outline, shadow=style.shadow, alignment=pysubs2.Alignment(style.alignment),
+        bold=style.bold, outline=style.outline, shadow=style.shadow, alignment=pysubs2.Alignment(5),
         marginv=style.margin_bottom, marginl=20, marginr=20,
         primarycolor=_color(style.text_color), outlinecolor=_color(style.outline_color))
     watermark = project.watermark
@@ -74,12 +70,9 @@ def save_ass(project, path, start=0, duration=None):
 
     utterance_by_id = {row.id: row for row in project.utterances}
     for entry in canonical_timeline(project.utterances):
-        if style.center_in_mask:
-            center_x = project.mask.x + project.mask.width // 2
-            mid_y = project.mask.y + project.mask.height // 2
-            position_tag = r'{\an5\pos(%d,%d)}' % (round(center_x), round(mid_y))
-        else:
-            position_tag = ''
+        center_x = project.mask.x + project.mask.width / 2
+        mid_y = project.mask.y + project.mask.height / 2
+        position_tag = r'{\an5\pos(%d,%d)}' % (round(center_x), round(mid_y))
         if len(entry.source_utterance_ids) > 1:
             text = " ".join(filter(None, (subtitle_source_text(project, utterance_by_id[row_id]).strip()
                                            for row_id in entry.source_utterance_ids)))
@@ -92,14 +85,12 @@ def save_ass(project, path, start=0, duration=None):
             if row_end <= start or row_start >= end:
                 continue
             # Speaker metadata remains internal and never becomes user-visible text.
-            text = re.sub(r'\s+', ' ', row_text).strip().replace('\\','／').replace('{','(').replace('}',')')
-            if not text:
+            lines = [re.sub(r'[ \t]+', ' ', line).strip()
+                     for line in row_text.replace('\r\n','\n').replace('\r','\n').split('\n')]
+            lines = [line.replace('\\','／').replace('{','(').replace('}',')')
+                     for line in lines if line]
+            if not lines:
                 continue
-            columns = max(8, int((width-40)/(style.font_size*.55)))
-            lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
-            while len(lines) > style.max_lines:
-                columns += 1
-                lines = textwrap.wrap(text, columns, break_long_words=False, break_on_hyphens=False)
             subs.events.append(pysubs2.SSAEvent(start=round((max(row_start,start)-start)*1000),
                 end=round((min(row_end,end)-start)*1000), text=position_tag + r'\N'.join(lines)))
     if watermark.text.strip():

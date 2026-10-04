@@ -98,6 +98,8 @@ class Utterance:
     speaker_name: str = "Unknown"
     speaker_confidence: float | None = None
     transcript_confidence: float | None = None
+    transcript_timing_provenance: str = "ESTIMATED"
+    transcript_timing_confidence: float = 0.0
     overlap: bool = False
     overlap_group: str | None = None
     overlap_type: str = "NONE"
@@ -136,6 +138,8 @@ class Utterance:
     tts_generation_status: str = "not_generated"
     tts_error: str = ""
     display_segments: list[DisplaySegment] = field(default_factory=list)
+    canonical_edit_source: str = "automatic"
+    manual_split_parent_id: int | None = None
 
     def __init__(self, id, start, end, zh="", vi=None, vi_subtitle=None, vi_dubbing=None, **kwargs):
         from dataclasses import fields, MISSING
@@ -170,6 +174,14 @@ class Utterance:
         for confidence in (self.speaker_confidence,self.transcript_confidence):
             if confidence is not None and (type(confidence) not in (int,float) or not math.isfinite(confidence) or not 0<=confidence<=1):
                 raise ValueError("Confidence must be null or in [0,1]")
+        if self.transcript_timing_provenance not in {
+            "WORD_TIMESTAMP", "PARTIAL_WORD_ALIGNMENT", "LOCAL_ESTIMATION", "ESTIMATED",
+        }:
+            raise ValueError("Invalid transcript timing provenance")
+        if (type(self.transcript_timing_confidence) not in (int, float)
+                or not math.isfinite(self.transcript_timing_confidence)
+                or not 0 <= self.transcript_timing_confidence <= 1):
+            raise ValueError("Invalid transcript timing confidence")
         if self.target_override is not None and (type(self.target_override) is not int or self.target_override<1):
             raise ValueError("Target override must be a positive integer")
         if self.tts_duration is not None and (type(self.tts_duration) not in (int,float) or not math.isfinite(self.tts_duration) or self.tts_duration<=0):
@@ -203,6 +215,12 @@ class Utterance:
             "UNKNOWN_SPEAKER_REVIEW", "TIMING_REVIEW_REQUIRED",
         }:
             raise ValueError("Invalid overlap type")
+        if self.canonical_edit_source not in {"automatic", "manual_split"}:
+            raise ValueError("Invalid canonical edit source")
+        if self.manual_split_parent_id is not None and (
+            type(self.manual_split_parent_id) is not int or self.manual_split_parent_id < 1
+        ):
+            raise ValueError("Manual split parent ID must be a positive integer or null")
         if not isinstance(self.overlap_diagnostics, list) or any(not isinstance(item, str) for item in self.overlap_diagnostics):
             raise ValueError("Overlap diagnostics must be text")
 
@@ -351,6 +369,7 @@ class AudioSettings:
     additional_audio_path: str | None = None
     additional_audio_volume: int = 100
     additional_audio_start: float = 0.0
+    tts_text_source: str = "vi_dubbing"
 
     def validate(self):
         import math
@@ -375,6 +394,8 @@ class AudioSettings:
         ):
             raise ValueError("additional_audio_start must be >= 0")
         self.additional_audio_start = float(self.additional_audio_start)
+        if self.tts_text_source not in {"vi_subtitle", "vi_dubbing"}:
+            raise ValueError("tts_text_source must be vi_subtitle or vi_dubbing")
         return self
 
 @dataclass
@@ -386,6 +407,9 @@ class Project:
     segments: list[Utterance] = field(default_factory=list)
     transcription_status: str = "not_started"
     translation_prompt: str = ""
+    translation_custom_genre: str = ""
+    translation_custom_style: str = ""
+    translation_custom_name_rule: str = ""
     translation_preset: str = "Natural Vietnamese"
     glossary: dict[str, str] = field(default_factory=dict)
     mask: Mask = field(default_factory=Mask)
@@ -410,10 +434,13 @@ class Project:
     translation_status: str = "not_started"
     translation_notes: dict = field(default_factory=dict)
     translation_qa: dict = field(default_factory=dict)
+    translation_continuity_memory: list[dict] = field(default_factory=list)
 
     speakers: dict = field(default_factory=dict)
     speaker_review_hash: str = ""
     speaker_review_initial_state: dict = field(default_factory=dict)
+    speaker_evidence: list[dict] = field(default_factory=list)
+    speaker_proposals: dict = field(default_factory=dict)
     dubbing_settings: dict = field(default_factory=dict)
     segmentation_profile: str = "BALANCED"
     segmentation_settings: dict = field(default_factory=dict)
@@ -497,11 +524,16 @@ class Project:
         if legacy_context:
             data["translation_prompt"] = "\n".join(filter(None, (data.get("translation_prompt", ""), legacy_context)))
         mode = data.get("proper_name_mode", "sino_vietnamese")
-        if mode not in ("sino_vietnamese", "preserve_source", "user_mapping"):
+        if mode in ("user_mapping", "Theo Mapping của user"):
+            mode = "custom"
+        if mode not in ("sino_vietnamese", "preserve_source", "custom"):
             mode = "sino_vietnamese"
         data["proper_name_mode"] = mode
         if not isinstance(data.get("translation_qa", {}), dict):
             data["translation_qa"] = {}
+        if not isinstance(data.get("translation_continuity_memory", []), list):
+            data["translation_continuity_memory"] = []
+        data["translation_continuity_memory"] = data.get("translation_continuity_memory", [])[:64]
         from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings
         profile=SegmentationProfile(data.get("segmentation_profile", "BALANCED"))
         data["segmentation_profile"]=profile.value
@@ -523,6 +555,10 @@ class Project:
         data["speakers"] = {
             key: asdict(Speaker(**value)) for key, value in speakers.items()
         }
+        if not isinstance(data.get("speaker_evidence", []), list):
+            raise ValueError("Speaker evidence must be a list")
+        if not isinstance(data.get("speaker_proposals", {}), dict):
+            raise ValueError("Speaker proposals must be an object")
         raw_audio = data.get("audio_settings", {})
         data["audio_settings"] = AudioSettings(**raw_audio).validate()
         data["final_audio_status"] = data.get("final_audio_status", "not_generated")

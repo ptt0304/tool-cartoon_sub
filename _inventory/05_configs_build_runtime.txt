@@ -1,9 +1,0 @@
-./_inventory/05_configs_build_runtime.txt
-./src/cartoon_sub/app/__pycache__/config.cpython-311.pyc
-./src/cartoon_sub/app/__pycache__/settings.cpython-311.pyc
-./src/cartoon_sub/app/config.py
-./src/cartoon_sub/app/settings.py
-./src/cartoon_sub/ui/__pycache__/dubbing_settings_dialog.cpython-311.pyc
-./src/cartoon_sub/ui/__pycache__/settings_dialog.cpython-311.pyc
-./src/cartoon_sub/ui/dubbing_settings_dialog.py
-./src/cartoon_sub/ui/settings_dialog.py

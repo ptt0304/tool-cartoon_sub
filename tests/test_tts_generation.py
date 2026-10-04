@@ -13,6 +13,7 @@ from cartoon_sub.speaker.service import approve_review
 from cartoon_sub.subtitle.models import Project, Segment
 from cartoon_sub.tts.generation_service import LocalTTSGenerationService
 from cartoon_sub.tts.local_tts_client import LocalTTSError
+from cartoon_sub.tts.cache_manifest import segment_manifest_key
 
 
 def wav_bytes(seconds=0.1, rate=8000):
@@ -96,15 +97,64 @@ class TTSGenerationTests(unittest.TestCase):
             self.assertEqual(client.generate_calls[0]["text"], "Lời lồng tiếng")
             self.assertNotEqual(client.generate_calls[0]["text"], project.utterances[0].vi_subtitle)
             self.assertEqual(client.generate_calls[0]["voice_id"], "voice_a")
-            self.assertIn("TTS 1/1 | SPK_01 | Utterance 31 | voice_a", messages)
+            self.assertIn("TTS 1/1 | VI Dubbing | SPK_01 | Utterance 31 | A", messages)
             row = ProjectManager().load(directory).utterances[0]
             self.assertEqual(row.tts_generation_status, "generated")
             self.assertTrue(row.tts_fingerprint)
-            self.assertEqual(row.tts_segment_id, f"utt_{row.tts_cache_key}")
+            self.assertEqual(row.tts_segment_id, f"utt_{row.tts_cache_key}_vi_dubbing")
             self.assertFalse(Path(row.tts_audio_path).is_absolute())
             self.assertTrue((Path(directory) / row.tts_audio_path).is_file())
+            self.assertFalse((Path(directory) / "audio" / "tts" / "dubbed_mix.wav").exists())
             self.assertAlmostEqual(row.tts_duration, 0.1, places=3)
             self.assertEqual(row.tts_alignment_status, "fits")
+
+    def test_subtitle_and_dubbing_sources_use_independent_cache_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            client = FakeLocalTTSClient()
+            dubbing = LocalTTSGenerationService(client, text_source="vi_dubbing")
+            dubbing.generate(project, directory)
+            dubbing_path = project.utterances[0].tts_audio_path
+            self.assertEqual(client.generate_calls[-1]["text"], "Lời lồng tiếng")
+
+            subtitle = LocalTTSGenerationService(client, text_source="vi_subtitle")
+            subtitle.generate(project, directory)
+            subtitle_path = project.utterances[0].tts_audio_path
+            self.assertEqual(client.generate_calls[-1]["text"], "Phụ đề khác")
+            self.assertNotEqual(subtitle_path, dubbing_path)
+            self.assertTrue((Path(directory) / subtitle_path).is_file())
+            self.assertTrue((Path(directory) / dubbing_path).is_file())
+
+            client.generate_calls.clear()
+            resumed = dubbing.generate(project, directory)
+            self.assertEqual((resumed.cached, resumed.generated), (1, 0))
+            self.assertEqual(client.generate_calls, [])
+            self.assertEqual(project.utterances[0].tts_audio_path, dubbing_path)
+            manifest = json.loads(
+                (Path(directory) / "audio" / "tts" / "tts_cache.json").read_text(encoding="utf-8")
+            )
+            key = project.utterances[0].tts_cache_key
+            self.assertIn(segment_manifest_key(key, "vi_dubbing"), manifest["segments"])
+            self.assertIn(segment_manifest_key(key, "vi_subtitle"), manifest["segments"])
+
+    def test_progress_uses_friendly_name_while_request_uses_canonical_voice_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(directory)
+            voice_id = "vieneu_user_capcut_co_gai_hoat_ngon"
+            project.speakers["SPK_01"]["tts_voice_id"] = voice_id
+            client = FakeLocalTTSClient()
+            client.voices = [{
+                "voice_id": voice_id,
+                "display_name": "capcut_cô gái hoạt ngôn",
+                "engine": "vieneu_v3",
+                "status": "READY",
+            }]
+            progress = []
+
+            LocalTTSGenerationService(client).generate(project, directory, progress=progress.append)
+
+            self.assertEqual(client.generate_calls[0]["voice_id"], voice_id)
+            self.assertTrue(any(message.endswith("capcut_cô gái hoạt ngôn") for message in progress))
 
     def test_unchanged_fingerprint_reuses_valid_wav(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -151,7 +201,7 @@ class TTSGenerationTests(unittest.TestCase):
             manifest_path = Path(directory) / "audio" / "tts" / "tts_cache.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["version"], 1)
-            self.assertIn(stable_key, manifest["segments"])
+            self.assertIn(segment_manifest_key(stable_key, "vi_dubbing"), manifest["segments"])
 
             row.id = 99
             approve_review(project)
@@ -195,7 +245,7 @@ class TTSGenerationTests(unittest.TestCase):
             self.assertEqual(deleted.deleted, 1)
             self.assertFalse(original_path.exists())
             self.assertTrue(remaining_path.exists())
-            self.assertNotIn(original_key, manifest["segments"])
+            self.assertNotIn(segment_manifest_key(original_key, "vi_dubbing"), manifest["segments"])
             self.assertEqual(client.generate_calls, [])
 
     def test_voice_change_regenerates_only_affected_speaker(self):

@@ -15,11 +15,10 @@ TOPICS = (
 <ul><li><code>project.json</code>: file chính chứa timeline, speaker, bản dịch, mask, style, logo, watermark và trạng thái công việc.</li><li><code>audio/source.wav</code>: audio trích từ video khi cần AI transcription.</li><li><code>subtitle/zh.srt</code>, <code>subtitle/vi.srt</code>: phụ đề Trung và Việt.</li><li><code>cache/</code>: kết quả AI từng bước để bấm tiếp tục sau lỗi; không nên tự sửa.</li><li><code>preview/</code>: preview 10 giây; <code>output/</code>: MP4 render hoàn chỉnh.</li></ul>
 <p>Mở project có sẵn: chọn <b>Project → Open project</b>, rồi mở đúng file <code>project.json</code>. Để sao lưu, giữ nguyên toàn bộ thư mục project và video nguồn.</p>"""),
     ("3. Settings", """
-<h1>Settings và AI API</h1><p>Mở <b>Settings → AI</b>. API key được lưu trong Windows Credential Manager/keyring, không nằm trong project.json.</p>
-<h2>Gemini cho audio</h2><p><b>Gemini API key</b> và <b>Transcription model</b> dùng cho tạo transcript và căn timing audio. Lấy key từ Google AI Studio, dán key, bấm Test Gemini transcription rồi Save. Request audio có thể dùng quota.</p>
-<h2>AI cho text</h2><p>Provider dịch/ngữ cảnh áp dụng cho phân tích ngữ cảnh, dịch, tối ưu dubbing text và semantic fallback. Chọn provider, nhập Translation API key, chọn model rồi Save.</p>
-<p>Tool có model gợi ý cho: Google Gemini, OpenAI, Anthropic Claude, OpenRouter, DeepSeek, Groq, Mistral, Together, Fireworks và xAI Grok. Có thể gõ model khác nếu key của bạn có quyền.</p>
-<p><b>Test provider dịch/ngữ cảnh</b> gửi một request text nhỏ. Translation chunk size 30–50: giảm về 30 nếu AI trả JSON thiếu; Retry count là số lần thử lại sau lỗi mạng/429/5xx.</p>
+<h1>Settings và AI API</h1><p>Mở <b>Settings → AI</b>. OpenRouter keys được lưu theo thứ tự trong Windows Credential Manager/keyring, không nằm trong project.json.</p>
+<h2>OpenRouter-first</h2><p>Speech-to-Text, Translation, Vision/Speaker và Review/QA được gán model theo từng nhiệm vụ. Bấm Edit Keys để nhập mỗi OpenRouter key trên một dòng, Test All Keys, chọn model tương thích rồi Save.</p>
+<p>Catalog general và transcription được đồng bộ nền một lần khi ứng dụng khởi động, đồng thời cache cục bộ để Settings vẫn dùng được khi offline. Model Author là phần trước dấu / của model ID, không phải inference provider.</p>
+<p><b>Test All Keys</b> xác thực từng key bằng endpoint tài khoản, không gọi inference. Translation chunk size và Retry count nằm trong Advanced. Gemini/OpenAI transcription và Gemini direct-video cũ chỉ được giữ nội bộ để project cũ không bị hỏng.</p>
 <p>AI đề xuất nội dung; người dùng vẫn kiểm tra transcript, speaker, glossary, xưng hô và câu dịch trước khi render.</p>"""),
     ("4. Transcript", """
 <h1>Transcript tiếng Trung</h1><p>Transcript xác định <b>ai nói gì, vào lúc nào</b>. Có hai cách:</p><ol><li><b>Import Chinese SRT</b>: chọn SRT Trung có sẵn, không gọi AI.</li><li><b>Gemini: tạo / tiếp tục</b>: tool trích audio cục bộ, gửi từng đoạn audio sang Gemini và nhận JSON thời điểm + tiếng Trung.</li></ol>
@@ -41,11 +40,11 @@ TOPICS = (
     ("6. Subtitle", """
 <h1>Chia phụ đề Việt</h1><p><b>Utterance</b> là lời thoại nguồn, không bị thay đổi. <b>DisplaySegment</b> là một phần hiển thị của Utterance.</p>
 <p><b>Auto Segment All</b> chia câu dài theo nghĩa, dấu câu, độ dài, số âm tiết và tốc độ đọc. <b>Auto Segment Selected</b> chỉ chạy câu chọn. <b>Split Manually</b>, <b>Merge Selected</b> và <b>Reset To Utterance</b> dành cho biên tập thủ công.</p>
-<p>QC: OK là đạt; TOO_LONG/TOO_MANY_SYLLABLES là quá dài; HIGH_READING_SPEED là khó đọc; BAD_SPLIT/MANUAL_REVIEW cần xem lại. AI semantic fallback chỉ được gọi khi engine local không tìm được điểm ngắt an toàn và không được phép sửa chữ dịch.</p>
+<p>QC: OK là đạt; TOO_LONG/TOO_MANY_SYLLABLES là quá dài; HIGH_READING_SPEED là khó đọc; BAD_SPLIT/MANUAL_REVIEW cần xem lại. Auto Segment luôn chạy local theo cài đặt hiện tại và không gọi AI.</p>
 <p><b>Export Subtitle SRT</b> đồng bộ phần presentation bị stale rồi tạo <code>exports/subtitle/subtitle_N.srt</code> từ DisplaySegment hiện tại, gồm split/merge/timing đã lưu.</p>"""),
     ("7. Mask", """
 <h1>Mask, phụ đề, logo và watermark</h1><p>Nhập mốc thời gian, bấm <b>Lấy khung hình</b>, kéo vùng chữ gốc. Chọn <b>solid</b>, <b>blur</b>, <b>gaussian</b>, <b>pixelate</b> hoặc <b>frosted</b>. Độ nhòe 10–14 thường đủ; 15–18 cho nền nhiều chi tiết.</p>
-<p>Chỉnh font, cỡ chữ, đậm, viền, bóng, vị trí và số dòng. Bật <b>Căn phụ đề giữa vùng mask</b> để đặt chữ vào giữa vùng che. Canvas là preview nhanh; Tạo preview 10 giây là kiểm tra FFmpeg trước khi render toàn bộ.</p>
+<p>Chỉnh font, cỡ chữ, đậm, viền và bóng. Số dòng do tab Subtitle quyết định; Mask giữ nguyên cấu trúc DisplaySegment và luôn căn giữa khối chữ trong vùng mask hiện tại. Canvas là preview nhanh; Tạo preview 10 giây là kiểm tra FFmpeg trước khi render toàn bộ.</p>
 <p><b>Logo</b>: load nhiều ảnh, chọn ảnh trên canvas hoặc danh sách rồi kéo để di chuyển. Có X/Y, kích thước, xoay và trong suốt. Logo Scale là phần trăm so với kích thước gốc: 50% = một nửa, 100% = gốc, 250% = 2,5 lần, 1000% = 10 lần. Giá trị âm dùng trị tuyệt đối làm độ lớn (ví dụ -504% = 5,04 lần); renderer hiện không mirror ảnh.</p>
 <p><b>Watermark</b>: nhập text để chữ chạy và phản xạ ở mép video. Font, viền, bóng, trong suốt và tốc độ được xem trực tiếp trên canvas và dùng khi render.</p>"""),
     ("8. Audio", """

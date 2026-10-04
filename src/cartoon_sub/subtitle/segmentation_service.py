@@ -7,13 +7,14 @@ import re
 from cartoon_sub.project.cache import content_hash
 from cartoon_sub.subtitle.models import DisplaySegment, Utterance
 from cartoon_sub.subtitle.segmentation import (LocalSegmentationEngine, SegmentationPlan, SegmentationProfile,
-    SegmentationSettings, normalize_text, settings_for)
-from cartoon_sub.subtitle.segmentation_qc import apply_display_qc, review_display_segment
+    SegmentationSettings, normalize_text, part_is_hard_valid, settings_for)
+from cartoon_sub.subtitle.segmentation_qc import (apply_display_group_qc, apply_display_qc,
+    review_display_segments)
 from cartoon_sub.subtitle.segmentation_timing import allocate_display_segments
 from cartoon_sub.syllable.vietnamese import count_syllables
 
 
-SEGMENTATION_VERSION = "local-segmentation-v4"
+SEGMENTATION_VERSION = "local-segmentation-v5-hard-settings"
 SYLLABLE_COUNTER_VERSION = "vietnamese-local-v1"
 SUBTITLE_TEXT_SOURCES = ("vi_subtitle", "vi_dubbing")
 log = logging.getLogger(__name__)
@@ -137,9 +138,6 @@ def reflow_text_to_segments(text: str, segments: list[DisplaySegment]) -> list[s
 
 
 class SubtitleSegmentationService:
-    def __init__(self, semantic_service=None):
-        self.semantic_service = semantic_service
-
     def settings_for(self, project):
         return project_settings(project)
 
@@ -173,8 +171,7 @@ class SubtitleSegmentationService:
             project.segmentation_cache = {}
         for utterance in project.utterances:
             source_text = self.source_text(project, utterance)
-            for segment in utterance.display_segments:
-                apply_display_qc(segment, settings, source_text)
+            apply_display_group_qc(utterance.display_segments, settings, source_text, utterance.duration)
 
     def invalidate(self, project, utterance_ids=None):
         if utterance_ids is None:
@@ -217,8 +214,8 @@ class SubtitleSegmentationService:
             plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
             allocated = allocate_display_segments(source_utterance, plan, settings)
             utterance.set_display_segments(list(allocated.segments))
+            apply_display_group_qc(utterance.display_segments, settings, source_text, utterance.duration)
             for segment in utterance.display_segments:
-                apply_display_qc(segment, settings, source_text)
                 log.info("[SUBTITLE SEGMENT] parent=%s child=%s text=%r syllable_count=%s max=%s "
                          "duration=%.3f QC=%s", utterance.id, segment.id, segment.vi_text,
                          count_syllables(segment.vi_text), settings.max_syllables, segment.duration,
@@ -240,10 +237,7 @@ class SubtitleSegmentationService:
 
     @staticmethod
     def _requires_hard_split(segment, settings):
-        lines = segment.vi_text.splitlines() or [segment.vi_text]
-        return (count_syllables(segment.vi_text) > settings.max_syllables
-                or len(lines) > settings.max_lines
-                or any(len(normalize_text(line)) > settings.hard_max_chars_per_line for line in lines))
+        return not part_is_hard_valid(segment.vi_text, segment.duration, settings)
 
     def sync_utterance(self, project, utterance):
         profile, settings = self.settings_for(project)
@@ -261,7 +255,19 @@ class SubtitleSegmentationService:
             or any(seg.manual or seg.segmentation_reason == "manual" for seg in existing)
         )
 
-        if not existing or len(existing) == 1:
+        if (not is_manual and (not existing or len(existing) == 1)
+                and not part_is_hard_valid(source_text, utterance.duration, settings)):
+            plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
+            allocated = allocate_display_segments(source_utterance, plan, settings)
+            utterance.set_display_segments(list(allocated.segments))
+            apply_display_group_qc(utterance.display_segments, settings, source_text, utterance.duration)
+            cache_key = self._fingerprint(project, utterance, profile, settings)
+            project.segmentation_cache[str(utterance.id)] = {
+                "fingerprint": cache_key, "manual": False,
+                "timing_source": allocated.timing_source,
+                "source_type": getattr(project, "subtitle_text_source", "vi_subtitle"),
+            }
+        elif not existing or len(existing) == 1:
             if len(existing) == 1:
                 seg = existing[0]
                 seg.vi_text = source_text
@@ -290,8 +296,7 @@ class SubtitleSegmentationService:
             plan = LocalSegmentationEngine(profile, settings if profile is SegmentationProfile.CUSTOM else None).segment(source_utterance)
             allocated = allocate_display_segments(source_utterance, plan, settings)
             utterance.set_display_segments(list(allocated.segments))
-            for segment in utterance.display_segments:
-                apply_display_qc(segment, settings, source_text)
+            apply_display_group_qc(utterance.display_segments, settings, source_text, utterance.duration)
             cache_key = self._fingerprint(project, utterance, profile, settings)
             project.segmentation_cache[str(utterance.id)] = {
                 "fingerprint": cache_key,
@@ -344,9 +349,8 @@ class SubtitleSegmentationService:
             if utterance.id in chosen:
                 utterance.set_display_segments([])
                 project.segmentation_cache.pop(str(utterance.id), None)
-                # Reset means rebuild from the current canonical subtitle, not
-                # a previously persisted presentation-text copy.
-                self.sync_utterance(project, utterance)
+        # Reset rebuilds through the same settings-first deterministic policy.
+        self.auto_segment(project, chosen, force=True)
 
     def split_manual(self, project, utterance_id, display_id, word_index):
         utterance = self._utterance(project, utterance_id)
@@ -406,8 +410,9 @@ class SubtitleSegmentationService:
                 result.append((utterance, []))
                 continue
             children = []
-            for segment in presentation_segments(utterance, source_text):
-                flags = review_display_segment(segment, settings, source_text)
+            segments = presentation_segments(utterance, source_text)
+            reviewed = review_display_segments(segments, settings, source_text, utterance.duration)
+            for segment, flags in zip(segments, reviewed):
                 if warning_filter == "WARNINGS" and flags == ["OK"]:
                     continue
                 if warning_filter and warning_filter not in ("ALL", "WARNINGS") and warning_filter not in flags:

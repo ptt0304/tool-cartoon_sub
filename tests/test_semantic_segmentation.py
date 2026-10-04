@@ -33,7 +33,7 @@ class SemanticSegmentationTests(unittest.TestCase):
     def test_local_success_never_calls_gemini(self):
         client_factory = Mock()
         semantic = SemanticSegmentationService(store(), client_factory)
-        service = SubtitleSegmentationService(semantic)
+        service = SubtitleSegmentationService()
         project = Project("p", "source.mp4", segments=[Utterance(1, 0, 2.4, "中文",
             vi="Chuyện này không liên quan đến cô.", speaker_id="SPK_01")])
         service.auto_segment(project)
@@ -43,7 +43,7 @@ class SemanticSegmentationTests(unittest.TestCase):
     def test_unresolved_local_text_uses_local_whitespace_fallback_only(self):
         client = Mock()
         semantic = SemanticSegmentationService(store(), lambda key: client)
-        service = SubtitleSegmentationService(semantic)
+        service = SubtitleSegmentationService()
         utterance = Utterance(1, 0, 6, "中文", vi=TEXT, speaker_id="SPK_02")
         project = Project("p", "source.mp4", segments=[utterance])
         service.auto_segment(project)
@@ -56,7 +56,7 @@ class SemanticSegmentationTests(unittest.TestCase):
         unbreakable = "mộtchuỗirấtdàikhônghềcókhoảngtrắngđểtách" * 3
         client = Mock()
         semantic = SemanticSegmentationService(store(), lambda key: client)
-        service = SubtitleSegmentationService(semantic)
+        service = SubtitleSegmentationService()
         existing = DisplaySegment("1.1", 1, 0, 6, unbreakable, segmentation_reason="local")
         utterance = Utterance(1, 0, 6, "中文", vi=unbreakable, speaker_id="SPK_01", display_segments=[existing])
         project = Project("p", "source.mp4", segments=[utterance])

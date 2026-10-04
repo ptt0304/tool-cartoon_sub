@@ -5,10 +5,13 @@ import unittest
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMessageBox, QPushButton
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMessageBox, QPushButton, QScrollArea
 
 from cartoon_sub.project.project_manager import ProjectManager
 from cartoon_sub.speaker.models import Speaker
@@ -20,7 +23,7 @@ from cartoon_sub.speaker.service import (
 from cartoon_sub.subtitle.export_service import export_current_srt
 from cartoon_sub.subtitle.models import Project, Segment
 from cartoon_sub.subtitle.parser import import_srt
-from cartoon_sub.ui.speaker_dialog import SpeakerDialog, next_speaker_id
+from cartoon_sub.ui.speaker_dialog import SpeakerDialog, UtteranceSplitDialog, next_speaker_id
 
 
 def speaker_registry(*numbers):
@@ -104,9 +107,75 @@ class SpeakerReviewSessionTests(unittest.TestCase):
             "Chọn tất cả", "Speaker mới", "Đổi tên", "Gán dòng cho SPK",
             "Nghe dòng chọn", "Reset", "Xác nhận Speaker và Lưu", "Hủy",
         }.issubset(labels))
+        self.assertIn("Tách dòng", labels)
         self.assertTrue({"Tách dòng chọn", "Gộp vào…", "Lưu chỉnh sửa chưa xác nhận"}.isdisjoint(labels))
         self.assertNotIn("Speaker thao tác", {label.text() for label in dialog.findChildren(QLabel)})
+        self.assertIn("Gợi ý speaker từ STT", dialog.capability_status.text())
         self.assertFalse(hasattr(dialog, "target"))
+        dialog.reject()
+
+    def test_responsive_outer_page_scroll_geometry_and_navigation(self):
+        dialog = SpeakerDialog(sample_project(), ".")
+        dialog.show()
+        self.app.processEvents()
+        available = dialog._available_screen_geometry()
+        frame = dialog.frameGeometry()
+        self.assertTrue(available.contains(frame.topLeft()))
+        self.assertTrue(available.contains(frame.bottomRight()))
+        self.assertIsInstance(dialog.page_scroll, QScrollArea)
+        self.assertTrue(dialog.page_scroll.widgetResizable())
+        self.assertEqual(dialog.page_scroll.horizontalScrollBarPolicy(),
+                         Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertFalse(dialog.page_content.isAncestorOf(dialog.confirm_button))
+
+        dialog.resize(min(700, available.width()), min(430, available.height()))
+        self.app.processEvents()
+        bar = dialog.page_scroll.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        dialog.table.setFocus()
+        QTest.keyClick(dialog.table, Qt.Key.Key_End)
+        self.app.processEvents()
+        self.assertEqual(bar.value(), bar.maximum())
+        QTest.keyClick(dialog.table, Qt.Key.Key_Home)
+        self.app.processEvents()
+        self.assertEqual(bar.value(), bar.minimum())
+        QTest.keyClick(dialog.table, Qt.Key.Key_PageDown)
+        self.app.processEvents()
+        self.assertGreater(bar.value(), bar.minimum())
+        previous = bar.value()
+        QTest.keyClick(dialog.table, Qt.Key.Key_PageUp)
+        self.app.processEvents()
+        self.assertLess(bar.value(), previous)
+        wheel = QWheelEvent(
+            QPointF(10, 10), QPointF(10, 10), QPoint(), QPoint(0, -120),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.ScrollUpdate, False,
+        )
+        QApplication.sendEvent(dialog.page_scroll.viewport(), wheel)
+        self.app.processEvents()
+        self.assertGreater(bar.value(), bar.minimum())
+        positions = [dialog.actions_grid.getItemPosition(dialog.actions_grid.indexOf(button))
+                     for button in dialog.action_buttons]
+        self.assertLessEqual(max(position[1] for position in positions), 1)
+        self.assertGreater(max(position[0] for position in positions), 0)
+        self.assertTrue(dialog.confirm_button.isVisible())
+        self.assertGreaterEqual(dialog.table.horizontalScrollBar().maximum(), 0)
+        dialog.reject()
+
+    def test_split_dialog_exposes_text_time_speakers_and_audio_preview(self):
+        project = sample_project()
+        preview = Mock()
+        options = [(speaker_id, speaker_id) for speaker_id in project.speakers]
+        dialog = UtteranceSplitDialog(project.utterances[0], options, preview)
+        dialog.boundary.setValue(1)
+        self.assertEqual(dialog.left_preview.text() + dialog.right_preview.text(), "第一句")
+        self.assertLess(project.utterances[0].start, dialog.timestamp.value())
+        self.assertLess(dialog.timestamp.value(), project.utterances[0].end)
+        self.assertGreater(dialog.left_speaker.count(), 0)
+        button = next(item for item in dialog.findChildren(QPushButton)
+                      if item.text() == "Nghe audio dòng gốc")
+        button.click()
+        preview.assert_called_once_with(0.0, 1.0)
         dialog.reject()
 
     def test_original_column_stays_immutable_across_two_assignments(self):

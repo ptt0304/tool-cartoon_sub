@@ -56,10 +56,16 @@ mới.
 
 ## Generate / Resume TTS và timing
 
-**Generate / Resume TTS** dùng `VI Dubbing`; mỗi Utterance có một WAV riêng.
-Fingerprint bao gồm nội dung dubbing, voice, speed và cấu hình TTS liên quan.
+**Generate / Resume TTS** dùng đúng nguồn đang chọn (`VI Subtitle` hoặc
+`VI Dubbing`), không fallback giữa hai nguồn; mỗi Utterance có một WAV riêng.
+Fingerprint bao gồm source, nội dung, voice, speed và cấu hình TTS liên quan.
 Segment hợp lệ có fingerprint không đổi được reuse; segment pending/failed có
 thể tiếp tục ở lần chạy sau.
+
+Generate chỉ tạo/tiếp tục WAV theo Utterance rồi dừng. Nó không tự chạy Build
+Dubbed Audio, audio mixer, final audio hoặc rewrite nội dung. Cache và file WAV
+của `VI Subtitle`/`VI Dubbing` độc lập; đổi nguồn có thể reuse lại cache hợp lệ
+của chính nguồn đó.
 
 TTS trở thành `stale` khi đổi `VI Dubbing`, `voice_id`, speed hoặc input TTS có
 liên quan. Dòng trạng thái tổng hợp các nhóm:
@@ -142,7 +148,8 @@ phát hết sẽ dừng, giải phóng source và lần phát sau bắt đầu l
 
 ## Ví dụ
 
-1. Chỉ dubbing: Original `0%`, Dubbed `100%`, không chọn Additional.
+1. Chọn đúng **Nguồn TTS**, chạy **Generate / Resume TTS**, sau đó bấm riêng
+   **Build Dubbed Audio**.
 2. Giữ tiếng gốc nhỏ: Original `20%`, Dubbed `100%`.
 3. Thêm nhạc nền: Original `0%`, Dubbed `100%`, Additional `15%`.
 4. Nhiều speaker dùng một voice: tick các speaker, chọn voice batch, bấm

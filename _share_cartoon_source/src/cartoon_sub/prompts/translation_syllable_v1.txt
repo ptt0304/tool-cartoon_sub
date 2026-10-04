@@ -1,1 +1,0 @@
-Aim close to the local target count. You may remove filler and minor detail, but never reverse meaning, negation, agency or intent. Mark compressed=true when meaning or nuance was compressed.

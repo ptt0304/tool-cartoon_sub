@@ -18,12 +18,17 @@ from cartoon_sub.tts.cache_identity import (
     build_tts_fingerprint,
     compute_tts_signature,
     normalize_tts_text,
+    resolve_tts_text,
+    TTS_SOURCE_DUBBING,
 )
 from cartoon_sub.tts.cache_manifest import (
+    entry_utterance_cache_key,
+    find_segment_entry,
     load_manifest,
     manifest_file_for_project,
     project_audio_path,
     save_manifest,
+    segment_manifest_key,
 )
 from cartoon_sub.tts.local_tts_client import LocalTTSClient, LocalTTSError
 from cartoon_sub.tts.duration_fit import VoiceCalibrationCache
@@ -73,6 +78,7 @@ class LocalTTSGenerationService:
         manager: ProjectManager | None = None,
         server_base_url: str | None = None,
         calibration_cache: VoiceCalibrationCache | None = None,
+        text_source: str = TTS_SOURCE_DUBBING,
     ):
         self.client = client
         self.manager = manager or ProjectManager()
@@ -81,18 +87,18 @@ class LocalTTSGenerationService:
             raise ValueError("Local_TTS server base URL is required for cache identity")
         self.server_base_url = configured_url
         self.calibration_cache = calibration_cache
+        self.text_source = text_source
 
         self._voice_registry: dict[str, dict] = {}
 
     def fingerprint(self, utterance: Utterance, speaker: Speaker, voice=None) -> str:
         return compute_tts_signature(
             utterance, speaker, self.server_base_url,
-            voice if voice is not None else self._voice_registry.get(speaker.tts_voice_id),
+            voice if voice is not None else self._voice_registry.get(speaker.tts_voice_id), self.text_source,
         )
 
-    @staticmethod
-    def segment_id(utterance: Utterance, fingerprint: str = "") -> str:
-        return build_cached_segment_id(utterance)
+    def segment_id(self, utterance: Utterance, fingerprint: str = "") -> str:
+        return build_cached_segment_id(utterance, self.text_source)
 
     @staticmethod
     def _valid_wav(path: Path) -> bool:
@@ -120,13 +126,14 @@ class LocalTTSGenerationService:
             return False
         return cls._valid_wav(path)
 
-    @staticmethod
-    def _manifest_entry(utterance, speaker, voice, signature, file_name, duration, segment_id):
+    def _manifest_entry(self, utterance, speaker, voice, signature, file_name, duration, segment_id):
         return {
             "signature": signature,
             "file": file_name,
             "segment_id": segment_id,
-            "text": normalize_tts_text(utterance.vi_dubbing),
+            "utterance_cache_key": utterance.tts_cache_key,
+            "source": self.text_source,
+            "text": resolve_tts_text(utterance, self.text_source),
             "speaker_id": utterance.speaker_id,
             "voice_id": speaker.tts_voice_id,
             "engine": voice.get("engine") or voice.get("backend") or voice.get("source"),
@@ -162,18 +169,26 @@ class LocalTTSGenerationService:
         current_keys = {row.tts_cache_key for row in project.utterances}
         if state == "valid":
             plan.deleted = [
-                (key, entry) for key, entry in entries.items() if key not in current_keys
+                (key, entry) for key, entry in entries.items()
+                if entry_utterance_cache_key(key, entry) not in current_keys
             ]
 
         for utterance in project.utterances:
             speaker = speakers[utterance.speaker_id]
             voice = self._voice_registry[speaker.tts_voice_id]
             signature = self.fingerprint(utterance, speaker, voice)
-            entry = entries.get(utterance.tts_cache_key)
+            manifest_key, entry = find_segment_entry(
+                entries, utterance.tts_cache_key, self.text_source,
+            )
+            current_manifest_key = segment_manifest_key(utterance.tts_cache_key, self.text_source)
+            if entry is not None and manifest_key != current_manifest_key:
+                entries[current_manifest_key] = entries.pop(manifest_key)
+                manifest_key = current_manifest_key
+                plan.migrated = True
             if entry is None and state != "invalid":
                 entry = self._bootstrap_entry(root, utterance, speaker, voice, signature)
                 if entry is not None:
-                    entries[utterance.tts_cache_key] = entry
+                    entries[current_manifest_key] = entry
                     plan.migrated = True
 
             reason = "CACHED"
@@ -231,9 +246,12 @@ class LocalTTSGenerationService:
             raise ValueError("Cần hoàn tất duyệt speaker trước khi tạo TTS")
         if not project.utterances:
             raise ValueError("Project không có Utterance")
-        empty = [row.id for row in project.utterances if not row.vi_dubbing.strip()]
+        empty = [row.id for row in project.utterances if not resolve_tts_text(row, self.text_source)]
         if empty:
-            raise ValueError(f"Utterance chưa có vi_dubbing: {', '.join(map(str, empty))}")
+            raise ValueError(
+                f"Utterance chưa có text từ nguồn TTS {self.text_source}: "
+                f"{', '.join(map(str, empty))}"
+            )
 
         speakers: dict[str, Speaker] = {}
         for speaker_id in {row.speaker_id for row in project.utterances}:
@@ -324,8 +342,9 @@ class LocalTTSGenerationService:
             result.missing_file, result.deleted, result.needed,
         )
         if progress:
+            source_label = "VI Subtitle" if self.text_source == "vi_subtitle" else "VI Dubbing"
             progress(
-                f"TTS cache: {result.cached} reused • {result.needed} to generate "
+                f"Nguồn TTS: {source_label} | TTS cache: {result.cached} reused • {result.needed} to generate "
                 f"({result.changed} changed, {result.new} new, "
                 f"{result.missing_file} missing, {result.deleted} deleted)"
             )
@@ -363,9 +382,11 @@ class LocalTTSGenerationService:
                 destination = segments_dir / f"{self.segment_id(utterance)}.wav"
             segment_id = destination.stem
             if progress:
+                source_label = "VI Subtitle" if self.text_source == "vi_subtitle" else "VI Dubbing"
+                voice_label = item.voice.get("display_name") or speaker.tts_voice_id
                 progress(
-                    f"TTS {index}/{result.needed} | {utterance.speaker_id} | "
-                    f"Utterance {utterance.id} | {speaker.tts_voice_id}"
+                    f"TTS {index}/{result.needed} | {source_label} | {utterance.speaker_id} | "
+                    f"Utterance {utterance.id} | {voice_label}"
                 )
             utterance.tts_generation_status = "generating"
             utterance.tts_error = ""
@@ -375,7 +396,7 @@ class LocalTTSGenerationService:
                     segment_id,
                     utterance.speaker_id,
                     speaker.tts_voice_id,
-                    normalize_tts_text(utterance.vi_dubbing),
+                    resolve_tts_text(utterance, self.text_source),
                     float(speaker.tts_speed),
                 )
                 check_cancel(cancel)
@@ -417,11 +438,12 @@ class LocalTTSGenerationService:
                 if self.calibration_cache is not None:
                     self.calibration_cache.observe(
                         self.server_base_url, item.voice, float(speaker.tts_speed),
-                        normalize_tts_text(utterance.vi_dubbing), actual_duration,
+                        resolve_tts_text(utterance, self.text_source), actual_duration,
                     )
                 result.generated += 1
                 result.warnings += utterance.tts_alignment_status == "warning"
-                plan.manifest["segments"][utterance.tts_cache_key] = self._manifest_entry(
+                manifest_key = segment_manifest_key(utterance.tts_cache_key, self.text_source)
+                plan.manifest["segments"][manifest_key] = self._manifest_entry(
                     utterance,
                     speaker,
                     item.voice,
