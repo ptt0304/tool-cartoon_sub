@@ -346,7 +346,7 @@ class VisualContextAnalyzer:
                     logger.info(
                         "[VISUAL AI] provider=%s model=%s chunk_start=%.3f chunk_end=%.3f "
                         "video_input=no transcript_rows=%d request_status=CACHE_HIT",
-                        "Gemini" if self.input_mode == "legacy" else "OpenRouter",
+                        "OpenRouter",
                         self.model, start, end, len(rows),
                     )
                     return value
@@ -399,7 +399,7 @@ class VisualContextAnalyzer:
             logger.info(
                 "[VISUAL AI] provider=%s model=%s chunk_start=%.3f chunk_end=%.3f "
                 "video_input=yes transcript_rows=%d request_status=STARTED",
-                "Gemini" if self.input_mode == "legacy" else "OpenRouter",
+                "OpenRouter",
                 self.model, start, end, len(rows),
             )
             requested_ids = [row.id for row in rows]
@@ -446,7 +446,7 @@ class VisualContextAnalyzer:
                     logger.exception(
                         "[VISUAL AI] provider=%s model=%s chunk_start=%.3f chunk_end=%.3f "
                         "video_input=yes transcript_rows=%d request_status=FAILED",
-                        "Gemini" if self.input_mode == "legacy" else "OpenRouter",
+                        "OpenRouter",
                         self.model, start, end, len(rows),
                     )
                     raise
@@ -493,7 +493,7 @@ class VisualContextAnalyzer:
             logger.info(
                 "[VISUAL AI] provider=%s model=%s chunk_start=%.3f chunk_end=%.3f "
                 "video_input=yes transcript_rows=%d request_status=COMPLETED",
-                "Gemini" if self.input_mode == "legacy" else "OpenRouter",
+                "OpenRouter",
                 self.model, start, end, len(rows),
             )
             return value

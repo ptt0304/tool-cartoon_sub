@@ -3,10 +3,18 @@ from dataclasses import dataclass
 import re
 
 from cartoon_sub.subtitle.models import Segment
-from cartoon_sub.transcription.contracts import normalize_speaker_hint, normalize_word_timestamps
+from cartoon_sub.transcription.contracts import normalize_word_timestamps
 
 
-TRANSCRIPT_SEGMENTATION_VERSION = 2
+TRANSCRIPT_SEGMENTATION_VERSION = 4
+
+# Partial word alignment is useful only when it is substantially complete.
+# Sparse STT word timestamps must never be mixed with estimated fragments: that
+# can place a missing character in a multi-second silence while its neighbours
+# retain 100 ms word times.
+PARTIAL_ALIGNMENT_MIN_COVERAGE = 0.85
+PARTIAL_ALIGNMENT_MAX_GAP = 2.5
+PARTIAL_ALIGNMENT_MIN_WORD_DURATION = 0.10
 
 
 @dataclass(frozen=True)
@@ -28,7 +36,6 @@ class _TimedToken:
     text: str
     start: float
     end: float
-    speaker_id: str
 
 
 @dataclass(frozen=True)
@@ -67,15 +74,17 @@ def _significant(text):
     return "".join(ch for ch in text if ch.isalnum() or "\u3400" <= ch <= "\u9fff")
 
 
-def _copy_segment(parent, segment_id, start, end, text, speaker_id=None,
+def _copy_segment(parent, segment_id, start, end, text,
                   timing_provenance="ESTIMATED", timing_confidence=0.0):
     return Segment(
         segment_id, start, end, text.strip(),
-        speaker_id=speaker_id or parent.speaker_id,
-        speaker_confidence=parent.speaker_confidence,
         transcript_confidence=parent.transcript_confidence,
         transcript_timing_provenance=timing_provenance,
         transcript_timing_confidence=timing_confidence,
+        transcript_language_status=parent.transcript_language_status,
+        transcript_language_retry_count=parent.transcript_language_retry_count,
+        transcript_raw_stt_text=parent.transcript_raw_stt_text,
+        transcript_language_retry_text=parent.transcript_language_retry_text,
         translation_mode=parent.translation_mode,
     )
 
@@ -112,11 +121,64 @@ class TranscriptSegmentationNormalizer:
                 alignment = self._partial_word_alignment(parent, parent_words)
                 estimated = self._without_word_times(parent, source)
                 children = (self._apply_partial_word_alignment(parent, estimated, alignment, parent_words)
-                            if alignment is not None else estimated)
+                            if self._partial_alignment_is_safe(parent, alignment, parent_words)
+                            else estimated)
             output.extend(children)
         for index, row in enumerate(output, 1):
             row.id = index
         return output
+
+    def normalize_region(self, segments, words=None, language="zh", source="vad"):
+        """Normalize one speech region without turning coarse fragments into characters."""
+        segments = list(segments)
+        if not segments:
+            return []
+        safe_words = normalize_word_timestamps(words, max(row.end for row in segments)) if words else []
+        # Provider word arrays accompanying several coarse fragments are not
+        # trustworthy enough to mix with inferred characters. Keep region text
+        # sentence-level unless one parent has complete word evidence.
+        if safe_words and not self.region_segmentation_untrusted(segments):
+            return self.normalize(segments, safe_words, language, source)
+        # New production runs never partition a VAD window by character weight.
+        # Without complete acoustic word evidence, preserve one coarse evidence
+        # row and let timing QA/retry decide whether it can be finalized.
+        if not safe_words:
+            # Provider segment boundaries are still acoustic evidence.  Group
+            # only at an existing sentence boundary; never manufacture an
+            # internal timestamp from text/character weight.
+            grouped, pending = [], []
+            for row in segments:
+                pending.append(row)
+                if _STRONG_END.search(row.zh.rstrip()):
+                    grouped.append(pending); pending = []
+            if pending:
+                grouped.append(pending)
+            return [_copy_segment(group[0], 1, group[0].start, group[-1].end,
+                                  "".join(item.zh for item in group),
+                                  timing_provenance=group[0].transcript_timing_provenance,
+                                  timing_confidence=group[0].transcript_timing_confidence)
+                    for group in grouped]
+        text = "".join(row.zh for row in segments)
+        parent = _copy_segment(segments[0], 1, min(row.start for row in segments),
+                               max(row.end for row in segments), text,
+                               timing_provenance="VAD_SENTENCE", timing_confidence=0.45)
+        return self._without_word_times(parent, source)
+
+    @staticmethod
+    def region_segmentation_untrusted(segments):
+        rows = list(segments)
+        if not rows:
+            return False
+        counts = [_char_count(row.zh) for row in rows]
+        single = sum(count <= 1 for count in counts) / len(rows)
+        micro = sum(count <= 2 for count in counts) / len(rows)
+        punctuation = any(not _char_count(row.zh) and row.zh.strip() for row in rows)
+        chain = max((len(list(group)) for value, group in __import__('itertools').groupby(
+            count <= 1 for count in counts) if value), default=0)
+        durations = [row.end - row.start for row in rows if row.end > row.start]
+        uniform = (len(durations) >= 4 and max(durations) - min(durations) <= .15
+                   and micro > .5)
+        return single > .30 or micro > .50 or punctuation or chain >= 3 or uniform
 
     def split_at_source_indices(self, parent, after_indices):
         """Slice only the original text, then reconstruct conservative timing."""
@@ -162,11 +224,8 @@ class TranscriptSegmentationNormalizer:
                           else significant_positions[sig_cursor])
             text = parent.zh[source_cursor:source_end]
             source_cursor = source_end
-            speaker = normalize_speaker_hint(word.get("speaker_id", parent.speaker_id))
-            if speaker == "SPK_UNKNOWN":
-                speaker = parent.speaker_id
             tokens.append(_TimedToken(text, max(parent.start, word["start"]),
-                                      min(parent.end, word["end"]), speaker))
+                                      min(parent.end, word["end"])))
         return tokens if all(token.end > token.start for token in tokens) else []
 
     @staticmethod
@@ -217,6 +276,31 @@ class TranscriptSegmentationNormalizer:
         if not mapping:
             return None
         return _WordAlignment(mapping, rows, len(timed))
+
+    @staticmethod
+    def _partial_alignment_is_safe(parent, alignment, words):
+        """Reject incomplete or temporally sparse word evidence as a whole.
+
+        The fallback keeps deterministic weighted timing for the complete
+        parent.  In particular, it intentionally avoids combining exact word
+        timings with inferred text when that inference spans a long silence.
+        """
+        if alignment is None or not words or not alignment.canonical_count:
+            return False
+        if alignment.matched_count / alignment.canonical_count < PARTIAL_ALIGNMENT_MIN_COVERAGE:
+            return False
+        ordered = sorted(words, key=lambda row: (row["start"], row["end"]))
+        if any(row["end"] - row["start"] <= PARTIAL_ALIGNMENT_MIN_WORD_DURATION
+               for row in ordered):
+            return False
+        if any(right["start"] < left["end"] - 0.001
+               for left, right in zip(ordered, ordered[1:])):
+            return False
+        matched = sorted(set(alignment.canonical_to_word.values()))
+        if any(ordered[right]["start"] - ordered[left]["end"] > PARTIAL_ALIGNMENT_MAX_GAP
+               for left, right in zip(matched, matched[1:])):
+            return False
+        return all(parent.start <= row["start"] < row["end"] <= parent.end for row in ordered)
 
     def _apply_partial_word_alignment(self, parent, estimated, alignment, words):
         """Replace only each child timing with its local word evidence."""
@@ -296,13 +380,12 @@ class TranscriptSegmentationNormalizer:
             chars = _char_count(text)
             next_token = tokens[index + 1] if index + 1 < len(tokens) else None
             gap = max(0.0, next_token.start - token.end) if next_token else 0.0
-            speaker_change = bool(next_token and next_token.speaker_id != token.speaker_id)
             strong = bool(_STRONG_END.search(text.rstrip()))
             medium = bool(_MEDIUM_END.search(text.rstrip()))
             weak = bool(_WEAK_END.search(text.rstrip()))
             if medium or weak or gap >= cfg.soft_pause:
                 last_candidate = index
-            forced = speaker_change or strong or gap >= cfg.strong_pause
+            forced = strong or gap >= cfg.strong_pause
             over_hard = duration >= cfg.hard_max_duration or chars >= cfg.hard_max_chars
             over_soft = duration >= cfg.soft_max_duration or chars >= cfg.soft_max_chars
             split_at = None
@@ -328,9 +411,8 @@ class TranscriptSegmentationNormalizer:
         children = []
         for start_index, end_index in groups:
             group = tokens[start_index:end_index + 1]
-            speaker = group[0].speaker_id
             children.append(_copy_segment(parent, 1, group[0].start, group[-1].end,
-                                          "".join(item.text for item in group), speaker,
+                                          "".join(item.text for item in group),
                                           timing_provenance="WORD_TIMESTAMP",
                                           timing_confidence=1.0))
         return children
@@ -353,6 +435,10 @@ class TranscriptSegmentationNormalizer:
         pieces = [part for part in _SENTENCE_PARTS.findall(text) if part]
         if not pieces:
             pieces = [text]
+        if source == "vad":
+            # A VAD region bounds real speech. Preserve sentence boundaries;
+            # duration alone must never turn Mandarin into character fragments.
+            return self._allocate_weighted(parent, pieces)
         refined = []
         for piece in pieces:
             piece_duration = duration * _spoken_weight(piece) / _spoken_weight(text)

@@ -89,14 +89,21 @@ class CacheStatusService:
 
     def transcript(self):
         rows = self.project.utterances
-        state = self.project.transcription_status
-        if state in {"failed", "cancelled"}:
-            stt = "FAILED/RESUMABLE"
-        elif state in {"completed", "imported", "no_speech"}:
-            stt = "CACHED" if rows or state == "no_speech" else "NONE"
-        else:
-            stt = "NONE"
-        return {"STT / nguồn transcript": stt, "Master Timeline": "CACHED" if rows else "NONE"}
+        audio_dir = self.root / "cache" / "transcription"
+        semantic_dir = self.root / "cache" / "transcription_semantic"
+        stt = "CACHED" if audio_dir.is_dir() and any(audio_dir.rglob("*")) else "NONE"
+        semantic = "CACHED" if semantic_dir.is_dir() and any(semantic_dir.rglob("*")) else "NONE"
+        video_dir = self.root / "cache" / "transcript" / "video"
+        detection = "CACHED" if (video_dir / "visual_events.json").is_file() else "NONE"
+        ocr = "CACHED" if (video_dir / "ocr_results.json").is_file() else (
+            "PENDING" if (video_dir / "ocr_workload.json").is_file() else "NONE")
+        return {
+            "Audio Transcript cache": stt,
+            "Audio Semantic Boundary cache": semantic,
+            "Video Detection cache": detection,
+            "Video OCR cache": ocr,
+            "Master Timeline": "CACHED" if rows else "NONE",
+        }
 
     def translation(self):
         rows = self.project.utterances
@@ -107,11 +114,16 @@ class CacheStatusService:
         if status == "stale" and translated:
             translation = "STALE"
         qa = sum(qa_entry_is_current(row, self.project.translation_qa.get(str(row.id), {}), self.project) for row in rows)
-        return {
-            "Translation": translation,
-            "Translation QA/QC": _count_status(qa, total),
-            "Continuity memory": "CACHED" if self.project.translation_continuity_memory else "NONE",
-        }
+        result = {}
+        for source, label in (("audio", "Audio"), ("video", "Video"), ("srt", "SRT")):
+            folder = self.root / "cache" / "translation" / source
+            state = (self.project.translation_source_results or {}).get(source, {})
+            result[f"Translation {label}"] = (
+                "CACHED" if folder.is_dir() and any(folder.rglob("*")) else
+                "STALE" if state.get("translation_status") == "stale" else "NONE")
+        result["Translation QA/QC"] = _count_status(qa, total)
+        result["Continuity memory"] = "CACHED" if self.project.translation_continuity_memory else "NONE"
+        return result
 
     def subtitle(self):
         rows = self.project.utterances

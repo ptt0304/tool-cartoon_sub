@@ -19,43 +19,38 @@ from cartoon_sub.transcription.semantic_boundary_resolver import (
     ChineseSemanticBoundaryResolver,
     SEMANTIC_BOUNDARY_VERSION,
 )
-from cartoon_sub.ai.gemini_client import GeminiClient
-from cartoon_sub.ai.openai_transcription_client import OpenAITranscriptionClient
+from cartoon_sub.transcription.qa_repair import QA_VERSION, TranscriptAIRepairService, TranscriptQAService
+from cartoon_sub.transcription.language_consistency import final_zh_language_guard
 from cartoon_sub.ai.openrouter_client import OpenRouterTranscriptionClient
-from cartoon_sub.speaker.service import reconcile_overlaps, capture_initial_speaker_state
-from cartoon_sub.speaker.resolution_service import SpeakerResolutionService
 
 log = logging.getLogger(__name__)
 
 
-TRANSCRIPTION_CLIENTS = {"gemini": GeminiClient, "openai": OpenAITranscriptionClient,
-                         "openrouter": OpenRouterTranscriptionClient}
+TRANSCRIPTION_CLIENTS = {"openrouter": OpenRouterTranscriptionClient}
 
 
 def resolve_transcript_stt_settings(settings):
     """Resolve the dedicated Transcript override before any media/API work."""
-    override = str((settings.tab_model_overrides or {}).get("transcript_stt", "") or "").strip()
-    model = override or str(settings.transcription_model or "").strip()
+    selection = settings.tab_selection("transcript_stt")
+    model = selection.model_id
     if not model:
         raise ValueError(
             "Chưa chọn model STT.\n"
             "Hãy chọn model STT tại tab Transcript hoặc trong Settings → AI."
         )
-    if override:
-        return replace(settings, transcription_provider="openrouter", transcription_model=model)
-    return settings
+    if (settings.transcription_provider == selection.provider
+            and settings.transcription_model == model):
+        return settings
+    return replace(settings, transcription_provider=selection.provider, transcription_model=model)
 
 
 def transcript_timeline_signature(rows):
-    return [(row.id, round(row.start, 6), round(row.end, 6), row.zh, row.speaker_id)
+    return [(row.id, round(row.start, 6), round(row.end, 6), row.zh)
             for row in rows]
 
 
 def invalidate_transcript_dependents(project):
     """Invalidate only derived state; source media and raw STT cache stay valid."""
-    project.speakers = {}
-    project.speaker_review_hash = ""
-    project.speaker_review_initial_state = {}
     project.context_proposal = {}
     project.context_proposal_hash = ""
     project.context_proposal_config_hash = ""
@@ -76,26 +71,14 @@ def invalidate_transcript_dependents(project):
 
 
 def resolve_transcription_client(settings, settings_store):
-    from cartoon_sub.ai.text_client import model_metadata
-    provider = settings.transcription_provider
-    if provider == "openrouter":
-        if not settings.transcription_model or "/" not in settings.transcription_model:
-            raise ValueError("Hãy chọn model OpenRouter Speech-to-Text trong Settings > AI.")
-    else:
-        metadata = model_metadata(provider, settings.transcription_model)
-        if not metadata or not metadata["capabilities"]["transcription"]:
-            raise ValueError("Model đã chọn không có capability audio transcription.")
-    client_factory = TRANSCRIPTION_CLIENTS.get(provider)
-    if client_factory is None:
-        raise ValueError("Provider/model này chưa được Cartoon_Sub hỗ trợ audio transcription.")
-    if provider == "gemini":
-        key_provider = lambda: settings_store.get_gemini_keys(settings)
-    elif provider == "openrouter":
-        key_provider = settings_store.openrouter_key_pool
-    else:
-        key_provider = lambda: (settings_store.get_api_key(provider, settings) if settings.api_key_file
-                                else settings_store.get_key(provider))
-    return provider, key_provider, client_factory
+    if settings.transcription_provider != "openrouter" or not settings.transcription_model or "/" not in settings.transcription_model:
+        raise ValueError("Hãy chọn model OpenRouter Speech-to-Text trong Settings > AI.")
+    catalog = settings_store.openrouter_catalog_cache_for("transcription") or {"models": []}
+    metadata = next((item for item in catalog.get("models", [])
+                     if item.get("id") == settings.transcription_model), None)
+    if metadata is None:
+        raise ValueError("Model STT không tồn tại trong OpenRouter transcription catalog hiện tại.")
+    return "openrouter", settings_store.openrouter_key_pool, OpenRouterTranscriptionClient
 
 
 def save_subtitle_artifacts(project, directory):
@@ -184,9 +167,38 @@ class TranscriptionPipeline:
         try:
             transcriber = self.transcriber_factory(key_provider, settings.transcription_model,
                                                    directory / "cache" / "transcription", settings.retry_count,
-                                                   client_factory)
+                                                   client_factory,
+                                                   settings.transcription_timing_retry_model)
             segments = transcriber.transcribe(audio_path, cancel=cancel, progress=report)
             check_cancel(cancel)
+            qa_service = TranscriptQAService()
+            qa_first = qa_service.inspect(segments)
+            for violation in qa_first.violations:
+                log.warning("[TRANSCRIPT_QA] ID=%s violations=%s detail=%s", violation.segment_id,
+                            violation.code, violation.detail)
+            for region in qa_first.regions:
+                log.warning("[TRANSCRIPT_REGION] region=%s type=%s ids=%s range=%.3f-%.3f violations=%s",
+                            region.region_id, region.region_type, list(region.affected_ids), region.start, region.end,
+                            list(region.violations))
+            if qa_first.regions:
+                report(f"Transcript QA: {len(qa_first.violations)} lỗi trong "
+                       f"{len(qa_first.regions)} vùng; AI chỉ review các vùng này.")
+                segments, repair_stats = TranscriptAIRepairService(
+                    self.settings_store, directory / "cache" / "transcription_repair",
+                ).repair(segments, qa_first, cancel=cancel, progress=report)
+                qa_second = qa_service.inspect(segments)
+                manual_ids = sorted({item.segment_id for item in qa_second.violations})
+                if manual_ids:
+                    report("Transcript vẫn còn vùng chưa đạt kiểm tra sau khi AI sửa. "
+                           "Hệ thống đã dừng tự động sửa để tránh làm sai thêm dữ liệu. "
+                           f"Vui lòng kiểm tra thủ công các ID: {', '.join(map(str, manual_ids))}.")
+                else:
+                    report(f"Transcript QA vòng 2: PASS; đã sửa {repair_stats.repaired_pass} vùng.")
+            else:
+                repair_stats = None
+                qa_second = qa_first
+                manual_ids = []
+                report("Transcript QA: không có vùng lỗi; AI repair không được gọi.")
             raw_result = getattr(transcriber, "last_raw_result", None)
             semantic_stats = None
             if isinstance(raw_result, dict) and raw_result.get("segments"):
@@ -201,6 +213,15 @@ class TranscriptionPipeline:
                 segments = resolved.utterances
                 semantic_stats = resolved.stats
                 check_cancel(cancel)
+            # Semantic boundary / repair stages work from trusted raw evidence.
+            # Guard the final canonical timeline once more before it can reach
+            # Project, UI, translation, or zh.srt.
+            segments, unresolved_language_ids = final_zh_language_guard(segments)
+            if unresolved_language_ids:
+                report("Transcript language: cần kiểm tra thủ công các ID: "
+                       + ", ".join(map(str, unresolved_language_ids)))
+                qa_second = qa_service.inspect(segments)
+                manual_ids = sorted({item.segment_id for item in qa_second.violations})
         except Exception as exc:
             project.transcription_status = "cancelled" if isinstance(exc, CancelledError) else "failed"
             manager.save(project, directory)
@@ -221,17 +242,51 @@ class TranscriptionPipeline:
         project.segments = segments
         if not same_timeline:
             for segment in segments: segment.translation_mode=project.dubbing_settings.get("mode","balanced_dubbing")
-        speaker_stats = SpeakerResolutionService().resolve(project, provider)
-        reconcile_overlaps(project.segments)
-        capture_initial_speaker_state(project, replace=not same_timeline or not project.speaker_review_initial_state)
         project.transcription_status = "completed" if segments else "no_speech"
         project.selected_models["transcription"] = settings.transcription_model
         project.selected_models["transcription_provider"] = provider
+        project.selected_models["transcript_language_status"] = dict(
+            getattr(transcriber, "language_stats", {}))
+        project.selected_models["transcript_language_status"]["unresolved_ids"] = list(unresolved_language_ids)
+        atomic_json(directory / "cache" / "transcript_timing_manifest.json", {
+            "primary_model": settings.transcription_model,
+            "retry_model": settings.transcription_timing_retry_model,
+            "provider": "openrouter",
+            "regions": getattr(transcriber, "timing_manifest", []),
+        })
         raw_fingerprint = content_hash({"source": source_hash, "provider": provider,
             "model": settings.transcription_model, "version": PROMPT_VERSION})
         project.cache_hashes["transcription_raw"] = raw_fingerprint
         project.cache_hashes["transcription"] = content_hash({
-            "raw": raw_fingerprint, "segmentation_version": TRANSCRIPT_SEGMENTATION_VERSION})
+            "raw": raw_fingerprint, "segmentation_version": TRANSCRIPT_SEGMENTATION_VERSION,
+            "qa_version": QA_VERSION})
+        semantic_status = {
+            "ambiguous_regions": semantic_stats.ambiguous_regions if semantic_stats else 0,
+            "target_ids": list(semantic_stats.target_ids) if semantic_stats else [],
+            "requests": semantic_stats.requests if semantic_stats else 0,
+            "cache_hits": semantic_stats.cache_hits if semantic_stats else 0,
+        }
+        project.selected_models["semantic_boundary_status"] = semantic_status
+        qa_status = {
+            "pass1_violations": len(qa_first.violations),
+            "suspicious_regions": len(qa_first.regions),
+            "pass2_violations": len(qa_second.violations),
+            "manual_review_ids": manual_ids,
+            "repair_requests": repair_stats.requests if repair_stats else 0,
+            "repair_cache_hits": repair_stats.cache_hits if repair_stats else 0,
+            "repair_model": repair_stats.model if repair_stats else "",
+            "repair_regions_returned": repair_stats.regions_returned if repair_stats else 0,
+            "repair_regions_applied": repair_stats.regions_applied if repair_stats else 0,
+            "repair_regions_rejected": repair_stats.regions_rejected if repair_stats else 0,
+            "repair_regions_missing": repair_stats.regions_missing if repair_stats else 0,
+            "repair_rows_repaired": repair_stats.rows_repaired if repair_stats else 0,
+        }
+        project.selected_models["transcript_qa_status"] = qa_status
+        if repair_stats and repair_stats.model:
+            project.cache_hashes["transcript_repair"] = content_hash({
+                "version": 1, "model": repair_stats.model,
+                "timeline": transcript_timeline_signature(segments),
+            })
         if semantic_stats and semantic_stats.ambiguous_regions:
             project.selected_models["semantic_boundary"] = semantic_stats.model
             project.cache_hashes["transcript_semantic"] = content_hash({
@@ -244,10 +299,13 @@ class TranscriptionPipeline:
         if project.translation_status != "not_started":
             from cartoon_sub.translation.artifacts import save_translation_artifacts
             save_translation_artifacts(project, directory)
-        report(SpeakerResolutionService.message(speaker_stats))
         if semantic_stats and semantic_stats.ambiguous_regions:
             report(f"Semantic boundaries: {semantic_stats.ambiguous_regions} vùng; "
                    f"+{semantic_stats.added}/-{semantic_stats.removed}; "
                    f"request={semantic_stats.requests}, cache={semantic_stats.cache_hits}.")
+        if repair_stats:
+            report("Transcript AI repair: regions=%s, request=%s, cache=%s, manual=%s."
+                   % (repair_stats.regions_sent, repair_stats.requests,
+                      repair_stats.cache_hits, len(manual_ids)))
         report(f"Hoàn tất {len(segments)} subtitle. Đã lưu subtitle/zh.srt và segments.json.")
         return project, directory

@@ -2,6 +2,9 @@
 
 Read documents selectively.
 
+Development and repository:
+- [Development notes](DEVELOPMENT.md)
+
 Architecture / core data model:
 - [Master Timeline](MASTER_TIMELINE.md)
 

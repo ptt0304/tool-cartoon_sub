@@ -20,7 +20,8 @@ SUBTITLE_TEXT_SOURCES = ("vi_subtitle", "vi_dubbing")
 log = logging.getLogger(__name__)
 
 
-def subtitle_source_text(project, utterance):
+def resolve_vietnamese_text(project, utterance):
+    """Resolve the one presentation source used by every segmentation action."""
     source = getattr(project, "subtitle_text_source", "vi_subtitle")
     if source not in SUBTITLE_TEXT_SOURCES:
         raise ValueError("Nguồn nội dung phụ đề không hợp lệ")
@@ -29,6 +30,10 @@ def subtitle_source_text(project, utterance):
         log.warning("[SUBTITLE SOURCE] ID %s chưa có VI Dubbing; tạm dùng VI Subtitle.", utterance.id)
         return utterance.vi_subtitle
     return text
+
+
+# Compatibility name retained for existing callers and integrations.
+subtitle_source_text = resolve_vietnamese_text
 
 
 def subtitle_source_warning(project, utterance):
@@ -40,7 +45,11 @@ def subtitle_source_warning(project, utterance):
 
 def subtitle_source_utterance(project, utterance):
     view = copy(utterance)
-    view.vi_subtitle = subtitle_source_text(project, utterance)
+    view.vi_subtitle = resolve_vietnamese_text(project, utterance)
+    # Derived-only diagnostics for the allocator; never serialized on the
+    # canonical Utterance and never used as a data source.
+    view._display_source_mode = getattr(project, "subtitle_text_source", "vi_subtitle")
+    view._display_cached_vi = view.vi_subtitle
     return view
 
 
@@ -67,7 +76,6 @@ def presentation_segments(utterance, source_text=None):
         return []
     fallback = DisplaySegment(f"{utterance.id}.1", utterance.id, utterance.start, utterance.end,
         text, segmentation_reason="utterance_source")
-    fallback.inherit_speaker(utterance.speaker_id)
     return [fallback]
 
 
@@ -273,7 +281,6 @@ class SubtitleSegmentationService:
                 seg.vi_text = source_text
                 seg.start = utterance.start
                 seg.end = utterance.end
-                seg.inherit_speaker(utterance.speaker_id)
                 seg.recalculate()
                 apply_display_qc(seg, settings, source_text)
                 utterance.set_display_segments([seg])
@@ -282,7 +289,6 @@ class SubtitleSegmentationService:
                     f"{utterance.id}.1", utterance.id, utterance.start, utterance.end,
                     source_text, segmentation_reason="utterance_source"
                 )
-                fallback.inherit_speaker(utterance.speaker_id)
                 apply_display_qc(fallback, settings, source_text)
                 utterance.set_display_segments([fallback])
             cache_key = self._fingerprint(project, utterance, profile, settings)
@@ -308,7 +314,6 @@ class SubtitleSegmentationService:
             parts = reflow_text_to_segments(source_text, existing)
             for seg, part in zip(existing, parts):
                 seg.vi_text = part
-                seg.inherit_speaker(utterance.speaker_id)
                 seg.recalculate()
                 apply_display_qc(seg, settings, source_text)
             utterance.set_display_segments(existing)
@@ -366,9 +371,8 @@ class SubtitleSegmentationService:
             raise ValueError("Vị trí tách phải nằm giữa các từ của DisplaySegment")
         position = words[word_index - 1].end()
         parts = (target.vi_text[:position], target.vi_text[position:])
-        temp = Utterance(utterance.id, target.start, target.end, utterance.zh, vi_subtitle=target.vi_text,
-            speaker_id=utterance.speaker_id, speaker_name=utterance.speaker_name)
-        plan = SegmentationPlan(utterance.id, utterance.speaker_id, target.vi_text, parts,
+        temp = Utterance(utterance.id, target.start, target.end, utterance.zh, vi_subtitle=target.vi_text)
+        plan = SegmentationPlan(utterance.id, "", target.vi_text, parts,
             ("manual",), (), False, True)
         allocated = allocate_display_segments(temp, plan, settings)
         replacement = list(allocated.segments)
@@ -430,5 +434,4 @@ class SubtitleSegmentationService:
     def _reindex(utterance, rows):
         for index, item in enumerate(rows, 1):
             item.id = f"{utterance.id}.{index}"
-            item.inherit_speaker(utterance.speaker_id)
         return rows

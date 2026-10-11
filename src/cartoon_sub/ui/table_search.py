@@ -12,7 +12,7 @@ def _needle(value):
 def add_table_search(layout, table, columns):
     row = QHBoxLayout()
     edit = QLineEdit()
-    edit.setPlaceholderText("Chinese, Vietnamese, speaker…")
+    edit.setPlaceholderText("Chinese, Vietnamese…")
     clear = QPushButton("X")
     clear.setMaximumWidth(34)
     row.addWidget(QLabel("Tìm kiếm:"))
@@ -44,7 +44,7 @@ def apply_table_search(table, query=None, columns=None):
 def add_tree_search(layout, tree, parent_columns, child_columns):
     row = QHBoxLayout()
     edit = QLineEdit()
-    edit.setPlaceholderText("Vietnamese, speaker…")
+    edit.setPlaceholderText("Vietnamese…")
     clear = QPushButton("X")
     clear.setMaximumWidth(34)
     row.addWidget(QLabel("Tìm kiếm:"))

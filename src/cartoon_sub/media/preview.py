@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 from cartoon_sub.media.process import run_process
 from cartoon_sub.subtitle.renderer import save_ass, validate_visuals
+from cartoon_sub.media.mask_timeline import mask_events_from_ass, mask_filter_chain
 from cartoon_sub.project.cache import atomic_json, check_cancel
 
 
@@ -74,19 +75,9 @@ class VideoRenderer:
                  'mask':vars(project.mask),'subtitle_style':vars(project.subtitle_style)}
         atomic_json(folder/'render.json',state)
         try:
-            save_ass(project,folder/'subtitle.ass',start if is_partial else 0,calc_duration)
-            m = project.mask
-            if not m.enabled or m.kind == 'none': chain = '[0:v]null[masked];'
-            elif m.kind == 'solid':
-                color = '0x' + m.mask_color[1:]
-                chain = f'[0:v]drawbox=x={m.x}:y={m.y}:w={m.width}:h={m.height}:color={color}:t=fill[masked];'
-            else:
-                # RGB avoids chroma rounding changing the user's selected rectangle.
-                effects = {'gaussian': f'gblur=sigma={m.strength * 2.4:.1f}:steps=2'}
-                effect = effects.get(m.kind)
-                if effect is None: raise ValueError('Kiểu mask không hợp lệ')
-                chain = (f'[0:v]format=yuv444p,split[base][region];[region]crop={m.width}:{m.height}:{m.x}:{m.y}:exact=1,'
-                         f'{effect}[blur];[base][blur]overlay={m.x}:{m.y}:format=auto[masked];')
+            ass_path = folder / 'subtitle.ass'
+            save_ass(project, ass_path, start if is_partial else 0, calc_duration)
+            chain = mask_filter_chain(project, mask_events_from_ass(ass_path, project))
             source = '[masked]'
             extra_inputs = []
             for index, logo in enumerate(project.logos, 1):

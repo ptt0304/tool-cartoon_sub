@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field, asdict
 from uuid import uuid4
+import logging
 from cartoon_sub.translation.context_models import StoryContext
 
 
 TTS_GENERATION_STATUSES = frozenset({
     "not_generated", "stale", "generating", "generated", "cached", "failed",
 })
+log = logging.getLogger(__name__)
 
 
 @dataclass(init=False)
@@ -48,6 +50,11 @@ class DisplaySegment:
         if self.start < 0 or self.end <= self.start:
             raise ValueError("Display segment requires 0 <= start < end")
         if not isinstance(self.vi_text, str) or not self.vi_text.strip():
+            log.error("[DISPLAY_SEGMENT_DEBUG] validation_failed utterance_id=%r segment_id=%r "
+                      "segment_vi=%r raw_value=%r stripped_value=%r row_type=child parent_child=%r->%r",
+                      self.utterance_id, self.id, self.vi_text, self.vi_text,
+                      self.vi_text.strip() if isinstance(self.vi_text, str) else None,
+                      self.utterance_id, self.id)
             raise ValueError("Display segment Vietnamese text must not be empty")
         if self.zh_text is not None and not isinstance(self.zh_text, str):
             raise ValueError("Display segment Chinese text must be a string or null")
@@ -64,11 +71,6 @@ class DisplaySegment:
         from cartoon_sub.syllable.vietnamese import count as vi_count
         self.vi_syllables = vi_count(self.vi_text).count
         self.line_count = max(1, len(self.vi_text.splitlines()))
-
-    def inherit_speaker(self, speaker_id):
-        from cartoon_sub.speaker.models import Speaker
-        Speaker(speaker_id)
-        self.speaker_id = speaker_id
 
     def to_dict(self):
         self.recalculate()
@@ -100,6 +102,13 @@ class Utterance:
     transcript_confidence: float | None = None
     transcript_timing_provenance: str = "ESTIMATED"
     transcript_timing_confidence: float = 0.0
+    transcript_language_status: str = "PASS"
+    transcript_language_retry_count: int = 0
+    # Diagnostic evidence is deliberately separate from ``zh``.  A failed
+    # foreign-language retry must never make foreign text the visible Chinese
+    # transcript, but an editor still needs the original evidence to fix it.
+    transcript_raw_stt_text: str = ""
+    transcript_language_retry_text: str = ""
     overlap: bool = False
     overlap_group: str | None = None
     overlap_type: str = "NONE"
@@ -161,7 +170,6 @@ class Utterance:
 
     def validate(self):
         import math
-        from cartoon_sub.speaker.models import Speaker
         from cartoon_sub.translation.modes import TranslationMode
         if type(self.id) is not int or self.id < 1: raise ValueError("ID must be a positive integer")
         if any(type(t) not in (float,int) or not math.isfinite(t) for t in (self.start,self.end)):
@@ -169,19 +177,29 @@ class Utterance:
         if self.start < 0 or self.end <= self.start: raise ValueError("Requires 0 <= start < end")
         if any(not isinstance(t,str) for t in (self.zh,self.vi_subtitle,self.vi_dubbing)):
             raise ValueError("Text must be a string")
-        Speaker(self.speaker_id,self.speaker_name)
         TranslationMode(self.translation_mode)
         for confidence in (self.speaker_confidence,self.transcript_confidence):
             if confidence is not None and (type(confidence) not in (int,float) or not math.isfinite(confidence) or not 0<=confidence<=1):
                 raise ValueError("Confidence must be null or in [0,1]")
         if self.transcript_timing_provenance not in {
             "WORD_TIMESTAMP", "PARTIAL_WORD_ALIGNMENT", "LOCAL_ESTIMATION", "ESTIMATED",
+            "VAD_SENTENCE", "VAD_PUNCTUATION_WEIGHTED", "VAD_WORD_TRUSTED", "LEGACY_FALLBACK",
+            "PRIMARY_WORD", "PRIMARY_SEGMENT", "RETRY_WORD", "RETRY_SEGMENT", "VOCALIZATION", "COARSE_ONLY", "LEGACY",
+            "VIDEO_SUBTITLE",
         }:
             raise ValueError("Invalid transcript timing provenance")
         if (type(self.transcript_timing_confidence) not in (int, float)
                 or not math.isfinite(self.transcript_timing_confidence)
                 or not 0 <= self.transcript_timing_confidence <= 1):
             raise ValueError("Invalid transcript timing confidence")
+        if self.transcript_language_status not in {
+            "PASS", "VOCALIZATION_NORMALIZED", "LANGUAGE_MISMATCH", "NEEDS_MANUAL_REVIEW",
+        }:
+            raise ValueError("Invalid transcript language status")
+        if type(self.transcript_language_retry_count) is not int or not 0 <= self.transcript_language_retry_count <= 1:
+            raise ValueError("Transcript language retry count must be 0 or 1")
+        if not isinstance(self.transcript_raw_stt_text, str) or not isinstance(self.transcript_language_retry_text, str):
+            raise ValueError("Transcript language diagnostic text must be a string")
         if self.target_override is not None and (type(self.target_override) is not int or self.target_override<1):
             raise ValueError("Target override must be a positive integer")
         if self.tts_duration is not None and (type(self.tts_duration) not in (int,float) or not math.isfinite(self.tts_duration) or self.tts_duration<=0):
@@ -274,8 +292,6 @@ class Utterance:
         else:
             self.tts_alignment_status = "not_imported"
             self.tts_alignment_diagnostic = ""
-        for display_segment in self.display_segments:
-            display_segment.inherit_speaker(self.speaker_id)
 
     def set_display_segments(self, display_segments):
         if not isinstance(display_segments, list):
@@ -288,7 +304,6 @@ class Utterance:
                 raise ValueError("Display segment must reference its parent utterance")
             if item.start < self.start or item.end > self.end:
                 raise ValueError("Display segment must remain inside its utterance timing")
-            item.inherit_speaker(self.speaker_id)
         self.display_segments = children
 
     def to_dict(self):
@@ -316,6 +331,14 @@ class Mask:
     height: int = 0
     strength: int = 12
     mask_color: str = "#000000"
+    # Resolution-independent editor state. x/y/width/height remain the legacy
+    # render contract and are synchronized from this ROI when the user edits it.
+    roi: dict = field(default_factory=dict)
+    # ``auto_fit`` is the new-project default.  ``roi_full`` is assigned while
+    # reading legacy project files so their rendered appearance is preserved.
+    geometry_mode: str = "auto_fit"
+    padding_x: int = 18
+    padding_y: int = 8
 
 @dataclass
 class SubtitleStyle:
@@ -370,6 +393,8 @@ class AudioSettings:
     additional_audio_volume: int = 100
     additional_audio_start: float = 0.0
     tts_text_source: str = "vi_dubbing"
+    tts_voice_id: str | None = None
+    tts_speed: float = 1.0
 
     def validate(self):
         import math
@@ -396,6 +421,11 @@ class AudioSettings:
         self.additional_audio_start = float(self.additional_audio_start)
         if self.tts_text_source not in {"vi_subtitle", "vi_dubbing"}:
             raise ValueError("tts_text_source must be vi_subtitle or vi_dubbing")
+        if self.tts_voice_id is not None and (not isinstance(self.tts_voice_id, str) or not self.tts_voice_id.strip()):
+            raise ValueError("tts_voice_id must be non-empty text or null")
+        if type(self.tts_speed) not in (int, float) or not math.isfinite(self.tts_speed) or not 0.1 <= self.tts_speed <= 3.0:
+            raise ValueError("tts_speed must be between 0.1 and 3.0")
+        self.tts_speed = float(self.tts_speed)
         return self
 
 @dataclass
@@ -406,6 +436,11 @@ class Project:
     metadata: dict = field(default_factory=dict)
     segments: list[Utterance] = field(default_factory=list)
     transcription_status: str = "not_started"
+    # Persistent Transcript acquisition config. ROI is normalized (x_pct,y_pct,w_pct,h_pct);
+    # {} means not selected. Generated Video data lives in cache/transcript/video/, never here.
+    transcript_source_mode: str = "audio"
+    video_subtitle_roi: dict = field(default_factory=dict)
+    video_subtitle_regions: list[dict] = field(default_factory=list)
     translation_prompt: str = ""
     translation_custom_genre: str = ""
     translation_custom_style: str = ""
@@ -432,9 +467,17 @@ class Project:
     visual_context_signature: str = ""
     visual_context_error: str = ""
     translation_status: str = "not_started"
+    # Translate owns these source snapshots.  Transcript continues to own the
+    # active canonical timeline and is never switched by this configuration.
+    translate_source: str = "audio"
+    translation_source_snapshots: dict = field(default_factory=dict)
+    translation_source_results: dict = field(default_factory=dict)
     translation_notes: dict = field(default_factory=dict)
     translation_qa: dict = field(default_factory=dict)
     translation_continuity_memory: list[dict] = field(default_factory=list)
+    # Review proposals are deliberately separate from the canonical master
+    # timeline.  They are only applied after an explicit user action.
+    master_dialogue_ai_results: dict = field(default_factory=dict)
 
     speakers: dict = field(default_factory=dict)
     speaker_review_hash: str = ""
@@ -460,8 +503,6 @@ class Project:
         self.segments = value
 
     def to_dict(self):
-        from cartoon_sub.speaker.service import refresh_timeline
-        refresh_timeline(self)
         data=asdict(self)
         data["schema_version"]=3
         data["master_timeline"]=[s.to_dict() for s in self.segments]
@@ -493,7 +534,20 @@ class Project:
             style_data.setdefault("text_color", "#000000")
         elif mask_data.get("kind") in ("blur", "pixelate", "frosted"):
             mask_data["kind"] = "gaussian"
+        if "geometry_mode" not in mask_data:
+            mask_data["geometry_mode"] = "roi_full"
+        mask_data.setdefault("padding_x", 18)
+        mask_data.setdefault("padding_y", 8)
         data["mask"] = Mask(**mask_data)
+        if data["mask"].geometry_mode not in ("auto_fit", "roi_full"):
+            data["mask"].geometry_mode = "roi_full"
+        if not isinstance(data["mask"].padding_x, int) or not 0 <= data["mask"].padding_x <= 500:
+            data["mask"].padding_x = 18
+        if not isinstance(data["mask"].padding_y, int) or not 0 <= data["mask"].padding_y <= 500:
+            data["mask"].padding_y = 8
+        if data["mask"].roi:
+            from cartoon_sub.subtitle.mask_roi import normalize_mask_roi
+            data["mask"].roi = normalize_mask_roi(data["mask"].roi)
         data["subtitle_style"] = SubtitleStyle(**style_data)
         logo_rows = []
         for raw_logo in data.get("logos", []):
@@ -531,6 +585,13 @@ class Project:
         data["proper_name_mode"] = mode
         if not isinstance(data.get("translation_qa", {}), dict):
             data["translation_qa"] = {}
+        if data.get("translate_source", "audio") not in ("audio", "video", "srt"):
+            data["translate_source"] = "audio"
+        for key in ("translation_source_snapshots", "translation_source_results"):
+            if not isinstance(data.get(key, {}), dict):
+                data[key] = {}
+        if not isinstance(data.get("master_dialogue_ai_results", {}), dict):
+            data["master_dialogue_ai_results"] = {}
         if not isinstance(data.get("translation_continuity_memory", []), list):
             data["translation_continuity_memory"] = []
         data["translation_continuity_memory"] = data.get("translation_continuity_memory", [])[:64]
@@ -548,24 +609,37 @@ class Project:
         if data.get("subtitle_text_source", "vi_subtitle") not in ("vi_subtitle", "vi_dubbing"):
             raise ValueError("Nguồn nội dung phụ đề không hợp lệ")
         data["subtitle_text_source"] = data.get("subtitle_text_source", "vi_subtitle")
-        from cartoon_sub.speaker.models import Speaker
         speakers = data.get("speakers", {})
         if not isinstance(speakers, dict):
             raise ValueError("Speaker registry must be an object")
-        data["speakers"] = {
-            key: asdict(Speaker(**value)) for key, value in speakers.items()
-        }
+        data["speakers"] = speakers
         if not isinstance(data.get("speaker_evidence", []), list):
             raise ValueError("Speaker evidence must be a list")
         if not isinstance(data.get("speaker_proposals", {}), dict):
             raise ValueError("Speaker proposals must be an object")
         raw_audio = data.get("audio_settings", {})
+        if not raw_audio.get("tts_voice_id"):
+            for legacy in speakers.values():
+                if isinstance(legacy, dict) and legacy.get("tts_voice_id"):
+                    raw_audio["tts_voice_id"] = legacy["tts_voice_id"]
+                    raw_audio["tts_speed"] = legacy.get("tts_speed", 1.0)
+                    break
         data["audio_settings"] = AudioSettings(**raw_audio).validate()
         data["final_audio_status"] = data.get("final_audio_status", "not_generated")
         data["final_audio_fingerprint"] = data.get("final_audio_fingerprint", "")
+        from cartoon_sub.transcription.mode import DEFAULT_MODE, normalize_mode, normalize_roi
+        from cartoon_sub.transcription.video.regions import normalize_regions
+        data["transcript_source_mode"] = normalize_mode(data.get("transcript_source_mode", DEFAULT_MODE))
+        data["video_subtitle_roi"] = normalize_roi(data.get("video_subtitle_roi", {}))
+        raw_regions = data.get("video_subtitle_regions")
+        if raw_regions is None:
+            raw_regions = ([] if not data["video_subtitle_roi"] or not data.get("metadata", {}).get("duration") else [{
+                "id": "region_001", "start_time": 0.0,
+                "end_time": float(data.get("metadata", {}).get("duration", 0)),
+                "roi": data["video_subtitle_roi"],
+            }])
+        data["video_subtitle_regions"] = normalize_regions(raw_regions, data.get("metadata", {}).get("duration", 0))
         project=cls(**data)
-        from cartoon_sub.speaker.service import refresh_timeline
-        refresh_timeline(project)
         # Project.utterances is canonical even for legacy project files that
         # persisted an older presentation-text copy.
         from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService

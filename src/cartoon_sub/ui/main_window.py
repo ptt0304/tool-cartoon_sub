@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from pathlib import Path
+import json
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QFileDialog, QMessageBox,
@@ -16,8 +17,6 @@ from cartoon_sub.ui.context_dialog import ContextDialog
 from cartoon_sub.translation.context_service import source_fingerprint, context_config_fingerprint
 from cartoon_sub.translation.context_export import build_context_ai_diagnostic
 from cartoon_sub.translation.context_models import StoryContext
-from cartoon_sub.speaker.service import review_complete, refresh_timeline
-from cartoon_sub.ui.speaker_dialog import SpeakerDialog
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
 from cartoon_sub.ui.utterance_dialog import UtteranceDialog
 from cartoon_sub.ui.docs_dialog import DocsWindow
@@ -57,25 +56,33 @@ class MainWindow(QMainWindow):
         self.voice_sync_timer = QTimer(self)
         self.voice_sync_timer.setInterval(3000)
         self.voice_sync_timer.timeout.connect(self.poll_local_tts_voices)
-        self.setWindowTitle("Cartoon Sub — Master Timeline / Speaker & Dubbing")
+        self.setWindowTitle("Cartoon Sub — Master Timeline / Dubbing")
         screen = self.screen().availableGeometry()
         self.resize(min(1100, screen.width()), min(750, screen.height()))
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         self.pages = [module.build() for module in (video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, audio_tab, export_tab)]
         self.ai_model_bindings = {}
-        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("subtitle", 3), ("audio", 5)):
+        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("audio", 5)):
             page = self.pages[page_index]
             binding = SearchableModelBinding(page.ai_model_search, page.ai_model, page)
             binding.explicitSelectionChanged.connect(
                 lambda _model, name=tab_name, target=page:
                     self._save_ai_tab_override(name, target))
             self.ai_model_bindings[tab_name] = binding
+        master_page = self.pages[2]
+        self.master_dialogue_binding = SearchableModelBinding(
+            master_page.master_ai_model_search, master_page.master_ai_model, master_page)
+        self.master_dialogue_binding.explicitSelectionChanged.connect(self._save_master_dialogue_override)
         transcript = self.pages[1]
         self.transcript_stt_binding = SearchableModelBinding(
             transcript.stt_model_search, transcript.stt_model, transcript)
         self.transcript_stt_binding.explicitSelectionChanged.connect(
             lambda _model: self._save_transcript_stt_override())
+        self.transcript_video_binding = SearchableModelBinding(
+            transcript.video_model_search, transcript.video_model, transcript)
+        self.transcript_video_binding.explicitSelectionChanged.connect(
+            lambda _model: self._save_transcript_video_override())
         self.pages[4].set_undo_stack(self.undo_stack, self.persist_undo_state)
         self.tab_scrolls = []; self.tab_job_panels = []
         for name, widget in zip(("Video", "Transcript", "Translate", "Subtitle", "Mask", "Audio", "Export"), self.pages):
@@ -119,10 +126,18 @@ class MainWindow(QMainWindow):
         self.pages[0].open_button.clicked.connect(self.open_video)
         self.pages[1].import_button.clicked.connect(self.import_srt)
         self.pages[1].transcribe_button.clicked.connect(self.transcribe)
-        self.pages[1].speaker_button.clicked.connect(self.edit_speakers)
+        self.pages[1].mode_combo.currentIndexChanged.connect(self._on_transcript_mode_changed)
+        self.pages[1].roi_button.clicked.connect(self.select_transcript_video_roi)
+        self.pages[1].audio_cache_clear_button.clicked.connect(self.clear_audio_transcript_cache)
+        self.pages[1].video_cache_clear_button.clicked.connect(self.clear_video_transcript_cache)
+        self.pages[1].video_qaqc_button.clicked.connect(self.qa_video_transcript)
+        self.pages[1].video_qaqc_undo_button.clicked.connect(self.undo_video_transcript_qaqc)
         self.pages[1].export_transcript_button.clicked.connect(self.export_transcript_srt)
         self.pages[1].reset_ai_button.clicked.connect(lambda: self.reset_ai_stage("transcript"))
         self.pages[2].translate_button.clicked.connect(self.translate)
+        self.pages[2].translate_source.currentIndexChanged.connect(self.change_translate_source)
+        self.pages[2].clear_translate_cache_button.clicked.connect(self.clear_translate_source_cache)
+        self.pages[2].retranslate_selected_button.clicked.connect(self.retranslate_selected)
         self.pages[2].qa_button.clicked.connect(self.qa_translation)
         self.pages[2].import_vi_button.clicked.connect(self.import_vi_srt)
         self.pages[2].analyze_button.clicked.connect(self.analyze_context)
@@ -133,24 +148,26 @@ class MainWindow(QMainWindow):
         self.pages[2].optimize_bulk_button.clicked.connect(
             lambda: self.optimize_dubbing(bulk_mode=True))
         self.pages[2].manual_qa_button.clicked.connect(self.qa_selected_translation)
+        self.pages[2].master_ai_dubbing_button.clicked.connect(
+            lambda: self.run_master_dialogue_ai("dubbing"))
+        self.pages[2].master_ai_qa_button.clicked.connect(
+            lambda: self.run_master_dialogue_ai("qa"))
+        self.pages[2].master_ai_apply_selected_button.clicked.connect(self.apply_master_dialogue_ai_selected)
+        self.pages[2].master_ai_apply_all_button.clicked.connect(self.apply_master_dialogue_ai_all)
         self.pages[2].revert_optimize_button.clicked.connect(self.revert_dubbing_optimization)
         self.pages[2].apply_edits_button.clicked.connect(self.apply_manual_edits)
         self.pages[2].revert_edits_button.clicked.connect(self.revert_manual_edits)
         self.pages[2].export_translate_button.clicked.connect(self.export_translate_srt)
-        self.pages[2].export_speakers_button.clicked.connect(self.export_speakers)
-        self.pages[2].reset_ai_button.clicked.connect(self.reset_translate_ai_data)
         subtitle = self.pages[3]
         subtitle.apply_settings.clicked.connect(self.apply_segmentation_settings)
         subtitle.text_source.currentIndexChanged.connect(self.change_subtitle_text_source)
         subtitle.warning_filter.currentIndexChanged.connect(self.refresh_segmentation_page)
         subtitle.auto_all.clicked.connect(lambda: self.auto_segment(False))
         subtitle.auto_selected.clicked.connect(lambda: self.auto_segment(True))
-        subtitle.refine_audio.clicked.connect(self.refine_display_timing)
         subtitle.split_manual.clicked.connect(self.split_display_segment)
         subtitle.merge.clicked.connect(self.merge_display_segments)
         subtitle.reset.clicked.connect(self.reset_segmentation)
         subtitle.export_subtitle_button.clicked.connect(self.export_subtitle_srt)
-        subtitle.reset_ai_button.clicked.connect(lambda: self.reset_ai_stage("subtitle"))
         self.pages[4].frame_button.clicked.connect(self.load_mask_frame)
         self.pages[4].preview_button.clicked.connect(lambda:self.render_video(True))
         self.pages[4].render_button.clicked.connect(lambda:self.render_video(False))
@@ -163,8 +180,7 @@ class MainWindow(QMainWindow):
         audio.preview_requested.connect(self.preview_local_tts_voice)
         audio.generate_requested.connect(self.generate_tts)
         audio.mix_dubbed_requested.connect(self.mix_tts)
-        audio.mapping_changed.connect(self.update_speaker_tts_voice)
-        audio.batch_voice_requested.connect(self.apply_batch_voice)
+        audio.project_voice_changed.connect(self.update_project_tts_voice)
         audio.tts_source_changed.connect(self.update_tts_source)
         audio.audio_settings_changed.connect(self.update_audio_settings)
         audio.clear_additional_requested.connect(self.clear_additional_audio)
@@ -192,14 +208,14 @@ class MainWindow(QMainWindow):
         descriptions = {
             "transcript": (
                 "Xóa transcript hiện tại và toàn bộ dữ liệu phụ thuộc để chạy lại từ đầu?",
-                "Master Timeline, Speaker Review/proposal, Context, Translation, Subtitle, "
+                "Master Timeline, Context, Translation, Subtitle, "
                 "Dubbing/TTS, QA và Final Audio",
                 "Video nguồn và audio/source.wav",
             ),
             "context": (
                 "Xóa Candidate/Approved Context và bản dịch phụ thuộc để phân tích AI lại?",
                 "Context AI đã duyệt, proposal/fusion AI, Translation, Subtitle, TTS và Final Audio",
-                "Transcript tiếng Trung và Speaker Review đã xác nhận",
+                "Transcript tiếng Trung đã xác nhận",
             ),
             "translation": (
                 "Xóa bản dịch hiện tại và toàn bộ dữ liệu phụ thuộc để dịch lại?",
@@ -209,7 +225,7 @@ class MainWindow(QMainWindow):
             "subtitle": (
                 "Xóa dữ liệu tạo phụ đề để segment/timing lại?",
                 "DisplaySegment, QC segmentation và cache căn timing audio",
-                "Transcript, Speaker Review, Context và bản dịch tiếng Việt",
+                "Transcript, Context và bản dịch tiếng Việt",
             ),
             "audio": (
                 "Xóa audio lồng tiếng đã sinh để tạo lại?",
@@ -283,6 +299,32 @@ class MainWindow(QMainWindow):
             self.error(exc)
             self.refresh()
 
+    def _clear_transcript_cache(self, kind):
+        if not self.controller.project or self.worker is not None:
+            return
+        label = "Audio Transcript" if kind == "audio" else "Video Transcript"
+        answer = QMessageBox.question(
+            self, "Xác nhận xóa cache", f"Xóa cache {label}? Dữ liệu của nguồn còn lại được giữ nguyên.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = (self.controller.clear_audio_transcript_cache() if kind == "audio"
+                      else self.controller.clear_video_transcript_cache())
+            self.refresh()
+            self.statusBar().showMessage(f"Đã xóa cache {label} ({len(result.removed)} mục).", 8000)
+        except Exception as exc:
+            self.error(exc)
+            self.refresh()
+
+    def clear_audio_transcript_cache(self):
+        self._clear_transcript_cache("audio")
+
+    def clear_video_transcript_cache(self):
+        self._clear_transcript_cache("video")
+
     def start_openrouter_catalog_sync(self):
         """Non-blocking, once-per-startup synchronization owned by SettingsStore."""
         if self.ai_catalog_worker is not None:
@@ -351,23 +393,6 @@ class MainWindow(QMainWindow):
                         if segment.dubbing_optimized: segment.dubbing_status="stale"
                     self.controller.save();self._record_project_edit(before,"Edit dubbing settings");self.refresh()
         except Exception as exc:self.error(exc)
-
-    def edit_speakers(self):
-        try:
-            before=self._project_state();self.sync_options()
-            dialog=SpeakerDialog(self.controller.project,self.controller.directory,self,
-                                  reset_callback=self.reset_speaker_review)
-            if dialog.exec()==dialog.DialogCode.Accepted:
-                self.controller.commit_speaker_review(
-                    dialog.speakers, dialog.assignments, dialog.working_project,
-                )
-                self._record_project_edit(before,"Edit speakers");self.refresh()
-        except Exception as exc:self.error(exc)
-
-    def reset_speaker_review(self):
-        self.controller.reset_speaker_review()
-        self.refresh()
-        return self.controller.project
 
     def refresh_timeline_table(self):
         if self.controller.project:
@@ -549,14 +574,6 @@ class MainWindow(QMainWindow):
             self.start_job(lambda **job: self.controller.auto_segment(ids, **job), self.accept_project)
         except Exception as exc:self.error(exc)
 
-    def refine_display_timing(self):
-        try:
-            ids = self.pages[3].selected_utterance_ids()
-            if not ids:
-                raise ValueError("Chọn Utterance dài hoặc DisplaySegment cần căn theo audio")
-            self.start_job(lambda **job: self.controller.refine_display_timing(ids, **job), self.accept_project)
-        except Exception as exc:self.error(exc)
-
     def split_display_segment(self):
         try:
             selected = self.pages[3].selected_display_refs()
@@ -590,16 +607,6 @@ class MainWindow(QMainWindow):
                 raise ValueError("Chọn ít nhất một Utterance hoặc DisplaySegment để reset")
             before=self._project_state();self.controller.reset_segmentation(ids);self._record_project_edit(before,"Reset subtitles")
             self.refresh()
-        except Exception as exc:self.error(exc)
-
-    def export_speakers(self):
-        try:
-            if get_dirty_rows(self.pages[2].table):
-                raise ValueError("Còn thay đổi chưa được áp dụng. Hãy Áp dụng bản sửa tay trước khi export.")
-            self.sync_options();self.controller.save()
-            text_type=self.pages[2].speaker_text_type.currentData()
-            self.start_job(lambda **job:self.controller.export_speaker_files(text_type,**job),
-                           lambda path:self.pages[2].export_speakers_status.setText("Exported: " + self._relative_project_path(path)))
         except Exception as exc:self.error(exc)
 
     def _relative_project_path(self, path):
@@ -658,7 +665,6 @@ class MainWindow(QMainWindow):
         self.local_tts_voice_revision = result.get("revision")
         self.local_tts_voices = result["voices"]
         self.voice_sync_offline = False
-        self._fallback_deleted_voice_mappings(result)
         page = self.pages[5]
         page.set_connection_result(result["health"], result["voices"])
         if self.controller.project:
@@ -688,17 +694,11 @@ class MainWindow(QMainWindow):
             return
         self.local_tts_voice_revision = revision
         self.local_tts_voices = result["voices"]
-        self._fallback_deleted_voice_mappings(result)
         page = self.pages[5]
         page.set_connection_result({"status": "READY"}, self.local_tts_voices)
         if self.controller.project:
             page.populate(self.controller.project, self.local_tts_voices, self.controller.directory)
 
-    def _fallback_deleted_voice_mappings(self, result):
-        voices = result.get("voices") or []
-        self.controller.fallback_deleted_tts_voice_mappings(
-            voices, result.get("all_voice_ids") or [voice["voice_id"] for voice in voices],
-        )
 
     def voice_library_sync_failed(self, message):
         if not self.voice_sync_offline:
@@ -718,22 +718,11 @@ class MainWindow(QMainWindow):
             self.voice_sync_timer.start()
         QTimer.singleShot(0, self.poll_local_tts_voices)
 
-    def update_speaker_tts_voice(self, speaker_id, voice_id, speed):
+    def update_project_tts_voice(self, voice_id):
         try:
             before=self._project_state()
-            self.controller.update_speaker_tts_voice(speaker_id, voice_id, speed)
-            self._record_project_edit(before,"Change speaker voice")
-            self.refresh()
-        except Exception as exc:
-            self.error(exc)
-
-    def apply_batch_voice(self, speaker_ids, voice_id):
-        try:
-            before=self._project_state()
-            for speaker_id in speaker_ids:
-                speed = float(self.controller.project.speakers[speaker_id].get("tts_speed", 1.0))
-                self.controller.update_speaker_tts_voice(speaker_id, voice_id, speed)
-            self._record_project_edit(before,"Apply batch voice")
+            self.controller.update_project_tts_voice(voice_id)
+            self._record_project_edit(before,"Change project TTS voice")
             self.refresh()
         except Exception as exc:
             self.error(exc)
@@ -965,7 +954,6 @@ class MainWindow(QMainWindow):
             self.pages[6].reset_media()
             self.pages[1].export_transcript_status.clear()
             self.pages[2].export_translate_status.clear()
-            self.pages[2].export_speakers_status.clear()
             self.pages[3].export_subtitle_status.clear()
             self.local_tts_voices = None
             self.undo_stack.clear()
@@ -976,6 +964,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing source", "Video gốc không còn ở đường dẫn đã lưu; dữ liệu subtitle vẫn mở được.")
 
     def import_srt(self):
+        if self.controller.project and self.controller.project.transcript_source_mode != "import_srt":
+            self.error(ValueError("Chọn nguồn transcript Import Chinese SRT trước."))
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Import Chinese SRT", "", "Subtitles (*.srt)")
         if path:
             try:
@@ -1003,22 +994,140 @@ class MainWindow(QMainWindow):
         try:
             self.sync_options()
             self.controller.save()
-            self.start_job(self.controller.transcribe, self.accept_project)
+            self.start_job(self.controller.run_transcript, self.accept_project)
         except Exception as exc:
+            self.error(exc)
+
+    def qa_video_transcript(self):
+        try:
+            self.start_job(self.controller.qa_video_transcript, self.accept_project)
+        except Exception as exc:
+            self.error(exc)
+
+    def undo_video_transcript_qaqc(self):
+        try:
+            self.start_job(self.controller.undo_video_transcript_qaqc, self.accept_project)
+        except Exception as exc:
+            self.error(exc)
+
+    def select_transcript_video_roi(self):
+        """Edit local temporal Video-subtitle regions; persist only on confirmation."""
+        try:
+            project = self.controller.project
+            if not project or not self.controller.directory:
+                raise ValueError("Chưa mở project")
+            if project.transcript_source_mode != transcript_tab.TranscriptSourceMode.VIDEO.value:
+                raise ValueError("Chọn chế độ Lấy transcript từ Video trước.")
+            from cartoon_sub.transcription.video.roi_preview import VideoSubtitleRoiPreview
+            from cartoon_sub.ui.transcript_roi_dialog import TranscriptRoiDialog
+            from cartoon_sub.transcription.video.regions import regions_for_project
+            previewer = VideoSubtitleRoiPreview()
+
+            def open_editor(path):
+                dialog = TranscriptRoiDialog(
+                    path, regions_for_project(project), self,
+                    duration=project.metadata.get("duration", 0),
+                    preview_at=lambda moment: previewer.frame_at(project, self.controller.directory, moment),
+                )
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    self.controller.set_video_subtitle_regions(dialog.value())
+                    self.statusBar().showMessage("Đã lưu các vùng phụ đề Video", 5000)
+
+            self.start_job(lambda **job: previewer.frame(project, self.controller.directory, **job), open_editor)
+        except Exception as exc:
+            self.error(exc)
+
+    def _on_transcript_mode_changed(self, _index):
+        page = self.pages[1]
+        mode = page.mode_combo.currentData()
+        try:
+            if self.controller.project:
+                self.controller.set_transcript_source_mode(mode)
+                self.refresh()
+            else:
+                transcript_tab.apply_mode(page, mode)
+        except Exception as exc:
+            transcript_tab.set_mode(page, self.controller.project.transcript_source_mode
+                                    if self.controller.project else "audio")
             self.error(exc)
 
     def translate(self):
         try:
+            from cartoon_sub.ai.runtime_debug import ai_debug
+            raw = self.pages[2].ai_model.currentData()
+            ai_debug("main_window.translate", tab="translate", combo_data=raw,
+                     combo_data_type=type(raw).__name__)
             self.sync_options()
             self.controller.save()
             self.start_job(self.controller.translate, self.accept_project)
         except Exception as exc:
             self.error(exc)
 
+    def change_translate_source(self, _index):
+        try:
+            source = self.pages[2].translate_source.currentData()
+            self.controller.select_translate_source(source)
+            self.refresh()
+        except Exception as exc:
+            project = self.controller.project
+            if project:
+                combo = self.pages[2].translate_source
+                combo.blockSignals(True)
+                combo.setCurrentIndex(max(0, combo.findData(project.translate_source)))
+                combo.blockSignals(False)
+            self.error(exc)
+
+    def clear_translate_source_cache(self):
+        try:
+            self.controller.clear_translate_source_cache()
+            self.refresh()
+        except Exception as exc:
+            self.error(exc)
+
+    def retranslate_selected(self):
+        """Clear only selected Vietnamese fields after confirmation, then retranslate them."""
+        try:
+            page = self.pages[2]
+            ids = selected_ids(page.table)
+            if not ids:
+                self.statusBar().showMessage("Chưa chọn dòng để dịch lại.", 5000)
+                return
+            if get_dirty_rows(page.table):
+                raise ValueError("Hãy áp dụng hoặc hoàn tác các sửa tay trước khi dịch lại.")
+            dialog = QMessageBox(self)
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setWindowTitle("Dịch lại dòng đã chọn")
+            dialog.setText("Dịch lại các dòng đã chọn?")
+            dialog.setInformativeText(
+                "VI Subtitle và VI Dubbing hiện tại của các dòng này sẽ bị xóa và không thể hoàn tác từ thao tác này.\n\n"
+                "Tiếp tục dịch lại?")
+            continue_button = dialog.addButton("Tiếp tục", QMessageBox.ButtonRole.AcceptRole)
+            dialog.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
+            dialog.exec()
+            if dialog.clickedButton() is not continue_button:
+                return
+            self.sync_options()
+            self.controller.clear_selected_for_retranslation(ids)
+            self.refresh()
+            self.start_job(
+                lambda **job: self.controller.retranslate_selected(ids, **job),
+                self.accept_project,
+            )
+        except Exception as exc:
+            self.error(exc)
+
     def _save_ai_tab_override(self, tab_name, page):
         if getattr(page, "_loading_ai_model", False):
             return
-        self.controller.settings_store.set_tab_model_override(tab_name, page.ai_model.currentData() or "")
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        raw = page.ai_model.currentData() or ""
+        ai_debug("main_window.model_combo_changed", tab=tab_name, combo_data=raw,
+                 combo_data_type=type(raw).__name__)
+        self.controller.settings_store.set_tab_model_override(tab_name, raw)
+        effective = self.controller.settings_store.load().tab_selection(tab_name)
+        ai_debug("main_window.tab_override_saved", tab=tab_name,
+                 effective_provider=effective.provider, effective_model_id=effective.model_id,
+                 selection_type=type(effective).__name__)
         self.refresh_ai_model_selectors()
 
     def _save_transcript_stt_override(self):
@@ -1029,29 +1138,67 @@ class MainWindow(QMainWindow):
             "transcript_stt", page.stt_model.currentData() or "")
         self.refresh_ai_model_selectors()
 
+    def _save_transcript_video_override(self):
+        page = self.pages[1]
+        if getattr(page, "_loading_video_model", False):
+            return
+        previous = self.controller.settings_store.load().tab_selection("transcript_video")
+        selected = page.video_model.currentData() or ""
+        self.controller.settings_store.set_tab_model_override(
+            "transcript_video", selected)
+        current = self.controller.settings_store.load().tab_selection("transcript_video")
+        if (self.controller.project and previous != current):
+            self.controller.invalidate_video_ocr_cache()
+        self.refresh_ai_model_selectors()
+
+    def _save_master_dialogue_override(self, _selection):
+        page = self.pages[2]
+        if getattr(page, "_loading_master_ai_model", False):
+            return
+        self.controller.settings_store.set_tab_model_override(
+            "master_dialogue", page.master_ai_model.currentData() or "")
+        self.refresh_ai_model_selectors()
+
     def refresh_ai_model_selectors(self):
-        from cartoon_sub.ai.openrouter_client import filter_models
+        from cartoon_sub.ui.model_display import production_models
         settings = self.controller.settings_store.load()
         cached = self.controller.settings_store.openrouter_catalog_cache() or {}
-        models = filter_models(cached.get("models", []), capability="text")
+        models = production_models(cached.get("models", []),
+            openrouter_usable=bool(self.controller.settings_store.get_openrouter_keys()), capability="text")
         default = settings.default_ai_model or "chưa chọn"
-        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("subtitle", 3), ("audio", 5)):
+        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("audio", 5)):
             page = self.pages[page_index]
-            selected = (settings.tab_model_overrides or {}).get(tab_name, "")
+            selected = (settings.tab_model_overrides or {}).get(tab_name, {})
             page._loading_ai_model = True
             self.ai_model_bindings[tab_name].set_models(
                 models, selected_id=selected, default_label=f"Mặc định — {default}")
             page._loading_ai_model = False
-            effective = selected or settings.default_ai_model
+            effective = settings.tab_selection(tab_name)
+            from cartoon_sub.ai.runtime_debug import ai_debug
+            ai_debug("main_window.effective_selection", tab=tab_name,
+                     effective_provider=effective.provider, effective_model_id=effective.model_id,
+                     selection_type=type(effective).__name__)
             source = "Tùy chỉnh cho tab" if selected else "Mặc định"
             page.ai_model_effective.setText(
-                f"Model hiệu lực: {effective or 'chưa chọn'} ({source})")
+                f"Model hiệu lực: {effective.model_id or 'chưa chọn'} ({source})")
+
+        master = self.pages[2]
+        master_selected = (settings.tab_model_overrides or {}).get("master_dialogue", {})
+        master._loading_master_ai_model = True
+        self.master_dialogue_binding.set_models(
+            models, selected_id=master_selected, default_label=f"Mặc định — {default}")
+        master._loading_master_ai_model = False
+        master_effective = settings.tab_selection("master_dialogue")
+        master_source = "Tùy chỉnh Master Dialogue" if master_selected else "Mặc định"
+        master.master_ai_model_effective.setText(
+            f"Model hiệu lực: {master_effective.model_id or 'chưa chọn'} ({master_source})")
 
         transcript = self.pages[1]
         transcription_cache = (
             self.controller.settings_store.openrouter_catalog_cache_for("transcription") or {})
-        transcription_models = list(transcription_cache.get("models", []))
-        stt_override = (settings.tab_model_overrides or {}).get("transcript_stt", "")
+        transcription_models = production_models(transcription_cache.get("models", []),
+            openrouter_usable=bool(self.controller.settings_store.get_openrouter_keys()), capability="transcription")
+        stt_override = (settings.tab_model_overrides or {}).get("transcript_stt", {})
         settings_stt = settings.transcription_model or "chưa chọn"
         transcript._loading_stt_model = True
         self.transcript_stt_binding.set_models(
@@ -1060,10 +1207,23 @@ class MainWindow(QMainWindow):
             default_label=f"Mặc định — {settings_stt}",
         )
         transcript._loading_stt_model = False
-        effective_stt = stt_override or settings.transcription_model
+        effective_stt = settings.tab_selection("transcript_stt")
         stt_source = "Tùy chỉnh tại Transcript" if stt_override else "Settings → AI"
         transcript.stt_model_effective.setText(
-            f"Model STT hiệu lực: {effective_stt or 'chưa chọn'} ({stt_source})")
+            f"Model STT hiệu lực: {effective_stt.model_id or 'chưa chọn'} ({stt_source})")
+
+        video_selected = (settings.tab_model_overrides or {}).get("transcript_video", {})
+        video_models = production_models(cached.get("models", []),
+            openrouter_usable=bool(self.controller.settings_store.get_openrouter_keys()), capability="vision_frames")
+        transcript._loading_video_model = True
+        self.transcript_video_binding.set_models(
+            video_models, selected_id=video_selected,
+            default_label="Mặc định — google/gemini-2.5-flash")
+        transcript._loading_video_model = False
+        effective_video = settings.tab_selection("transcript_video")
+        video_source = "Tùy chỉnh tại Transcript" if video_selected else "Mặc định Video"
+        transcript.video_model_effective.setText(
+            f"Model hiệu lực: {effective_video.model_id or 'chưa chọn'} ({video_source})")
 
     def open_zoom_settings(self):
         ZoomDialog(self.ui_zoom_manager, self.set_ui_zoom, self).exec()
@@ -1115,6 +1275,60 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error(exc)
 
+    def run_master_dialogue_ai(self, operation):
+        try:
+            ids = selected_ids(self.pages[2].table)
+            if not ids:
+                raise ValueError("Chọn ít nhất một dòng Master Dialogue trước khi gọi AI.")
+            if get_dirty_rows(self.pages[2].table):
+                raise ValueError("Hãy áp dụng hoặc hoàn tác sửa tay trước khi gọi AI.")
+            self.controller.save()
+            self.start_job(
+                lambda **job: self.controller.master_dialogue_ai(ids, operation, **job),
+                self.accept_master_dialogue_ai)
+        except Exception as exc:
+            self.error(exc)
+
+    def _show_master_dialogue_ai_results(self):
+        page = self.pages[2]
+        rows = []
+        for operation, record in (self.controller.project.master_dialogue_ai_results or {}).items():
+            selection = record.get("selection", {})
+            rows.append(f"{operation.upper()} • {selection.get('provider', '')} / {selection.get('model_id', '')}")
+            for item in record.get("items", []):
+                rows.append("ID {id} • {status} • {issue_type}\nGốc: {original}\nĐề xuất: {suggested}\nLý do: {reason}".format(**item))
+        page.master_ai_results.setPlainText("\n\n".join(rows))
+
+    def accept_master_dialogue_ai(self, result):
+        self.accept_project(result)
+        self._show_master_dialogue_ai_results()
+        self.statusBar().showMessage("Đề xuất AI đã sẵn sàng; chưa có dòng nào bị ghi đè.", 8000)
+
+    def apply_master_dialogue_ai_selected(self):
+        try:
+            ids = selected_ids(self.pages[2].table)
+            if not ids:
+                raise ValueError("Chọn các dòng có đề xuất cần áp dụng.")
+            operation = "qa" if self.controller.project.master_dialogue_ai_results.get("qa") else "dubbing"
+            changed = self.controller.apply_master_dialogue_ai(operation, ids)
+            self._show_master_dialogue_ai_results(); self.refresh()
+            self.statusBar().showMessage(f"Đã áp dụng {len(changed)} đề xuất.", 6000)
+        except Exception as exc:
+            self.error(exc)
+
+    def apply_master_dialogue_ai_all(self):
+        try:
+            operation = "qa" if self.controller.project.master_dialogue_ai_results.get("qa") else "dubbing"
+            record = self.controller.project.master_dialogue_ai_results.get(operation, {})
+            ids = [item.get("id") for item in record.get("items", []) if isinstance(item.get("id"), int)]
+            if not ids:
+                raise ValueError("Chưa có đề xuất để áp dụng.")
+            changed = self.controller.apply_master_dialogue_ai(operation, ids)
+            self._show_master_dialogue_ai_results(); self.refresh()
+            self.statusBar().showMessage(f"Đã áp dụng {len(changed)} đề xuất.", 6000)
+        except Exception as exc:
+            self.error(exc)
+
     def analyze_context(self):
         try:
             self.sync_options()
@@ -1148,7 +1362,6 @@ class MainWindow(QMainWindow):
             dialog = ContextDialog(
                 context, {s.id for s in project.segments}, self, proposal,
                 visual_ready=project.visual_context_status == required_status,
-                speaker_reviewed=review_complete(project),
                 diagnostic_payload=diagnostic,
                 export_directory=self.controller.directory,
             )
@@ -1168,10 +1381,22 @@ class MainWindow(QMainWindow):
         if project is None:
             return
         self.controller.sync_subtitle_presentation()
-        refresh_timeline(project)
         self.pages[4].load_project(project)
         self.pages[0].metadata.setPlainText(project.source_video_path + "\n\n" + json.dumps(project.metadata, ensure_ascii=False, indent=2))
         page = self.pages[2]
+        page.translate_source.blockSignals(True)
+        page.translate_source.setCurrentIndex(max(0, page.translate_source.findData(project.translate_source)))
+        page.translate_source.blockSignals(False)
+        from cartoon_sub.translation.source_modes import SOURCE_LABELS
+        source = project.translate_source
+        available = self.controller.translation_source_service.available(project, source)
+        snapshot = self.controller.translation_source_service.snapshot(project, source) or {}
+        count = len(snapshot.get("rows", [])) if snapshot else (len(project.segments) if available else 0)
+        result = project.translation_source_results.get(source, {})
+        state = result.get("translation_status", "NONE")
+        page.translate_source_status.setText(
+            f"Nguồn hiện có: {count} dòng {SOURCE_LABELS[source]} • Cache: {state}")
+        page.clear_translate_cache_button.setText(f"Xóa cache Translate {SOURCE_LABELS[source]}")
         page.preset.setCurrentIndex(max(0, page.preset.findData(project.translation_preset)))
         page.prompt.setPlainText(project.translation_prompt)
         page.glossary.setPlainText("\n".join(f"{k} -> {v}" for k, v in project.glossary.items()))
@@ -1182,9 +1407,10 @@ class MainWindow(QMainWindow):
             check.setChecked(key in project.translation_genres)
         page.proper_name_mode.setCurrentIndex(max(0, page.proper_name_mode.findData(project.proper_name_mode)))
         page.update_context_description()
+        self._show_master_dialogue_ai_results()
         from cartoon_sub.translation.context_service import translation_readiness
         ready, readiness_message = translation_readiness(project)
-        page.translate_button.setEnabled(ready)
+        page.translate_button.setEnabled(available and ready)
         page.qa_button.setEnabled(any(segment.vi_subtitle.strip() for segment in project.segments))
         page.analyze_button.setEnabled(False)
         page.proposal_button.setEnabled(False)
@@ -1213,8 +1439,52 @@ class MainWindow(QMainWindow):
             f"\nModel AI mặc định: {ai_settings.default_ai_model or 'chưa chọn'} • "
             f"Model tab Translate: {translate_override or 'Mặc định'} • Model hiệu lực: {effective}")
         self.pages[1].transcribe_button.setEnabled(project.transcription_status != "imported")
-        self.pages[1].speaker_button.setEnabled(bool(project.segments))
         transcript_tab.populate(self.pages[1], project)
+        transcript_tab.set_mode(self.pages[1], project.transcript_source_mode)
+        # A valid local detector manifest is the runtime truth.  Older projects can
+        # retain a stale summary in project.json (for example 5 fps) after detector
+        # defaults change, so do not let that summary misreport the active cache.
+        video_detection = dict(project.selected_models.get("video_subtitle_detection", {}) or {})
+        try:
+            manifest_path = self.controller.directory / "cache" / "transcript" / "video" / "visual_events.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for key in ("candidate_count", "coarse_fps", "refine_fps"):
+                if key in manifest:
+                    video_detection["candidate_events" if key == "candidate_count" else key] = manifest[key]
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+        self.pages[1].video_mode_hint.setText(transcript_tab.video_status_text(video_detection))
+        video_qaqc = project.selected_models.get("video_transcript_qaqc", {})
+        qa_available = self.controller.video_qaqc_service.can_apply(project, self.controller.directory)
+        undo_available = self.controller.video_qaqc_service.can_undo(project, self.controller.directory)
+        self.pages[1].video_qaqc_button.setEnabled(qa_available)
+        self.pages[1].video_qaqc_undo_button.setEnabled(undo_available)
+        if video_qaqc.get("status") == "APPLIED":
+            self.pages[1].video_qaqc_status.setText(
+                "QA/QC Video: APPLIED — %s nhóm, đã bỏ %s dòng." %
+                (video_qaqc.get("clusters_merged", 0), video_qaqc.get("rows_removed", 0)))
+        elif project.transcript_source_mode == transcript_tab.TranscriptSourceMode.VIDEO.value:
+            self.pages[1].video_qaqc_status.setText("QA/QC Video: Chưa áp dụng.")
+        semantic = project.selected_models.get("semantic_boundary_status", {})
+        count = int(semantic.get("ambiguous_regions", 0) or 0)
+        if count:
+            ids = ", ".join(str(item) for item in semantic.get("target_ids", [])) or "—"
+            self.pages[1].semantic_status.setText(
+                f"AI Semantic Boundary: Đã xử lý {count} vùng mơ hồ — IDs: {ids}. "
+                f"{int(semantic.get('requests', 0) or 0)} API, {int(semantic.get('cache_hits', 0) or 0)} cache.")
+        elif project.transcription_status in {"completed", "no_speech"}:
+            self.pages[1].semantic_status.setText(
+                "AI Semantic Boundary: Không có vùng mơ hồ — AI semantic boundary không được gọi.")
+        qa = project.selected_models.get("transcript_qa_status", {})
+        if qa:
+            manual = qa.get("manual_review_ids", [])
+            self.pages[1].qa_status.setText(
+                "Transcript QA: pass 1 %s lỗi / %s vùng; AI repair %s API, %s cache; "
+                "pass 2 còn %s lỗi%s." % (
+                    qa.get("pass1_violations", 0), qa.get("suspicious_regions", 0),
+                    qa.get("repair_requests", 0), qa.get("repair_cache_hits", 0),
+                    qa.get("pass2_violations", 0),
+                    (" — NEEDS_MANUAL_REVIEW IDs: " + ", ".join(map(str, manual))) if manual else ""))
         self.pages[3].load_project(project)
         audio = self.pages[5]
         audio.set_settings(self.controller.settings_store.load_local_tts())
@@ -1259,3 +1529,6 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+

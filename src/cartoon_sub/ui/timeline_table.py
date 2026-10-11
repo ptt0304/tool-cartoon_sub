@@ -6,7 +6,7 @@ from cartoon_sub.translation.modes import MODE_LABELS
 from cartoon_sub.subtitle.timestamps import format_srt_timestamp
 from cartoon_sub.ui.table_search import apply_table_search
 
-EDITABLE_COLUMNS = {1, 2, 4, 5, 7, 8}  # Start, End, Speaker, Chinese, VI Subtitle, VI Dubbing
+EDITABLE_COLUMNS = {1, 2, 4, 6, 7}  # Start, End, Chinese, VI Subtitle, VI Dubbing
 DELTA_VALUE_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
@@ -44,7 +44,7 @@ def install_delta_target_filter(table):
         low, high = value(minimum), value(maximum)
         if low is not None and high is not None and low > high:
             return False
-        item = table.item(row, 11)
+        item = table.item(row, 10)
         delta = item.data(DELTA_VALUE_ROLE) if item is not None else None
         if delta is None:
             return low is None and high is None
@@ -57,9 +57,9 @@ def install_delta_target_filter(table):
 
 
 def create_table():
-    table = QTableWidget(0, 14)
+    table = QTableWidget(0, 13)
     table.setHorizontalHeaderLabels([
-        "ID", "Start", "End", "Duration", "Speaker", "Chinese", "ZH Syl",
+        "ID", "Start", "End", "Duration", "Chinese", "ZH Syl",
         "VI Subtitle", "VI Dubbing", "VI Syl", "Target", "Δ target", "Mode", "QC"
     ])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -77,10 +77,10 @@ def create_table():
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
     table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
     table.horizontalHeader().sectionResized.connect(lambda *_: table.resizeRowsToContents())
-    table.setColumnWidth(5, 220)
+    table.setColumnWidth(4, 220)
+    table.setColumnWidth(6, 240)
     table.setColumnWidth(7, 240)
-    table.setColumnWidth(8, 240)
-    table.setColumnWidth(13, 300)
+    table.setColumnWidth(12, 300)
 
     table.dirty_rows = set()
     table.original_values = {}
@@ -137,10 +137,9 @@ def get_dirty_rows(table):
                 "row_index": row + 1,
                 "start": table.item(row, 1).text().strip() if table.item(row, 1) else "",
                 "end": table.item(row, 2).text().strip() if table.item(row, 2) else "",
-                "speaker": table.item(row, 4).text().strip() if table.item(row, 4) else "",
-                "zh": table.item(row, 5).text().strip() if table.item(row, 5) else "",
-                "vi_subtitle": table.item(row, 7).text().strip() if table.item(row, 7) else "",
-                "vi_dubbing": table.item(row, 8).text().strip() if table.item(row, 8) else "",
+                "zh": table.item(row, 4).text().strip() if table.item(row, 4) else "",
+                "vi_subtitle": table.item(row, 6).text().strip() if table.item(row, 6) else "",
+                "vi_dubbing": table.item(row, 7).text().strip() if table.item(row, 7) else "",
             })
     return results
 
@@ -154,11 +153,7 @@ def populate(table, project, view="both"):
         actual = s.vi_subtitle_syllables if view == "subtitle" else s.vi_syllables
         delta = actual - s.target_syllables
         qc_notes = list(warnings[str(s.id)])
-        overlap_labels = {
-            "SAME_SPEAKER_CONFLICT": "Same-speaker overlap đã reconcile",
-            "UNKNOWN_SPEAKER_REVIEW": "Overlap cần duyệt speaker",
-            "TIMING_REVIEW_REQUIRED": "Overlap cần sửa timing thủ công",
-        }
+        overlap_labels = {"TIMING_REVIEW_REQUIRED": "Overlap cần sửa timing thủ công"}
         if s.overlap_type in overlap_labels:
             qc_notes.append(overlap_labels[s.overlap_type])
         values = [
@@ -166,7 +161,6 @@ def populate(table, project, view="both"):
             format_srt_timestamp(s.start),
             format_srt_timestamp(s.end),
             f"{s.duration:.3f}",
-            f"{s.speaker_id} · {s.speaker_name}",
             s.zh,
             s.zh_syllables,
             s.vi_subtitle,
@@ -181,19 +175,19 @@ def populate(table, project, view="both"):
             item = QTableWidgetItem(str(value))
             item.setToolTip(str(value))
             item.setData(Qt.ItemDataRole.UserRole, s.id)
-            if col == 11:
+            if col == 10:
                 item.setData(DELTA_VALUE_ROLE, delta)
             if col not in EDITABLE_COLUMNS:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             else:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                 table.original_values[(s.id, col)] = str(value)
-            if col in (9, 10, 11):
+            if col in (8, 9, 10):
                 item.setBackground(QColor(delta_target_color(delta)))
                 item.setForeground(QColor("#171717"))
             table.setItem(row, col, item)
-    table.setColumnHidden(7, view == "dubbing")
-    table.setColumnHidden(8, view == "subtitle")
+    table.setColumnHidden(6, view == "dubbing")
+    table.setColumnHidden(7, view == "subtitle")
     table.resizeRowsToContents()
     table.is_populating = False
     if callable(table.on_dirty_changed):

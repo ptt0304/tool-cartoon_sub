@@ -52,16 +52,15 @@ class TranscriptWordTimingAlignmentTests(unittest.TestCase):
         self.assertEqual([row.zh for row in output], ["你 好。", "再见！"])
         self.assertEqual([(row.start, row.end) for row in output], [(.1, .8), (2.0, 2.5)])
 
-    def test_internal_unmatched_utterance_is_interpolated_only_between_anchors(self):
+    def test_sparse_internal_gap_falls_back_to_safe_parent_timing(self):
         parent = Segment(1, 0, 20, "甲乙。丙丁。戊己。")
         output = self.normalizer.normalize([parent], timed_words([
             ("甲乙", 1.0, 2.0), ("戊己", 10.0, 11.0),
         ]))
         self.assertEqual([row.zh for row in output], ["甲乙。", "丙丁。", "戊己。"])
-        self.assertEqual((output[0].start, output[0].end), (1.0, 2.0))
-        self.assertEqual((output[1].start, output[1].end), (2.0, 10.0))
-        self.assertEqual((output[2].start, output[2].end), (10.0, 11.0))
-        self.assertEqual(output[1].transcript_timing_provenance, "LOCAL_ESTIMATION")
+        self.assertTrue(all(row.transcript_timing_provenance == "ESTIMATED" for row in output))
+        self.assertEqual((output[0].start, output[-1].end), (0, 20))
+        self.assertTrue(all(left.end <= right.start for left, right in zip(output, output[1:])))
 
     def test_word_timing_preserves_real_silence_and_chunk_relative_bounds(self):
         parent = Segment(1, 0, 60, "第一句。第二句。")
@@ -79,12 +78,13 @@ class TranscriptWordTimingAlignmentTests(unittest.TestCase):
         self.assertEqual("".join(row.zh for row in output), parent.zh)
         self.assertEqual((output[0].start, output[-1].end), (0, 20))
 
-    def test_unmatched_prefix_and_suffix_stay_inside_nearest_word_evidence(self):
+    def test_sparse_prefix_and_suffix_fall_back_without_mixed_evidence(self):
         parent = Segment(1, 0, 12, "甲乙。丙丁。")
         output = self.normalizer.normalize([parent], timed_words([
             ("乙", 2.0, 2.4), ("丙", 8.0, 8.4),
         ]))
-        self.assertEqual([(row.start, row.end) for row in output], [(2.0, 2.4), (8.0, 8.4)])
+        self.assertTrue(all(row.transcript_timing_provenance == "ESTIMATED" for row in output))
+        self.assertEqual((output[0].start, output[-1].end), (0, 12))
         self.assertTrue(all(0 <= row.start < row.end <= 12 for row in output))
 
     def test_srt_serializes_the_aligned_master_timeline_without_retiming(self):

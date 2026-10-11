@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,QLineEdit,
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QComboBox,
     QDoubleSpinBox,QSpinBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QHeaderView,QGroupBox)
 
 from cartoon_sub.subtitle.segmentation import SegmentationProfile, SegmentationSettings, settings_for
@@ -22,15 +22,9 @@ class SubtitlePage(QWidget):
     def __init__(self):
         super().__init__(); self.loading = False
         layout = QVBoxLayout(self)
-        note = QLabel("Utterance là lời thoại nguồn; DisplaySegment là cách hiển thị. Auto Segment không gọi Gemini, "
-                      "không sửa transcript/dịch và giữ timestamp overlap giữa speaker. Chọn câu dài rồi bấm "
-                      "‘Căn timing audio’ để Gemini nghe audio và đặt mốc hiển thị chi tiết.")
+        note = QLabel("Utterance là lời thoại nguồn; DisplaySegment là cách hiển thị. Auto Segment chạy cục bộ, "
+                      "không sửa transcript/dịch và giữ timestamp overlap.")
         note.setWordWrap(True); layout.addWidget(note)
-        model_row = QHBoxLayout(); self.ai_model_search = QLineEdit(); self.ai_model = QComboBox(); self.ai_model_effective = QLabel()
-        self.ai_model_search.setPlaceholderText("Tìm model theo provider, tên hoặc ID…")
-        model_row.addWidget(QLabel("Model AI cho tab")); model_row.addWidget(self.ai_model_search, 1); model_row.addWidget(self.ai_model, 2)
-        self.reset_ai_button = QPushButton("Xóa dữ liệu AI / Chạy lại")
-        model_row.addWidget(self.ai_model_effective); model_row.addWidget(self.reset_ai_button); layout.addLayout(model_row)
         self.cache_status = CacheStatusBox(); layout.addWidget(self.cache_status)
         source_row = QHBoxLayout();self.text_source = QComboBox()
         self.text_source.addItem("VI Subtitle", "vi_subtitle");self.text_source.addItem("VI Dubbing", "vi_dubbing")
@@ -70,18 +64,17 @@ class SubtitlePage(QWidget):
         settings.addStretch(); layout.addLayout(settings)
         buttons = QHBoxLayout()
         self.auto_all = QPushButton("Auto Segment All"); self.auto_selected = QPushButton("Auto Segment Selected")
-        self.refine_audio = QPushButton("Căn timing audio (chọn)")
         self.split_manual = QPushButton("Split Manually"); self.merge = QPushButton("Merge Selected"); self.reset = QPushButton("Reset To Utterance")
-        for button in (self.auto_all,self.auto_selected,self.refine_audio,self.split_manual,self.merge,self.reset): buttons.addWidget(button)
+        for button in (self.auto_all,self.auto_selected,self.split_manual,self.merge,self.reset): buttons.addWidget(button)
         layout.addLayout(buttons)
-        self.tree = QTreeWidget(); self.tree.setHeaderLabels(["Utterance / DisplaySegment", "Speaker", "Start", "End", "Vietnamese", "QC"])
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.tree.setColumnWidth(0,170); self.tree.setColumnWidth(4,390)
+        self.tree = QTreeWidget(); self.tree.setHeaderLabels(["Utterance / DisplaySegment", "Start", "End", "Vietnamese", "QC"])
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.tree.setColumnWidth(0,170); self.tree.setColumnWidth(3,390)
         self.tree.setWordWrap(True);self.tree.setUniformRowHeights(False);self.tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.tree.header().sectionResized.connect(lambda *_:self.tree.doItemsLayout())
-        self.search_edit, self.search_clear = add_tree_search(layout, self.tree, (0,1,4), (0,1,4))
+        self.search_edit, self.search_clear = add_tree_search(layout, self.tree, (0,3), (0,3))
         layout.addWidget(self.tree,1)
         self.summary = QLabel(); self.summary.setWordWrap(True); layout.addWidget(self.summary)
         export_group = QGroupBox("EXPORT SUBTITLE")
@@ -150,10 +143,10 @@ class SubtitlePage(QWidget):
         self.tree.clear(); warning_count = 0
         for utterance, children in rows:
             warning = subtitle_source_warning(project, utterance)
-            parent = QTreeWidgetItem([f"Utterance {utterance.id}", utterance.speaker_id, format_srt_timestamp(utterance.start), format_srt_timestamp(utterance.end), subtitle_source_text(project,utterance), warning])
+            parent = QTreeWidgetItem([f"Utterance {utterance.id}", format_srt_timestamp(utterance.start), format_srt_timestamp(utterance.end), subtitle_source_text(project,utterance), warning])
             parent.setData(0,Qt.ItemDataRole.UserRole,"utterance"); parent.setData(1,Qt.ItemDataRole.UserRole,utterance.id); self.tree.addTopLevelItem(parent)
             for segment, flags in children:
-                child = QTreeWidgetItem([segment.id, segment.speaker_id, format_srt_timestamp(segment.start), format_srt_timestamp(segment.end), segment.vi_text, " | ".join(flags)])
+                child = QTreeWidgetItem([segment.id, format_srt_timestamp(segment.start), format_srt_timestamp(segment.end), segment.vi_text, " | ".join(flags)])
                 child.setData(0,Qt.ItemDataRole.UserRole,"display"); child.setData(1,Qt.ItemDataRole.UserRole,utterance.id); child.setData(2,Qt.ItemDataRole.UserRole,segment.id)
                 parent.addChild(child); warning_count += flags != ["OK"]
             parent.setExpanded(True)

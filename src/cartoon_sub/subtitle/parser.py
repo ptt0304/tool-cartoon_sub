@@ -2,6 +2,7 @@ from pathlib import Path
 import pysubs2
 from cartoon_sub.subtitle.models import Segment, DisplaySegment
 from cartoon_sub.subtitle.canonical_timeline import canonical_timeline
+from cartoon_sub.transcription.language_consistency import assess_text
 
 def import_srt(path):
     subtitles = pysubs2.load(str(path), encoding="utf-8-sig")
@@ -34,6 +35,11 @@ def export_canonical_srt(utterances, path, language="zh"):
     subtitles = pysubs2.SSAFile()
     for entry in canonical_timeline(utterances):
         text = getattr(entry, fields[language])
+        if language == "zh":
+            assessment = assess_text(text, project_language="zh")
+            if not text.strip() or (assessment.classification == "LANGUAGE_MISMATCH"
+                                    and assessment.profile.foreign > 0):
+                continue
         subtitles.append(pysubs2.SSAEvent(
             start=round(entry.start * 1000),
             end=round(entry.end * 1000),

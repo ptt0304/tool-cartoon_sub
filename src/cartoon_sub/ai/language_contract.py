@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from cartoon_sub.ai.gemini_client import GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 
 
 USER_FACING_AI_LANGUAGE = "vi"

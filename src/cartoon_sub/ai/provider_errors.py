@@ -1,8 +1,5 @@
-"""Provider-neutral failures shared by AI gateway adapters."""
+"""Provider-neutral failures shared by OpenRouter adapters."""
 from enum import Enum
-
-from cartoon_sub.ai.gemini_client import GeminiError
-
 
 class ProviderErrorCategory(str, Enum):
     AUTH_INVALID = "AUTH_INVALID"
@@ -19,22 +16,13 @@ class ProviderErrorCategory(str, Enum):
     CANCELLED = "CANCELLED"
     UNKNOWN = "UNKNOWN"
 
-
-class AIProviderError(GeminiError):
-    """Neutral runtime error with GeminiError compatibility for legacy callers."""
-
-    def __init__(self, message, category=ProviderErrorCategory.UNKNOWN, *,
-                 status_code=None, retryable=False, retry_after_seconds=None,
-                 provider_code=None, provider_message=None):
-        if not isinstance(category, ProviderErrorCategory):
-            category = ProviderErrorCategory(category)
-        super().__init__(
-            message,
-            retryable=retryable,
-            retry_after_seconds=retry_after_seconds,
-            status_code=status_code,
-            category=category.value,
-        )
-        self.error_category = category
+class AIProviderError(RuntimeError):
+    def __init__(self, message, category=ProviderErrorCategory.UNKNOWN, *, status_code=None, retryable=False, retry_after_seconds=None, provider_code=None, provider_message=None):
+        super().__init__(message)
+        self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+        self.status_code = status_code
+        self.category = category.value if isinstance(category, ProviderErrorCategory) else str(category)
+        self.error_category = category if isinstance(category, ProviderErrorCategory) else ProviderErrorCategory.UNKNOWN
         self.provider_code = provider_code
         self.provider_message = provider_message

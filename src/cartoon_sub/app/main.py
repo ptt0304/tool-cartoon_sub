@@ -11,6 +11,37 @@ from cartoon_sub.ui.main_window import MainWindow
 BUILD_MARKER = "normalized-timeline-search-v1"
 
 
+def _runtime_ai_debug_translate(project_path, result_path):
+    """Temporary frozen-build trace of the normal Translation controller action."""
+    from cartoon_sub.app.controller import Controller
+    from cartoon_sub.ai.runtime_debug import ai_debug
+
+    result_file = Path(result_path)
+    result = {"build": BUILD_MARKER, "project": str(Path(project_path).resolve())}
+    try:
+        controller = Controller()
+        settings = controller.settings_store.load()
+        raw = (settings.tab_model_overrides or {}).get("translate")
+        selection = settings.tab_selection("translate")
+        ai_debug("EXE.runtime_ai_debug_translate", raw=raw, raw_type=type(raw).__name__,
+                 provider=selection.provider, model_id=selection.model_id,
+                 selection_type=type(selection).__name__)
+        controller.accept(controller.load(project_path))
+        project, _directory = controller.translate(progress=lambda _message: None)
+        result.update(status="completed", provider=selection.provider, model_id=selection.model_id,
+                      translation_status=project.translation_status)
+        exit_code = 0
+    except Exception as exc:
+        result.update(status="failed", error=str(exc), exception=type(exc).__name__,
+                      http_status=getattr(exc, "status_code", None),
+                      category=str(getattr(exc, "category", "")))
+        logging.getLogger(__name__).exception("[RUNTIME AI DEBUG TRANSLATE] failed")
+        exit_code = 2
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return exit_code
+
+
 def _runtime_subtitle_autosegment(project_path, result_path):
     """Exercise the Auto Segment All controller path from a frozen build."""
     from cartoon_sub.app.controller import Controller
@@ -96,7 +127,7 @@ def _runtime_transcribe(project_path, result_path):
 
 
 def _runtime_audio_mapping(project_path, result_path):
-    """Verify frozen speaker mappings through one real Local_TTS generation request."""
+    """Verify one project-level voice through one real Local_TTS generation request."""
     from threading import Event
 
     from cartoon_sub.app.controller import Controller
@@ -112,23 +143,10 @@ def _runtime_audio_mapping(project_path, result_path):
         controller.accept(controller.load(project_path))
         settings = controller.settings_store.load_local_tts()
         client = LocalTTSClient(settings, request_timeout_seconds=180)
-        library = client.voice_library()
-        registry = {
-            voice.get("voice_id"): voice for voice in library["voices"]
-            if isinstance(voice.get("voice_id"), str)
-        }
-        speakers = LocalTTSGenerationService(client)._preflight(
+        voice_id, speed = LocalTTSGenerationService(client)._preflight(
             controller.project, controller.directory,
         )
-        result["speakers"] = {
-            speaker_id: {
-                "voice_id": speaker.tts_voice_id,
-                "display_name": registry[speaker.tts_voice_id].get("display_name"),
-                "engine": registry[speaker.tts_voice_id].get("engine"),
-                "status": registry[speaker.tts_voice_id].get("status"),
-            }
-            for speaker_id, speaker in sorted(speakers.items())
-        }
+        result["project_voice"] = {"voice_id": voice_id, "speed": speed}
 
         cancel = Event()
         generated_call = {}
@@ -142,10 +160,11 @@ def _runtime_audio_mapping(project_path, result_path):
             def list_voices(self):
                 return client.list_voices()
 
-            def generate(self, segment_id, speaker_id, voice_id, text, speed):
-                response = client.generate(segment_id, speaker_id, voice_id, text, speed)
+            def generate(self, segment_id, request_scope, selected_voice_id, text, selected_speed):
+                response = client.generate(segment_id, request_scope, selected_voice_id, text, selected_speed)
                 generated_call.update(
-                    segment_id=segment_id, speaker_id=speaker_id, voice_id=voice_id,
+                    segment_id=segment_id, request_scope=request_scope,
+                    voice_id=selected_voice_id, speed=selected_speed,
                 )
                 cancel.set()
                 return response
@@ -437,6 +456,15 @@ def _runtime_ui_zoom(result_path):
 def main():
     configure_logging()
     logging.getLogger(__name__).info("[BUILD] %s", BUILD_MARKER)
+    if "--runtime-ai-debug-translate-project" in sys.argv:
+        index = sys.argv.index("--runtime-ai-debug-translate-project")
+        try:
+            project_path = sys.argv[index + 1]
+            result_index = sys.argv.index("--runtime-result")
+            result_path = sys.argv[result_index + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Cần --runtime-ai-debug-translate-project <project.json> --runtime-result <result.json>")
+        return _runtime_ai_debug_translate(project_path, result_path)
     if "--runtime-ui-zoom" in sys.argv:
         try:
             result_index = sys.argv.index("--runtime-result")

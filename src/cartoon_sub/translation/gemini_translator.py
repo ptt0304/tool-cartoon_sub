@@ -4,7 +4,7 @@ from cartoon_sub.ai.language_contract import (
     validate_user_facing_language,
 )
 from .context_models import StoryContext
-from cartoon_sub.ai.gemini_client import GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 
 
 class TranslationValidationError(GeminiError):

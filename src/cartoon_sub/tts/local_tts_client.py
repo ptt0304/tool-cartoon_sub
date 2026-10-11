@@ -126,14 +126,16 @@ class LocalTTSClient:
     def generate(
         self,
         segment_id: str,
-        speaker_id: str,
+        request_scope: str,
         voice_id: str,
         text: str,
         speed: float,
     ) -> dict:
         payload = {
             "segment_id": segment_id,
-            "speaker_id": speaker_id,
+            # Local_TTS retains this wire key for protocol compatibility; the
+            # application always supplies the project scope, never a speaker ID.
+            "speaker_id": request_scope,
             "voice_id": voice_id,
             "text": text,
             "speed": speed,

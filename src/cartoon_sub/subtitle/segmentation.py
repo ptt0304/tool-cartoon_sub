@@ -72,7 +72,7 @@ class BoundaryCandidate:
 @dataclass(frozen=True)
 class SegmentationPlan:
     utterance_id: int
-    speaker_id: str
+    speaker_id: str  # Legacy constructor compatibility; not used by segmentation.
     source_text: str
     parts: tuple[str, ...]
     boundary_reasons: tuple[str, ...]
@@ -106,6 +106,11 @@ PROTECTED_PATTERNS = (
 
 def normalize_text(text):
     return re.sub(r"\s+", " ", text).strip()
+
+
+def content_token_count(text):
+    """Vietnamese content words only; punctuation is never a split token."""
+    return len(re.findall(r"[0-9]+(?:[.,][0-9]+)?|[^\W\d_]+", text, re.UNICODE))
 
 
 def restore_exact_parts(parts, source_text):
@@ -174,21 +179,9 @@ def _projected_duration(text, total_text, total_duration):
 
 def hard_limit_failures(text, duration, settings):
     """Return only constraints that are authoritative for automatic splitting."""
-    syllables = count_syllables(text)
-    lines = text.splitlines() or [text]
-    visual_capacity = settings.hard_max_chars_per_line * settings.max_lines
-    failures = []
-    if duration > settings.max_duration:
-        failures.append("max_duration")
-    if syllables > settings.max_syllables:
-        failures.append("max_syllables")
-    if len(lines) > settings.max_lines:
-        failures.append("max_lines")
-    visual_chars = sum(len(normalize_text(line)) for line in lines)
-    if ((len(lines) > 1 and any(len(normalize_text(line)) > settings.hard_max_chars_per_line for line in lines))
-            or visual_chars > visual_capacity):
-        failures.append("hard_chars_per_line")
-    return tuple(failures)
+    # Auto Segment has one hard gate: content-token count. Duration, visual
+    # length and recommended syllables remain QC/scoring signals only.
+    return ("max_syllables",) if content_token_count(text) > settings.max_syllables else ()
 
 
 def part_is_hard_valid(text, duration, settings):
@@ -259,10 +252,10 @@ class LocalSegmentationEngine:
             raise ValueError("Utterance must contain Vietnamese subtitle text")
         candidates = self._candidates(text, utterance.duration)
         if part_is_hard_valid(text, utterance.duration, self.settings):
-            return SegmentationPlan(utterance.id, utterance.speaker_id, text, (text,), (), tuple(candidates), True, False)
+            return SegmentationPlan(utterance.id, "", text, (text,), (), tuple(candidates), True, False)
         parts, reasons, unresolved = self._split(text, utterance.duration, candidates)
         flags = ("MANUAL_REVIEW",) if unresolved else ()
-        plan = SegmentationPlan(utterance.id, utterance.speaker_id, text, tuple(parts), tuple(reasons),
+        plan = SegmentationPlan(utterance.id, "", text, tuple(parts), tuple(reasons),
             tuple(candidates), False, len(parts) > 1, flags)
         if not plan.preserves_source_text():
             raise ValueError("Local segmentation changed source text")
@@ -293,6 +286,15 @@ class LocalSegmentationEngine:
             if depth >= 64:
                 return [(start, end)], [], True
             available = [candidate for candidate in all_candidates if start < candidate.position < end]
+            # Whitespace candidates can sit immediately beside punctuation.
+            # Such a cut would create a child containing only spaces, which is
+            # not a displayable Vietnamese subtitle and must never reach the
+            # DisplaySegment validator.
+            available = [candidate for candidate in available
+                         if normalize_text(text[start:candidate.position])
+                         and normalize_text(text[candidate.position:end])]
+            if not available:
+                return [(start, end)], [], True
             if not available:
                 return [(start, end)], [], True
             non_orphan = [candidate for candidate in available
@@ -302,14 +304,26 @@ class LocalSegmentationEngine:
                 available = non_orphan
             best_kind = next(kind for kind in priority if any(item.kind == kind for item in available))
             same_priority = [item for item in available if item.kind == best_kind]
-            candidate = max(same_priority, key=lambda item: self._range_score(text, start, end, item, duration))
+            # Prefer the boundary nearest the content-word midpoint. Punctuation
+            # decides priority; it does not force an early, unbalanced split.
+            midpoint = content_token_count(fragment) / 2
+            candidate = min(same_priority, key=lambda item: (
+                abs(content_token_count(text[start:item.position]) - midpoint),
+                -content_token_count(text[start:item.position]),
+            ))
             left, left_reasons, left_unresolved = recurse(start, candidate.position, depth + 1)
             right, right_reasons, right_unresolved = recurse(candidate.position, end, depth + 1)
             return left + right, left_reasons + [candidate.kind] + right_reasons, left_unresolved or right_unresolved
 
         ranges, reasons, unresolved = recurse(0, len(text))
         ranges, reasons = self._merge_orphans(text, duration, ranges, reasons)
-        return [text[start:end] for start, end in ranges], reasons, unresolved
+        parts = [text[start:end] for start, end in ranges]
+        if any(not normalize_text(part) for part in parts):
+            # Preserve the original source rather than silently losing text.
+            # This is a deterministic local fallback, not a relaxed model
+            # validation rule.
+            return [text], [], True
+        return parts, reasons, unresolved
 
     def _merge_orphans(self, text, duration, ranges, reasons):
         """Attach tiny children to a neighbour whenever the merged child stays hard-valid."""

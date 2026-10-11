@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
+import logging
 
 from cartoon_sub.subtitle.models import DisplaySegment
 from cartoon_sub.subtitle.segmentation import SegmentationPlan, SegmentationSettings, normalize_text
@@ -11,6 +12,7 @@ from cartoon_sub.syllable.vietnamese import count_syllables
 
 
 _WORD = re.compile(r"[0-9]+(?:[.,][0-9]+)?|[^\W\d_]+", re.UNICODE)
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -141,7 +143,7 @@ class DisplaySegmentAllocator:
         self.settings = (settings or SegmentationSettings()).validate()
 
     def allocate(self, utterance, plan: SegmentationPlan, *, word_timestamps=None, clause_timestamps=None):
-        if plan.utterance_id != utterance.id or plan.speaker_id != utterance.speaker_id:
+        if plan.utterance_id != utterance.id:
             raise ValueError("Segmentation plan does not belong to this utterance")
         if not plan.parts or not plan.preserves_source_text() or normalize_text(plan.source_text) != normalize_text(utterance.vi_subtitle):
             raise ValueError("Segmentation plan does not preserve utterance subtitle text")
@@ -162,10 +164,17 @@ class DisplaySegmentAllocator:
         segments = []
         for index, (text, start, end) in enumerate(zip(plan.parts, times, times[1:]), 1):
             reason = plan.boundary_reasons[index - 1] if index <= len(plan.boundary_reasons) else "utterance_end"
-            segments.append(DisplaySegment(f"{utterance.id}.{index}", utterance.id, start, end, text,
+            segment_id = f"{utterance.id}.{index}"
+            log.debug(
+                "[DISPLAY_SEGMENT_DEBUG] utterance_id=%s segment_id=%s source_mode=%s "
+                "utterance_vi=%r cached_vi=%r segment_vi=%r raw_value=%r stripped_value=%r "
+                "row_type=child parent_child=%s->%s",
+                utterance.id, segment_id, getattr(utterance, "_display_source_mode", "vi_subtitle"),
+                utterance.vi_subtitle, getattr(utterance, "_display_cached_vi", None), text, text,
+                text.strip() if isinstance(text, str) else None, utterance.id, segment_id,
+            )
+            segments.append(DisplaySegment(segment_id, utterance.id, start, end, text,
                 segmentation_reason=reason, qc_flags=_qc_flags(text, end - start, self.settings, plan.qc_flags)))
-        for segment in segments:
-            segment.inherit_speaker(utterance.speaker_id)
         self._validate(utterance, plan, segments)
         return AllocationResult(tuple(segments), source)
 
@@ -175,8 +184,8 @@ class DisplaySegmentAllocator:
             raise ValueError("Display timing must cover utterance boundaries")
         if any(left.end != right.start for left, right in zip(segments, segments[1:])):
             raise ValueError("Display timing must not contain gaps")
-        if any(segment.utterance_id != utterance.id or segment.speaker_id != utterance.speaker_id for segment in segments):
-            raise ValueError("Display speaker mapping changed")
+        if any(segment.utterance_id != utterance.id for segment in segments):
+            raise ValueError("Display segment mapping changed")
         if normalize_text("".join(segment.vi_text for segment in segments)) != normalize_text(utterance.vi_subtitle):
             raise ValueError("Display timing changed source text")
 

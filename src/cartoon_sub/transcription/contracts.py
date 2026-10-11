@@ -91,8 +91,5 @@ def normalize_word_timestamps(rows, duration):
         confidence = normalize_confidence(raw.get("confidence", raw.get("probability")))
         if confidence is not None:
             item["confidence"] = confidence
-        speaker_id = normalize_speaker_hint(raw.get("speaker_id", raw.get("speaker")))
-        if speaker_id != "SPK_UNKNOWN":
-            item["speaker_id"] = speaker_id
         words.append(item)
     return words

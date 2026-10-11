@@ -248,20 +248,6 @@ class ManualEditsTests(unittest.TestCase):
         self.assertEqual(self.project.segments[1].start, 13.0)
         self.assertEqual(self.project.segments[2].start, 20.0)
 
-    def test_apply_manual_edits_speaker(self):
-        # Reassign u1 to SPK_02 (Bob)
-        dirty_rows = [{
-            "id": 1, "row_index": 1, "start": "10.000", "end": "14.000",
-            "speaker": "SPK_02 · Bob", "zh": "你好", "vi_subtitle": "Xin chào", "vi_dubbing": "Xin chào"
-        }]
-
-        self.controller.apply_manual_edits(dirty_rows)
-
-        u1 = self.project.segments[0]
-        self.assertEqual(u1.speaker_id, "SPK_02")
-        self.assertEqual(u1.speaker_name, "Bob")
-        self.assertEqual(u1.tts_generation_status, "stale")
-
     def test_apply_multiple_dirty_rows(self):
         dirty_rows = [
             {"id": 1, "row_index": 1, "start": "10.000", "end": "14.000", "speaker": "SPK_01", "zh": "你好", "vi_subtitle": "Thoại 1", "vi_dubbing": "Thoại 1"},

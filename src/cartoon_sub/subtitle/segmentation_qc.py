@@ -1,7 +1,7 @@
 """Deterministic presentation-subtitle QC."""
 import re
 
-from cartoon_sub.subtitle.segmentation import hard_limit_failures, part_is_hard_valid
+from cartoon_sub.subtitle.segmentation import content_token_count, normalize_text, part_is_hard_valid
 from cartoon_sub.syllable.vietnamese import count_syllables
 
 
@@ -16,14 +16,14 @@ def review_display_segment(segment, settings, source_text=None):
     flags = [flag for flag in segment.qc_flags if flag not in DYNAMIC_QC_FLAGS]
     if segment.duration < settings.min_duration:
         flags.append("TOO_SHORT")
-    hard_failures = hard_limit_failures(segment.vi_text, segment.duration, settings)
-    if "max_duration" in hard_failures:
+    if segment.duration > settings.max_duration:
         flags.append("TOO_LONG")
-    if "max_syllables" in hard_failures:
+    if count_syllables(segment.vi_text) > settings.max_syllables:
         flags.append("TOO_MANY_SYLLABLES")
-    if "max_lines" in hard_failures:
+    if len(segment.vi_text.splitlines()) > settings.max_lines:
         flags.append("TOO_MANY_LINES")
-    if "hard_chars_per_line" in hard_failures:
+    if any(len(normalize_text(line)) > settings.hard_max_chars_per_line
+           for line in segment.vi_text.splitlines()):
         flags.append("TOO_MANY_CHARS_PER_LINE")
     if count_syllables(segment.vi_text) / segment.duration > MAX_SYLLABLES_PER_SECOND:
         flags.append("HIGH_READING_SPEED")
@@ -33,6 +33,11 @@ def review_display_segment(segment, settings, source_text=None):
     if re.fullmatch(r"\s*[.,;:!?…。，；：！？]+\s*", segment.vi_text):
         flags.append("BAD_SPLIT")
     if segment.manual or segment.segmentation_reason == "manual":
+        flags.append("MANUAL_REVIEW")
+    # A single unbreakable token cannot be safely split locally.  Keep the
+    # canonical text intact and surface it for a human instead.
+    if (content_token_count(segment.vi_text) <= 1
+            and len(normalize_text(segment.vi_text)) > settings.hard_max_chars_per_line):
         flags.append("MANUAL_REVIEW")
     return list(dict.fromkeys(flags)) or ["OK"]
 

@@ -1,10 +1,11 @@
 from pathlib import Path
+from dataclasses import replace
 
 from cartoon_sub.ai.language_contract import (
     USER_FACING_AI_INSTRUCTION,
     validate_user_facing_language,
 )
-from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.cache import check_cancel
@@ -124,7 +125,7 @@ def validate_manual_qa(payload, expected_id):
 class TranslationQAService:
     MAX_TRANSLATION_RETRIES = 1
 
-    def __init__(self, store, client_factory=GeminiClient):
+    def __init__(self, store, client_factory=None):
         self.store, self.factory = store, client_factory
 
     @staticmethod
@@ -132,24 +133,25 @@ class TranslationQAService:
         return rows[max(0, index - 5):index], rows[index + 1:index + 6]
 
     def run(self, project, directory, *, ids=None, semantic=True, model=None,
-            cancel=None, progress=None):
+            cancel=None, progress=None, persist=True):
         project = Project.from_dict(project.to_dict())
         selected = set(ids) if ids is not None else None
         segments = [row for row in project.segments if selected is None or row.id in selected]
         if not segments:
             raise ValueError("Không có dòng bản dịch để QA/QC")
         settings = self.store.load()
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        review_selection = (settings.tab_selection("translate") if settings.review_model_mode == "translation"
+                            else AIModelSelection.from_value({"provider": settings.review_provider, "model_id": settings.review_model}))
+        review_provider = review_selection.provider
+        settings = replace(settings, translation_provider=review_provider)
         if model is None:
-            from cartoon_sub.ai.model_resolver import AIModelResolver
-            model = AIModelResolver(self.store).resolve(
-                "TRANSLATION_QA", "translate", ("text",)).model_id
+            model = review_selection.model_id
         review_model = model
-        factory = self.factory if self.factory is not GeminiClient else (
-            text_client_factory(settings.translation_provider)
-        )
+        factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
-            self.store, Path(directory) / "cache" / "translation_qa", review_model,
-            settings.retry_count, cancel, progress, factory, settings.translation_provider,
+            self.store, Path(directory) / "cache" / "translation_qa" / getattr(project, "translate_source", "audio"), review_model,
+            settings.retry_count, cancel, progress, factory, "openrouter",
         )
         rows = source_rows(project.segments)
         vi_by_id = {row.id: row.vi_subtitle for row in project.segments}
@@ -204,24 +206,25 @@ class TranslationQAService:
                                     ", ".join(item["type"] for item in result["issues"]))
                 if qa_states.get(current_id, {}).get("status") != "pending_revision":
                     qa_states[current_id] = {"status": "completed"}
-                if paid_result:
+                if paid_result and persist:
                     manager.save(project, directory)
 
             for segment, initial_issues in retry_queue:
                 current_id = str(segment.id)
                 self._retry_failed_row(project, segment, initial_issues, rows, indexes, requests, semantic, report)
                 qa_states[current_id] = {"status": "completed"}
-                manager.save(project, directory)
+                if persist: manager.save(project, directory)
             for segment in segments:
                 store_dubbing_qa_result(project, segment, local_dubbing_qa(project, segment))
-            manager.save(project, directory)
-            from .artifacts import save_translation_artifacts
-            save_translation_artifacts(project, directory)
+            if persist:
+                manager.save(project, directory)
+                from .artifacts import save_translation_artifacts
+                save_translation_artifacts(project, directory)
             return project, Path(directory)
         except Exception:
             if current_id and qa_states.get(current_id, {}).get("status") != "completed":
                 qa_states[current_id] = {"status": "failed_resumable"}
-            manager.save(project, directory)
+            if persist: manager.save(project, directory)
             raise
         finally:
             requests.close()
@@ -238,18 +241,19 @@ class TranslationQAService:
         if missing:
             raise ValueError("Không tìm thấy ID đã chọn: " + ", ".join(map(str, missing)))
         settings = self.store.load()
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        review_selection = (settings.tab_selection("translate") if settings.review_model_mode == "translation"
+                            else AIModelSelection.from_value({"provider": settings.review_provider, "model_id": settings.review_model}))
+        review_provider = review_selection.provider
+        settings = replace(settings, translation_provider=review_provider)
         if model is None:
-            from cartoon_sub.ai.model_resolver import AIModelResolver
-            model = AIModelResolver(self.store).resolve(
-                "TRANSLATION_QA", "translate", ("text",)).model_id
+            model = review_selection.model_id
         review_model = model
-        factory = self.factory if self.factory is not GeminiClient else (
-            text_client_factory(settings.translation_provider)
-        )
+        factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
-            self.store, Path(directory) / "cache" / "manual_translation_qa",
+            self.store, Path(directory) / "cache" / "manual_translation_qa" / getattr(project, "translate_source", "audio"),
             review_model, 0, cancel, progress, factory,
-            settings.translation_provider,
+            "openrouter",
         )
         rows = source_rows(project.segments)
         indexes = {row["id"]: index for index, row in enumerate(rows)}
@@ -376,3 +380,4 @@ class TranslationQAService:
         store_qa_result(project, segment, "NEED_REVIEW", latest_issues,
                         self.MAX_TRANSLATION_RETRIES,
                         ", ".join(item["type"] for item in latest_issues))
+

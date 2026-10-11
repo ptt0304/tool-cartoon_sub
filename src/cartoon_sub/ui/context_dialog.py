@@ -16,7 +16,7 @@ GENDER_CANONICAL = {value.casefold(): key for key, value in GENDER_DISPLAY.items
 class ContextDialog(QDialog):
     """The model's proposal never silently replaces the applied context."""
     def __init__(self, context, valid_ids, parent=None, proposal=False, visual_ready=True,
-                 speaker_reviewed=True, diagnostic_payload=None, export_directory=None):
+                 diagnostic_payload=None, export_directory=None):
         super().__init__(parent)
         self.valid_ids = valid_ids
         self.result_context = None
@@ -49,10 +49,8 @@ class ContextDialog(QDialog):
                   ["Thuật ngữ Trung", "Cách dịch Việt", "Nghĩa / điều kiện dùng", "ID bằng chứng"]),
                  ("address_rules", "Xưng hô", ["speaker", "listener", "self_term", "address_term", "condition", "evidence_ids"],
                   ["Người nói", "Người nghe", "Xưng", "Gọi", "Tình huống / thời điểm", "ID bằng chứng"]),
-                 ("character_profiles", "Nhân vật từ video", ["character_id", "name", "role", "gender_context", "relationships", "visual_description", "associated_speakers", "confidence", "evidence_ids"],
-                  ["ID nhân vật", "Tên / biệt danh", "Vai trò", "Giới tính theo ngữ cảnh", "Quan hệ", "Mô tả hình ảnh", "SPK liên kết", "Độ tin cậy", "ID bằng chứng"]),
-                 ("speaker_character_mappings", "SPK → nhân vật", ["spk_id", "character_id", "confidence", "evidence_ids", "notes"],
-                  ["SPK", "ID nhân vật", "Độ tin cậy", "ID bằng chứng", "Ghi chú"])]
+                 ("character_profiles", "Nhân vật từ video", ["character_id", "name", "role", "gender_context", "relationships", "visual_description", "confidence", "evidence_ids"],
+                  ["ID nhân vật", "Tên / biệt danh", "Vai trò", "Giới tính theo ngữ cảnh", "Quan hệ", "Mô tả hình ảnh", "Độ tin cậy", "ID bằng chứng"])]
         for key, title, keys, labels in specs:
             page = QWidget()
             box = QVBoxLayout(page)
@@ -80,7 +78,7 @@ class ContextDialog(QDialog):
             buttons.addWidget(add)
             buttons.addWidget(remove)
             box.addLayout(buttons)
-            list_fields = {name for name in ("relationships", "associated_speakers") if name in keys}
+            list_fields = {name for name in ("relationships",) if name in keys}
             self.tables[key] = (table, keys, list_fields)
             tabs.addTab(page, title)
         visual_page = QWidget()
@@ -105,10 +103,7 @@ class ContextDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(self.export_button)
         self.save_status = QLabel("")
-        if not speaker_reviewed:
-            self.save_status.setText("Có thể xem/sửa Candidate, nhưng cần hoàn tất Speaker Review trước khi phê duyệt.")
-            self.apply_button.setEnabled(False)
-        elif not visual_ready or not context.get("visual_contexts"):
+        if not visual_ready or not context.get("visual_contexts"):
             self.save_status.setText("Chưa thể lưu — chưa phân tích video thành công.")
             self.apply_button.setEnabled(False)
         buttons.addWidget(self.save_status)

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from dataclasses import replace
 from .chunker import translation_batches, source_rows
 from .context_service import translation_readiness
 from .conversation_media import ConversationMediaBuilder
@@ -9,8 +10,8 @@ from .gemini_translator import TRANSLATION_SCHEMA, validate_translation_response
 from .requests import CachedRequests
 from .checkpoint import TranslationCheckpointStore, chunk_fingerprint
 from .artifacts import save_translation_artifacts
+from cartoon_sub.transcription.language_consistency import translation_eligible
 from .qa_service import TranslationQAService
-from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import text_client_factory
 from cartoon_sub.project.cache import check_cancel, content_hash
 from cartoon_sub.project.project_manager import ProjectManager
@@ -65,8 +66,9 @@ class TranslationResumableError(RuntimeError):
 
 
 def translation_fingerprint(project, settings, model=None):
-    model = model or (settings.tab_model_overrides or {}).get("translate") or settings.default_ai_model
-    return content_hash({"source": [{"id": row.id, "zh": row.zh,
+    selection = settings.tab_selection("translate")
+    model = model or selection.model_id
+    return content_hash({"translate_source": getattr(project, "translate_source", "audio"), "source": [{"id": row.id, "zh": row.zh,
                                      "start": row.start, "end": row.end}
                                     for row in project.segments],
                         "guidance": {"genres": project.translation_genres,
@@ -75,7 +77,7 @@ def translation_fingerprint(project, settings, model=None):
                                      "proper_name_rules": project.glossary,
                                      "user_defined_context": project.translation_prompt.strip()},
                         "active_custom_rules": effective_custom_rules(project),
-                        "system": EDITORIAL_RULES, "provider": settings.translation_provider, "model": model,
+                        "system": EDITORIAL_RULES, "provider": selection.provider, "model": model,
                         "chunk_size": settings.translation_chunk_size, "version": PROMPT_VERSION,
                         "imported_vi": {s.id: s.vi_subtitle for s in project.segments
                                         if s.translation_source == "imported_srt"}})
@@ -90,7 +92,7 @@ def mark_stale(project, settings):
 class TranslationPipeline:
     CONTINUITY_MEMORY_LIMIT = 64
 
-    def __init__(self, store, client_factory=GeminiClient, media_builder=None):
+    def __init__(self, store, client_factory=None, media_builder=None):
         self.store, self.factory = store, client_factory
         self.qa_service = TranslationQAService(store, client_factory)
         self.media_builder = media_builder or ConversationMediaBuilder()
@@ -112,27 +114,42 @@ class TranslationPipeline:
                                       "confidence": min(1.0, float(confidence))}
         project.translation_continuity_memory = list(by_key.values())[-cls.CONTINUITY_MEMORY_LIMIT:]
 
-    def run(self, project, directory, *, model=None, cancel=None, progress=None):
+    def run(self, project, directory, *, model=None, cancel=None, progress=None, persist=True):
         refresh_timeline(project)
         ready, reason = translation_readiness(project)
         if not ready:
             raise ValueError(reason)
         project = Project.from_dict(project.to_dict())
+        manager = ProjectManager()
+        persist_project = lambda: manager.save(project, directory) if persist else None
+        persist_artifacts = lambda: save_translation_artifacts(project, directory) if persist else None
         canonical_before = [(row.id, row.start, row.end, row.zh) for row in project.segments]
         settings = self.store.load()
+        effective_selection = settings.tab_selection("translate")
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("TranslationPipeline.run", selection_type=type(effective_selection).__name__,
+                 provider=effective_selection.provider, model_id=effective_selection.model_id)
+        settings = replace(settings, translation_provider=effective_selection.provider,
+                           default_ai_model=effective_selection.model_id)
         imported_ids = {s.id for s in project.segments if s.translation_source == "imported_srt"}
+        blocked_ids = {s.id for s in project.segments if not translation_eligible(s)}
+        for row_id in blocked_ids:
+            project.translation_notes[str(row_id)] = "Chặn dịch tự động: cần kiểm tra ngôn ngữ transcript."
         # Keep the original full-timeline lookaround. Imported rows remain useful
         # context, but are removed from request targets so AI cannot overwrite them.
         all_batches = []
         for targets, before, after in translation_batches(project.segments, settings.translation_chunk_size):
-            targets = [row for row in targets if row["id"] not in imported_ids]
+            targets = [row for row in targets
+                       if row["id"] not in imported_ids and row["id"] not in blocked_ids]
             if targets:
                 all_batches.append((targets, before, after))
         if not all_batches:
             project.translation_status = "completed"
-            ProjectManager().save(project, directory)
-            save_translation_artifacts(project, directory)
+            persist_project()
+            persist_artifacts()
             return project, Path(directory)
+        ai_debug("TranslationPipeline.route", routing_target="OpenRouter",
+                 provider="openrouter", model_id=effective_selection.model_id)
         if model is None:
             from cartoon_sub.ai.model_resolver import AIModelResolver
             model = AIModelResolver(self.store).resolve(
@@ -140,7 +157,6 @@ class TranslationPipeline:
         catalog = self.store.openrouter_catalog_cache() or {"models": []}
         model_metadata = next((item for item in catalog.get("models", [])
                                if item.get("id") == model), None)
-        manager = ProjectManager()
         fingerprint = translation_fingerprint(project, settings, model)
         states = project.chunk_states.setdefault("translation", {})
         project.cache_hashes["translation_run"] = fingerprint
@@ -149,13 +165,12 @@ class TranslationPipeline:
         project.translation_continuity_memory = []
         project.translation_status = "in_progress"
         project.selected_models["translation"] = model
-        manager.save(project, directory)
-        cache_directory = Path(directory) / "cache" / "translation"
+        persist_project()
+        cache_directory = Path(directory) / "cache" / "translation" / getattr(project, "translate_source", "audio")
         checkpoints = TranslationCheckpointStore(cache_directory)
-        factory = (self.factory if self.factory is not GeminiClient
-                   else text_client_factory(settings.translation_provider))
+        factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(self.store, cache_directory, model,
-            settings.retry_count, cancel, progress, factory, settings.translation_provider)
+            settings.retry_count, cancel, progress, factory, "openrouter")
         translated = []
         by_id = {s.id: s for s in project.segments}
         def apply_row(row):
@@ -205,7 +220,7 @@ class TranslationPipeline:
                     }
                     project.translation_status = (
                         "completed" if len(completed_ids) == total_rows else "partial")
-                    manager.save(project, directory)
+                    persist_project()
                     if progress:
                         progress(f"Chunk {index}/{len(all_batches)} — cache HIT • "
                                  f"Bản dịch: {len(completed_ids)}/{total_rows} câu")
@@ -213,7 +228,7 @@ class TranslationPipeline:
 
                 states[current] = {"status": "running", "ids": ids,
                                    "input_fingerprint": chunk_key}
-                manager.save(project, directory)
+                persist_project()
                 if progress:
                     progress(
                         f"Chunk {index}/{len(all_batches)} — đang gọi AI • evidence={evidence.mode} "
@@ -248,8 +263,8 @@ class TranslationPipeline:
                 }
                 project.translation_status = (
                     "completed" if len(completed_ids) == total_rows else "partial")
-                manager.save(project, directory)
-                save_translation_artifacts(project, directory)
+                persist_project()
+                persist_artifacts()
                 log.info(
                     "[TRANSLATE CHECKPOINT] chunk=%s/%s target_ids=%s saved=true "
                     "translated_total=%s/%s",
@@ -261,7 +276,7 @@ class TranslationPipeline:
             project.cache_hashes["translation"] = fingerprint
             if [(row.id, row.start, row.end, row.zh) for row in project.segments] != canonical_before:
                 raise ValueError("Translation không được thay đổi ID/Chinese/timestamp canonical")
-            manager.save(project, directory)
+            persist_project()
         except Exception as exc:
             project.translation_status = (
                 "partial" if isinstance(exc, CancelledError) else "failed_resumable")
@@ -269,8 +284,8 @@ class TranslationPipeline:
                 states.setdefault(current, {"ids": current_ids})
                 states[current]["status"] = (
                     "cancelled" if isinstance(exc, CancelledError) else "failed")
-            manager.save(project, directory)
-            save_translation_artifacts(project, directory)
+            persist_project()
+            persist_artifacts()
             last_id = max(completed_ids) if completed_ids else None
             log.error(
                 "[TRANSLATE ERROR] chunk=%s/%s target_ids=%s classification=%s "
@@ -292,11 +307,90 @@ class TranslationPipeline:
             raise
         finally:
             requests.close()
-        save_translation_artifacts(project, directory)
+        persist_artifacts()
         qa_ids = [segment.id for segment in project.segments if segment.id not in imported_ids]
         project, output_directory = self.qa_service.run(
-            project, directory, ids=qa_ids, model=model, cancel=cancel, progress=progress,
+            project, directory, ids=qa_ids, model=model, cancel=cancel, progress=progress, persist=persist,
         )
         if progress:
             progress(f"Đã dịch và QA/QC {len(translated)} dòng; xem Subtitle và subtitle/vi.srt")
         return project, output_directory
+
+    def retranslate_selected(self, project, directory, ids, *, model=None, cancel=None, progress=None):
+        """Fresh-translate selected rows only, using a small Chinese-only neighbour window."""
+        refresh_timeline(project)
+        selected_ids = set(ids)
+        if not selected_ids:
+            raise ValueError("Chưa chọn dòng để dịch lại.")
+        project = Project.from_dict(project.to_dict())
+        canonical_before = [(row.id, row.start, row.end, row.zh) for row in project.segments]
+        by_id = {row.id: row for row in project.segments}
+        if not selected_ids.issubset(by_id):
+            raise ValueError("Có dòng đã chọn không còn trong project")
+        settings = self.store.load()
+        selection = settings.tab_selection("translate")
+        model = model or selection.model_id
+        settings = replace(settings, translation_provider="openrouter", default_ai_model=model)
+        factory = self.factory or text_client_factory("openrouter")
+        requests = CachedRequests(
+            self.store, Path(directory) / "cache" / "translation" / "retranslate",
+            model, settings.retry_count, cancel, progress, factory, "openrouter")
+        rows = source_rows(project.segments)
+        position = {row["id"]: index for index, row in enumerate(rows)}
+        manager = ProjectManager()
+        failed = []
+        translated = []
+        try:
+            for completed, sid in enumerate((row.id for row in project.segments if row.id in selected_ids), 1):
+                check_cancel(cancel)
+                index = position[sid]
+                target = rows[index]
+                before = rows[max(0, index - 2):index]
+                after = rows[index + 1:index + 3]
+                try:
+                    response, _ = requests.request(
+                        EDITORIAL_RULES,
+                        translation_prompt(project, [target], before, after, [], {"mode": "text_only"}),
+                        TRANSLATION_SCHEMA,
+                        lambda payload, row_id=sid: validate_translation_response(payload, [row_id]),
+                        f"Dịch lại ID {sid}", force=True,
+                    )
+                    row = response["translations"][0]
+                    segment = by_id[sid]
+                    segment.vi_subtitle = row["vi"]
+                    segment.vi_dubbing = ""
+                    segment.translation_source = "ai"
+                    segment.dubbing_optimized = False
+                    segment.dubbing_status = "not_started"
+                    segment.dubbing_fingerprint = ""
+                    segment.pre_optimization_vi_subtitle = None
+                    segment.pre_optimization_vi_dubbing = None
+                    segment.meaning_preservation = row["meaning_preservation"]
+                    segment.semantic_compression = row["compressed"]
+                    project.translation_notes[str(sid)] = row["review_note"]
+                    project.translation_qa.pop(str(sid), None)
+                    segment.recalculate()
+                    from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
+                    SubtitleSegmentationService().sync_utterance(project, segment)
+                    translated.append(sid)
+                    self._update_continuity_memory(project, response.get("continuity_updates", []))
+                except Exception as exc:
+                    failed.append((sid, exc))
+                project.translation_status = "partial" if failed else "in_progress"
+                manager.save(project, directory)
+                save_translation_artifacts(project, directory)
+                if progress:
+                    progress(f"Dịch lại: {completed}/{len(selected_ids)} câu")
+            if [(row.id, row.start, row.end, row.zh) for row in project.segments] != canonical_before:
+                raise ValueError("Translation không được thay đổi ID/Chinese/timestamp canonical")
+            project.translation_status = "completed" if all(row.vi_subtitle.strip() for row in project.segments) else "partial"
+            manager.save(project, directory)
+            save_translation_artifacts(project, directory)
+            if failed:
+                failed_ids = ", ".join(str(sid) for sid, _ in failed)
+                raise TranslationResumableError(f"Dịch lại thất bại cho ID: {failed_ids}", failed[0][1])
+            if progress:
+                progress(f"Đã dịch lại {len(translated)} câu")
+            return project, Path(directory)
+        finally:
+            requests.close()

@@ -1,6 +1,6 @@
 from pathlib import Path
-from dataclasses import asdict
 import hashlib
+import json
 import os
 import re
 import wave
@@ -11,32 +11,28 @@ from cartoon_sub.subtitle.parser import import_srt
 from cartoon_sub.app.settings import LocalTTSSettings, SettingsStore
 from cartoon_sub.project.cache import check_cancel
 from cartoon_sub.project.stage_reset_service import ProjectStageResetService
-from cartoon_sub.speaker.models import Speaker
 from cartoon_sub.tts.generation_service import LocalTTSGenerationService
 from cartoon_sub.tts.local_tts_client import LocalTTSClient
 from cartoon_sub.tts.mix_service import TTSTimelineMixService
 from cartoon_sub.transcription.pipeline import TranscriptionPipeline, save_subtitle_artifacts
 from cartoon_sub.transcription.segmentation_normalizer import TranscriptSegmentationNormalizer
-from cartoon_sub.ai.gemini_client import GeminiClient
-from cartoon_sub.ai.text_client import ProviderModelClient
+from cartoon_sub.transcription.mode import TranscriptSourceMode, normalize_mode, normalize_roi
+from cartoon_sub.transcription.video.pipeline import VideoTranscriptionPipeline
+from cartoon_sub.transcription.video.qaqc import VideoTranscriptQaqcService
 from cartoon_sub.ai.openrouter_client import OpenRouterClient
 from cartoon_sub.ai.model_resolver import AIModelResolver
 from cartoon_sub.translation.context_service import (
     ContextService, enforce_context_language_contract, source_fingerprint,
 )
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
+from cartoon_sub.translation.source_modes import TranslationSourceService
 from cartoon_sub.translation.qa_service import TranslationQAService
 from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
 from cartoon_sub.translation.dubbing_service import DubbingService
-from cartoon_sub.speaker.service import (refresh_timeline, approve_review, review_complete,
-    apply_speaker_review_state, capture_initial_speaker_state, restore_initial_speaker_state,
-    commit_speaker_review_session)
-from cartoon_sub.speaker import editor_service as speaker_editor
-from cartoon_sub.tts.export_service import export_speakers
+from cartoon_sub.translation.master_dialogue_ai import MasterDialogueAIService
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
-from cartoon_sub.subtitle.audio_timing import AudioTimingRefiner
 from cartoon_sub.subtitle.export_service import export_current_srt
 from cartoon_sub.tts.process_manager import LocalTTSProcessManager
 from cartoon_sub.tts.duration_fit import VoiceCalibrationCache
@@ -49,12 +45,15 @@ class Controller:
         self.settings_store = settings_store or SettingsStore()
         self.ai_model_resolver = AIModelResolver(self.settings_store)
         self.pipeline = TranscriptionPipeline(self.settings_store)
+        self.video_pipeline = VideoTranscriptionPipeline(self.settings_store)
+        self.video_qaqc_service = VideoTranscriptQaqcService()
         self.context_service = ContextService(self.settings_store)
         self.translation_pipeline = TranslationPipeline(self.settings_store)
+        self.translation_source_service = TranslationSourceService()
         self.translation_qa_service = TranslationQAService(self.settings_store)
         self.dubbing_service=DubbingService(self.settings_store)
+        self.master_dialogue_ai_service=MasterDialogueAIService(self.settings_store)
         self.segmentation_service=SubtitleSegmentationService()
-        self.audio_timing_refiner=AudioTimingRefiner(self.settings_store)
         self.local_tts_manager = LocalTTSProcessManager()
 
     def validate_source_media(self, video, **job):
@@ -83,7 +82,6 @@ class Controller:
     def save(self):
         if self.project:
             self.segmentation_service.sync_stale(self.project)
-            refresh_timeline(self.project)
             mark_stale(self.project, self.settings_store.load())
             self.manager.save(self.project, self.directory)
             if self.project.transcription_status != "not_started":
@@ -128,6 +126,44 @@ class Controller:
         self.save()
         return result
 
+    def clear_audio_transcript_cache(self):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        result = ProjectStageResetService(self.project, self.directory).clear_audio_transcript_cache()
+        self.save()
+        return result
+
+    def clear_video_transcript_cache(self):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        result = ProjectStageResetService(self.project, self.directory).clear_video_transcript_cache()
+        self.save()
+        return result
+
+    def invalidate_video_ocr_cache(self):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        result = ProjectStageResetService(self.project, self.directory).invalidate_video_ocr_cache()
+        self.save()
+        return result
+
+    def qa_video_transcript(self, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        result = self.video_qaqc_service.apply(self.project, self.directory)
+        if result.applied:
+            save_subtitle_artifacts(self.project, self.directory)
+            self.manager.save(self.project, self.directory)
+        return self.project, self.directory
+
+    def undo_video_transcript_qaqc(self, **job):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        self.project = self.video_qaqc_service.undo(self.project, self.directory)
+        save_subtitle_artifacts(self.project, self.directory)
+        self.manager.save(self.project, self.directory)
+        return self.project, self.directory
+
     def sync_subtitle_presentation(self):
         """Persist only DisplaySegments stale against canonical Project.utterances."""
         changed = self.segmentation_service.sync_stale(self.project)
@@ -139,11 +175,7 @@ class Controller:
         segments = TranscriptSegmentationNormalizer().normalize(
             import_srt(path), language="zh", source="srt")
         self.project.segments = segments
-        self.project.speakers={}
-        self.project.speaker_review_hash=""
         for s in segments: s.translation_mode=self.project.dubbing_settings.get("mode","balanced_dubbing")
-        refresh_timeline(self.project)
-        capture_initial_speaker_state(self.project, replace=True)
         self.project.transcription_status = "imported"
         self.project.translation_status = "not_started"
         self.project.translation_notes = {}
@@ -156,30 +188,11 @@ class Controller:
         self.project.visual_context_status = "stale" if self.project.context_source_hash else "not_started"
         self.project.visual_context_signature = ""
         self.project.visual_context_error = ""
-        self.project.speaker_evidence = []
-        self.project.speaker_proposals = {}
         self.project.final_audio_status = "stale"
         self.project.final_audio_fingerprint = ""
         self.project.cache_hashes.pop("translation", None)
         self.project.chunk_states.pop("translation", None)
         self.save()
-
-    def commit_speaker_review(self, speakers, assignments, working_project=None):
-        old_timeline = [(row.id, row.start, row.end, row.zh) for row in self.project.utterances]
-        if working_project is None:
-            apply_speaker_review_state(self.project, speakers, assignments)
-        else:
-            commit_speaker_review_session(self.project, working_project, speakers, assignments)
-        new_timeline = [(row.id, row.start, row.end, row.zh) for row in self.project.utterances]
-        if old_timeline == new_timeline:
-            self.context_service.restore_cached_candidate(self.project, self.directory, force=True)
-        self.save()
-        return self.project
-
-    def reset_speaker_review(self):
-        restore_initial_speaker_state(self.project)
-        self.save()
-        return self.project
 
     def import_vietnamese_subtitles(self, path):
         imported_rows = import_srt(path)
@@ -272,8 +285,6 @@ class Controller:
         from cartoon_sub.translation.context_service import context_config_fingerprint
         valid_ids = {s.id for s in self.project.segments}
         approved = StoryContext.from_dict(context, valid_ids).to_dict()
-        if not review_complete(self.project):
-            raise ValueError("Hãy hoàn tất Speaker Review trước khi phê duyệt ngữ cảnh.")
         visual_ids = {row["id"] for row in approved.get("visual_contexts", [])}
         if visual_ids != valid_ids:
             raise ValueError("Không thể lưu: Visual Context chưa đầy đủ cho mọi ID transcript.")
@@ -312,28 +323,189 @@ class Controller:
         self.save()
 
     def translate(self, **job):
+        settings = self.settings_store.load()
+        raw = (settings.tab_model_overrides or {}).get("translate")
+        selection = settings.tab_selection("translate")
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("Controller.translate", raw_model_value=raw, raw_type=type(raw).__name__,
+                 normalized_selection=selection.to_dict(), provider=selection.provider,
+                 model_id=selection.model_id, selection_type=type(selection).__name__,
+                 calling_openrouter_resolver=selection.provider == "openrouter")
         model = self.ai_model_resolver.resolve("TRANSLATION", "translate", ("text",)).model_id
-        return self.translation_pipeline.run(self.project, self.directory, model=model, **job)
+        source = getattr(self.project, "translate_source", None)
+        if source is None:
+            return self.translation_pipeline.run(self.project, self.directory, model=model, **job)
+        working = self.translation_source_service.working_project(self.project, source)
+        translated, _ = self.translation_pipeline.run(
+            working, self.directory, model=model, persist=False, **job)
+        self.translation_source_service.commit(self.project, source, translated)
+        self.save()
+        return self.project, self.directory
+
+    def select_translate_source(self, source):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        self.translation_source_service.select(self.project, source)
+        self.save()
+        return source
+
+    def clear_translate_source_cache(self):
+        if not self.project or not self.directory:
+            raise ValueError("Chưa mở project")
+        self.translation_source_service.clear_cache(self.project, self.directory, self.project.translate_source)
+        self.save()
+
+    @staticmethod
+    def _cache_file_contains_selected_ids(path, selected_ids):
+        """Return whether a durable AI cache record belongs to one of these rows."""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return False
+        pending = [payload]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                if type(value.get("id")) is int and value["id"] in selected_ids:
+                    return True
+                ids = value.get("target_ids")
+                if isinstance(ids, list) and any(type(item) is int and item in selected_ids for item in ids):
+                    return True
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return False
+
+    def _invalidate_selected_retranslation_cache(self, selected_ids):
+        """Remove only request/checkpoint records that contain one of the selected IDs."""
+        for relative in ("cache/translation", "cache/dubbing"):
+            folder = self.directory / relative
+            if not folder.exists():
+                continue
+            for path in folder.rglob("*.json"):
+                if self._cache_file_contains_selected_ids(path, selected_ids):
+                    path.unlink(missing_ok=True)
+        states = self.project.chunk_states.get("translation", {})
+        for key, state in list(states.items()):
+            if any(item in selected_ids for item in state.get("ids", [])):
+                states.pop(key, None)
+
+    def clear_selected_for_retranslation(self, ids):
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        selected_ids = set(ids)
+        selected = [row for row in self.project.utterances if row.id in selected_ids]
+        if not selected or {row.id for row in selected} != selected_ids:
+            raise ValueError("Có dòng đã chọn không còn trong project")
+        self._invalidate_selected_retranslation_cache(selected_ids)
+        for segment in selected:
+            segment.vi_subtitle = ""
+            segment.vi_dubbing = ""
+            segment.translation_source = "ai"
+            segment.dubbing_optimized = False
+            segment.dubbing_status = "not_started"
+            segment.dubbing_fingerprint = ""
+            segment.pre_optimization_vi_subtitle = None
+            segment.pre_optimization_vi_dubbing = None
+            segment.semantic_compression = False
+            segment.meaning_preservation = "unknown"
+            segment.allowed_audio_start = None
+            segment.allowed_audio_end = None
+            segment.tts_fit_ratio = None
+            segment.dubbing_fit_status = "NOT_MEASURED"
+            segment.dubbing_rewrite_attempts = 0
+            segment.tts_generation_status = "stale"
+            segment.tts_error = ""
+            self.project.translation_notes.pop(str(segment.id), None)
+            self.project.translation_notes.pop(f"dub:{segment.id}", None)
+            self.project.translation_qa.pop(str(segment.id), None)
+            self.segmentation_service.sync_utterance(self.project, segment)
+            segment.recalculate()
+        self.project.translation_status = "partial"
+        self.project.final_audio_status = "stale"
+        self.project.final_audio_fingerprint = ""
+        self.save()
+        return [segment.id for segment in selected]
+
+    def retranslate_selected(self, ids, **job):
+        model = self.ai_model_resolver.resolve("TRANSLATION", "translate", ("text",)).model_id
+        return self.translation_pipeline.retranslate_selected(
+            self.project, self.directory, ids, model=model, **job)
 
     def qa_translation(self, **job):
+        selection = self.settings_store.load().tab_selection("translate")
         model = self.ai_model_resolver.resolve("TRANSLATION_QA", "translate", ("text",)).model_id
         return self.translation_qa_service.run(self.project, self.directory, model=model, **job)
 
     def qa_selected_translation(self, ids, **job):
+        selection = self.settings_store.load().tab_selection("translate")
         model = self.ai_model_resolver.resolve("TRANSLATION_QA", "translate", ("text",)).model_id
         return self.translation_qa_service.run_selected_manual(
             self.project, self.directory, ids, model=model, **job)
 
+    def master_dialogue_ai(self, ids, operation, **job):
+        selection = self.settings_store.load().tab_selection("master_dialogue")
+        return self.master_dialogue_ai_service.run(
+            self.project, self.directory, ids, operation, selection, **job)
+
+    def apply_master_dialogue_ai(self, operation, ids):
+        changed = self.master_dialogue_ai_service.apply(self.project, self.directory, operation, ids)
+        if changed:
+            self.save()
+        return changed
+
     def transcribe(self, **job):
         return self.pipeline.run(self.project, self.directory, **job)
 
+    def transcribe_video(self, **job):
+        return self.video_pipeline.run(self.project, self.directory, **job)
+
+    def set_transcript_source_mode(self, mode):
+        """Persist the Transcript acquisition mode (project field; no pipeline side effects)."""
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        mode = normalize_mode(mode)
+        if self.project.transcript_source_mode != mode:
+            self.project.transcript_source_mode = mode
+            self.manager.save(self.project, self.directory)
+        return mode
+
+    def set_video_subtitle_roi(self, roi):
+        """Persist the normalized Video-subtitle ROI through the project manager."""
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        roi = normalize_roi(roi)
+        duration = float(self.project.metadata.get("duration", 0) or 0)
+        regions = ([] if not roi or duration <= 0 else [{
+            "id": "region_001", "start_time": 0.0, "end_time": duration, "roi": roi,
+        }])
+        if self.project.video_subtitle_roi != roi or self.project.video_subtitle_regions != regions:
+            self.project.video_subtitle_roi = roi
+            self.project.video_subtitle_regions = regions
+            self.manager.save(self.project, self.directory)
+        return roi
+
+    def set_video_subtitle_regions(self, regions):
+        if not self.project: raise ValueError("Chưa mở project")
+        from cartoon_sub.transcription.video.regions import normalize_regions
+        regions = normalize_regions(regions, self.project.metadata.get("duration", 0))
+        self.project.video_subtitle_regions = regions
+        self.project.video_subtitle_roi = dict(regions[0]["roi"]) if len(regions) == 1 else {}
+        self.manager.save(self.project, self.directory)
+        return regions
+
+    def run_transcript(self, **job):
+        """Route the Transcript action without changing the timeline on mode selection."""
+        mode = normalize_mode(self.project.transcript_source_mode) if self.project else TranscriptSourceMode.AUDIO.value
+        if mode == TranscriptSourceMode.VIDEO.value:
+            return self.transcribe_video(**job)
+        if mode == TranscriptSourceMode.IMPORT_SRT.value:
+            raise ValueError("Chế độ Import Chinese SRT: hãy chọn file SRT để import.")
+        return self.transcribe(**job)
+
     def test_connection(self, settings, entered_key="", **job):
         settings.validate()
-        provider = settings.transcription_provider
-        key = (self.settings_store.get_api_key(provider, settings) if settings.api_key_file
-               else self.settings_store.get_key(provider))
-        client = (GeminiClient(self.settings_store.get_gemini_keys(settings)) if provider == "gemini"
-                  else ProviderModelClient(provider, key))
+        client = OpenRouterClient(self.settings_store.openrouter_key_pool())
         try:
             return client.test_connection(settings.transcription_model, **job)
         finally:
@@ -355,14 +527,6 @@ class Controller:
             return client.test_connection(model, **job)
         finally:
             client.close()
-
-    def speaker_action(self, action, *args):
-        getattr(speaker_editor,action)(self.project,*args)
-        self.save()
-
-    def approve_speakers(self):
-        approve_review(self.project)
-        self.save()
 
     def optimize_dubbing(self, ids, threshold=1, maximum_delta=0,
                          apply_threshold=True, **job):
@@ -404,9 +568,6 @@ class Controller:
         self.project.final_audio_status = "stale"
         self.save()
         return reverted
-
-    def export_speaker_files(self, text_type, **job):
-        return export_speakers(self.project,self.directory,text_type,**job)
 
     def export_transcript_srt(self):
         return export_current_srt(self.project, self.directory, "transcript")
@@ -473,16 +634,6 @@ class Controller:
             "all_voice_ids": [voice.get("voice_id") for voice in library["voices"]],
         }
 
-    def fallback_deleted_tts_voice_mappings(self, voices, all_voice_ids):
-        if not self.project:
-            return []
-        existing = set(all_voice_ids)
-        missing = []
-        for speaker_id, speaker in self.project.speakers.items():
-            saved = speaker.get("tts_voice_id")
-            if saved and saved not in existing:
-                missing.append(speaker_id)
-        return missing
 
     def set_local_tts_executable(self, path: str):
         settings = self.settings_store.load_local_tts()
@@ -504,31 +655,25 @@ class Controller:
         finally:
             client.close()
 
-    def update_speaker_tts_voice(self, speaker_id, voice_id, speed):
-        if not self.project or speaker_id not in self.project.speakers:
-            raise ValueError(f"Không tìm thấy speaker {speaker_id}")
-        values = dict(self.project.speakers[speaker_id])
-        previous_voice = values.get("tts_voice_id")
-        previous_speed = float(values.get("tts_speed", 1.0))
-        values["tts_voice_id"] = voice_id or None
-        values["tts_speed"] = speed
-        speaker = Speaker(**values)
-        self.project.speakers[speaker_id] = asdict(speaker)
-        if previous_voice != speaker.tts_voice_id or previous_speed != float(speaker.tts_speed):
-            for utterance in self.project.utterances:
-                if utterance.speaker_id != speaker_id:
-                    continue
-                utterance.dubbing_voice_id = speaker.tts_voice_id
-                utterance.dubbing_estimated_rate = None
-                utterance.dubbing_budget_duration = None
-                utterance.allowed_audio_start = None
-                utterance.allowed_audio_end = None
-                utterance.tts_fit_ratio = None
-                utterance.dubbing_fit_status = "NOT_MEASURED"
-                utterance.dubbing_rewrite_attempts = 0
-                if utterance.tts_generation_status in {"generated", "cached"}:
-                    utterance.tts_generation_status = "stale"
-                    utterance.tts_error = ""
+    def update_project_tts_voice(self, voice_id):
+        if not self.project:
+            raise ValueError("Chưa mở project")
+        current = getattr(self.project.audio_settings, "tts_voice_id", None)
+        if current == (voice_id or None):
+            return
+        self.project.audio_settings.tts_voice_id = voice_id or None
+        for utterance in self.project.utterances:
+            utterance.dubbing_voice_id = self.project.audio_settings.tts_voice_id
+            utterance.dubbing_estimated_rate = None
+            utterance.dubbing_budget_duration = None
+            utterance.allowed_audio_start = None
+            utterance.allowed_audio_end = None
+            utterance.tts_fit_ratio = None
+            utterance.dubbing_fit_status = "NOT_MEASURED"
+            utterance.dubbing_rewrite_attempts = 0
+            if utterance.tts_generation_status in {"generated", "cached"}:
+                utterance.tts_generation_status = "stale"
+                utterance.tts_error = ""
         self.save()
 
     def preview_local_tts_voice(self, voice_id, **job):
@@ -638,6 +783,9 @@ class Controller:
                 additional_audio_path=new_path,
                 additional_audio_volume=new_add_vol,
                 additional_audio_start=new_start,
+                tts_text_source=current.tts_text_source,
+                tts_voice_id=current.tts_voice_id,
+                tts_speed=current.tts_speed,
             ).validate()
             self.project.final_audio_status = "stale"
             self.save()
@@ -761,62 +909,33 @@ class Controller:
             if end <= start:
                 raise ValueError(f"Dòng {row_idx} (ID {uid}): End ({end:.3f}) phải lớn hơn Start ({start:.3f})")
 
-            spk_raw = entry.get("speaker", "").strip()
-            if "·" in spk_raw:
-                spk_raw = spk_raw.split("·")[0].strip()
-            elif ":" in spk_raw:
-                spk_raw = spk_raw.split(":")[0].strip()
-
-            target_spk = None
-            if spk_raw in self.project.speakers:
-                target_spk = spk_raw
-            else:
-                for sid, spk_dict in self.project.speakers.items():
-                    if spk_dict.get("name", "").strip().lower() == spk_raw.lower():
-                        target_spk = sid
-                        break
-            if not target_spk:
-                import re
-                if re.match(r"^SPK_\w+$", spk_raw, re.IGNORECASE):
-                    target_spk = spk_raw.upper()
-                    if target_spk not in self.project.speakers:
-                        from cartoon_sub.speaker.models import Speaker
-                        from dataclasses import asdict
-                        self.project.speakers[target_spk] = asdict(Speaker(target_spk, target_spk))
-                else:
-                    raise ValueError(f"Dòng {row_idx} (ID {uid}): Không nhận diện được speaker '{entry.get('speaker')}'")
-
             validated.append({
                 "segment": s,
                 "uid": uid,
                 "start": start,
                 "end": end,
-                "speaker_id": target_spk,
                 "zh": entry.get("zh", ""),
                 "vi_subtitle": entry.get("vi_subtitle", ""),
                 "vi_dubbing": entry.get("vi_dubbing", ""),
             })
 
         # Step 2: Apply changes to canonical project
-        timing_or_spk_changed = False
         tts_stale = False
 
         for v in validated:
             s = v["segment"]
             uid = v["uid"]
             start, end = v["start"], v["end"]
-            new_spk = v["speaker_id"]
             new_zh = v["zh"]
             new_sub = v["vi_subtitle"]
             new_dub = v["vi_dubbing"]
 
             timing_changed = (abs(s.start - start) > 1e-4 or abs(s.end - end) > 1e-4)
-            speaker_changed = (s.speaker_id != new_spk)
             sub_changed = (s.vi_subtitle != new_sub)
             dub_changed = (s.vi_dubbing != new_dub)
             zh_changed = (s.zh != new_zh)
 
-            if not (timing_changed or speaker_changed or sub_changed or dub_changed or zh_changed):
+            if not (timing_changed or sub_changed or dub_changed or zh_changed):
                 continue
 
             if timing_changed and s.display_segments:
@@ -831,9 +950,6 @@ class Controller:
             s.start = start
             s.end = end
             s.zh = new_zh
-            s.speaker_id = new_spk
-            if new_spk in self.project.speakers:
-                s.speaker_name = self.project.speakers[new_spk]["name"]
             s.vi_subtitle = new_sub
             s.vi_dubbing = new_dub
             s.dubbing_optimized = (new_dub != new_sub)
@@ -843,28 +959,23 @@ class Controller:
             s.pre_optimization_vi_dubbing = None
 
             source_changed = sub_changed if self.project.subtitle_text_source == "vi_subtitle" else dub_changed
-            if source_changed or timing_changed or speaker_changed:
+            if source_changed or timing_changed:
                 self.segmentation_service.sync_utterance(self.project, s)
 
-            if dub_changed or speaker_changed or timing_changed:
+            if dub_changed or timing_changed:
                 s.allowed_audio_start = None
                 s.allowed_audio_end = None
                 s.tts_fit_ratio = None
                 s.dubbing_fit_status = "NOT_MEASURED"
                 s.dubbing_rewrite_attempts = 0
-                if speaker_changed:
-                    speaker = self.project.speakers.get(new_spk, {})
-                    s.dubbing_voice_id = speaker.get("tts_voice_id")
-                    s.dubbing_estimated_rate = None
-                if speaker_changed or timing_changed:
+                if timing_changed:
                     s.dubbing_budget_duration = None
                 if s.tts_generation_status in {"generated", "cached"}:
                     s.tts_generation_status = "stale"
                     s.tts_error = ""
                 tts_stale = True
 
-            if timing_changed or speaker_changed:
-                timing_or_spk_changed = True
+            if timing_changed:
                 s.overlap_type = "NONE"
                 s.overlap_diagnostics = []
 
@@ -888,11 +999,7 @@ class Controller:
                                     ", ".join(item["type"] for item in result["issues"]))
                 store_dubbing_qa_result(self.project, s, local_dubbing_qa(self.project, s))
 
-        if timing_or_spk_changed:
-            from cartoon_sub.speaker.service import refresh_timeline
-            refresh_timeline(self.project)
-
-        if tts_stale or timing_or_spk_changed:
+        if tts_stale:
             self.project.final_audio_status = "stale"
 
         self.save()
@@ -933,23 +1040,3 @@ class Controller:
         self.segmentation_service.merge_manual(self.project,utterance_id,display_ids)
         self.save()
 
-    def refine_display_timing(self, utterance_ids, **job):
-        chosen = set(utterance_ids)
-        if not chosen:
-            raise ValueError("Chọn ít nhất một Utterance để căn thời gian audio")
-        audio = self.directory / "audio" / "source.wav"
-        if not audio.is_file():
-            raise ValueError("Chưa có audio nguồn; hãy chạy Gemini transcript trước")
-        for utterance in self.project.utterances:
-            if utterance.id not in chosen:
-                continue
-            source_utterance = self.segmentation_service.source_utterance(self.project, utterance)
-            segments = self.audio_timing_refiner.refine(source_utterance, audio, self.directory / "cache" / "audio_timing",
-                cancel=job.get("cancel"), progress=job.get("progress"))
-            utterance.set_display_segments(segments)
-            self.project.segmentation_cache[str(utterance.id)] = {
-                "manual": True, "timing_source": "audio_alignment",
-                "source_type": self.project.subtitle_text_source,
-            }
-        self.save()
-        return self.project, self.directory

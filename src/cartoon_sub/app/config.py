@@ -16,5 +16,5 @@ def configure_logging():
         except PermissionError:
             logging.basicConfig(level=logging.INFO, format=options["format"])
     # HTTP debug logs may include request details. Keep network clients quiet.
-    for name in ("google.genai", "google_genai", "httpx", "httpcore"):
+    for name in ("httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)

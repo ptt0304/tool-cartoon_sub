@@ -32,7 +32,7 @@ class TranscriptSTTSelectorTests(unittest.TestCase):
         tab.close()
 
     def test_other_ai_tabs_expose_searchable_general_selector(self):
-        tabs = [translate_tab.build(), subtitle_tab.build(), audio_tab.build()]
+        tabs = [translate_tab.build(), audio_tab.build()]
         try:
             for tab in tabs:
                 self.assertIsInstance(tab.ai_model_search, QLineEdit)
@@ -47,17 +47,17 @@ class TranscriptSTTSelectorTests(unittest.TestCase):
         binding.set_models(MODELS, selected_id="google/transcribe-b",
                            default_label="Mặc định — openai/default")
         search.setText("openai")
-        self.assertEqual(combo.currentData(), "google/transcribe-b")
+        self.assertEqual(combo.currentData(), {"provider": "openrouter", "model_id": "google/transcribe-b"})
         self.assertIn("Ẩn bởi tìm kiếm", combo.currentText())
         search.clear()
-        self.assertEqual(combo.currentData(), "google/transcribe-b")
+        self.assertEqual(combo.currentData(), {"provider": "openrouter", "model_id": "google/transcribe-b"})
         search.setText("speech beta")
-        self.assertEqual(combo.findData("google/transcribe-b") >= 0, True)
+        self.assertEqual(combo.findData({"provider": "openrouter", "model_id": "google/transcribe-b"}) >= 0, True)
 
     def test_override_precedes_settings_and_is_openrouter(self):
         settings = AISettings(transcription_provider="gemini",
                               transcription_model="legacy-model",
-                              tab_model_overrides={"transcript_stt": "openai/whisper-a"})
+                              tab_model_overrides={"transcript_stt": {"provider": "openrouter", "model_id": "openai/whisper-a"}})
         resolved = resolve_transcript_stt_settings(settings)
         self.assertEqual(resolved.transcription_model, "openai/whisper-a")
         self.assertEqual(resolved.transcription_provider, "openrouter")
@@ -77,7 +77,7 @@ class TranscriptSTTSelectorTests(unittest.TestCase):
                                   transcription_model="google/transcribe-b"))
             store.set_tab_model_override("transcript_stt", "openai/whisper-a")
             self.assertEqual(store.load().tab_model_overrides["transcript_stt"],
-                             "openai/whisper-a")
+                             {"provider": "openrouter", "model_id": "openai/whisper-a"})
             store.set_tab_model_override("transcript_stt", "")
             self.assertNotIn("transcript_stt", store.load().tab_model_overrides)
 

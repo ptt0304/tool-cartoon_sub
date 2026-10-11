@@ -5,6 +5,7 @@ from pathlib import Path
 import pysubs2
 from cartoon_sub.subtitle.canonical_timeline import canonical_timeline
 from cartoon_sub.subtitle.segmentation_service import presentation_segments
+from cartoon_sub.subtitle.mask_roi import sync_mask_geometry
 
 
 def _color(value):
@@ -18,8 +19,14 @@ def validate_visuals(project):
     if width < 2 or height < 2:
         raise ValueError('Kích thước video không hợp lệ')
     m, s = project.mask, project.subtitle_style
+    sync_mask_geometry(m, width, height)
     if m.kind not in ('solid', 'gaussian', 'none'):
         raise ValueError('Kiểu mask không hợp lệ')
+    if getattr(m, 'geometry_mode', 'roi_full') not in ('auto_fit', 'roi_full'):
+        raise ValueError('Mask geometry không hợp lệ')
+    if any(type(value) is not int or not 0 <= value <= 500
+           for value in (getattr(m, 'padding_x', 18), getattr(m, 'padding_y', 8))):
+        raise ValueError('Mask padding phải từ 0 đến 500')
     _color(m.mask_color); _color(s.text_color); _color(s.outline_color)
     if (any(type(v) is not int for v in (m.x,m.y,m.width,m.height)) or
                          m.x < 0 or m.y < 0 or m.width < 2 or m.height < 2 or

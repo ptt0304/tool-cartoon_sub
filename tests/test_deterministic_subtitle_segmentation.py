@@ -41,8 +41,8 @@ class DeterministicSubtitleSegmentationTests(unittest.TestCase):
 
     def test_required_split_prefers_semicolon_then_comma(self):
         cases = (
-            ("Mệnh lệnh đã rõ ràng; chúng ta lập tức xuất phát ngay.", 35, "semicolon_boundary"),
-            ("Cô chủ hãy đi trước, chúng ta sẽ theo sau ngay.", 30, "comma_boundary"),
+            ("một hai ba bốn năm sáu bảy tám chín; mười một mười hai mười ba mười bốn mười lăm mười sáu.", 35, "semicolon_boundary"),
+            ("một hai ba bốn năm sáu bảy tám chín, mười một mười hai mười ba mười bốn mười lăm mười sáu.", 30, "comma_boundary"),
         )
         for text, hard_chars, reason in cases:
             with self.subTest(reason=reason):
@@ -51,7 +51,7 @@ class DeterministicSubtitleSegmentationTests(unittest.TestCase):
                 self.assertEqual(result.boundary_reasons[0], reason)
 
     def test_required_split_without_punctuation_is_balanced_and_hard_valid(self):
-        text = "Chúng ta lập tức lên đường tìm cô chủ trước khi trời tối"
+        text = "một hai ba bốn năm sáu bảy tám chín mười mười một mười hai mười ba mười bốn mười lăm"
         utterance, result = plan(text, hard_chars=30)
         active = settings(hard_chars=30)
         self.assertEqual(result.boundary_reasons, ("whitespace_boundary",))

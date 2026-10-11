@@ -584,6 +584,7 @@ class OpenRouterClient:
         self.client = client or httpx.Client(timeout=120)
         self._owns_client = client is None
         self.last_http_status = None
+        self.last_usage = None
 
     def close(self):
         if self._owns_client:
@@ -658,7 +659,9 @@ class OpenRouterClient:
                     headers={"Authorization": f"Bearer {key}"}, json=body)
                 self.last_http_status = response.status_code
                 response.raise_for_status()
-                message = response.json()["choices"][0]["message"]
+                payload = response.json()
+                self.last_usage = payload.get("usage") if isinstance(payload, dict) else None
+                message = payload["choices"][0]["message"]
                 candidates = [message.get("content")]
                 if message.get("reasoning"):
                     candidates.append(message.get("reasoning"))
@@ -686,6 +689,9 @@ class OpenRouterClient:
 
     def generate_json(self, system, prompt, schema, model, cancel=None):
         check_cancel(cancel)
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("OpenRouterClient.generate_json", provider="openrouter", model_id=model,
+                 client_class=type(self).__name__)
         return self._post_json(self._json_body(system, prompt, schema, model), cancel=cancel)
 
     def generate_multimodal_json(self, system, prompt, media, schema, model,

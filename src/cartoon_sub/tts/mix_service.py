@@ -10,15 +10,8 @@ from time import perf_counter
 
 from cartoon_sub.media.process import run_process
 from cartoon_sub.project.cache import check_cancel
-from cartoon_sub.speaker.models import Speaker
 from cartoon_sub.subtitle.models import Project
-from cartoon_sub.tts.cache_identity import (
-    build_tts_fingerprint,
-    build_tts_segment_id,
-    normalize_tts_text,
-    resolve_tts_text,
-    TTS_SOURCE_DUBBING,
-)
+from cartoon_sub.tts.cache_identity import resolve_tts_text, TTS_SOURCE_DUBBING
 from cartoon_sub.tts.cache_manifest import load_manifest, project_audio_path
 from cartoon_sub.tts.cache_manifest import find_segment_entry
 from cartoon_sub.tts.duration_fit import DurationFitPlanner
@@ -122,29 +115,14 @@ class TTSTimelineMixService:
         text_source = getattr(project.audio_settings, "tts_text_source", TTS_SOURCE_DUBBING)
 
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
-        false_overlaps = [(left, right) for left, right in zip(ordered, ordered[1:])
-                          if right.start < left.end
-                          and left.speaker_id == right.speaker_id
-                          and left.speaker_id != "SPK_UNKNOWN"]
-        if false_overlaps:
-            left, right = false_overlaps[0]
-            logging.getLogger(__name__).warning(
-                "FALSE OVERLAP SAFETY: same speaker overlap detected: utt_%s -> utt_%s (%s)",
-                left.id, right.id, left.speaker_id,
-            )
-            raise ValueError(
-                f"FALSE_OVERLAP_SAFETY: Utterance {left.id} và {right.id} cùng speaker "
-                "nhưng timestamp overlap. Hãy xác nhận/reconcile Speaker trước khi Build Dubbed Audio."
-            )
-
         prepared: list[tuple[object, Path]] = []
+        voice_id = getattr(project.audio_settings, "tts_voice_id", None)
+        speed = float(getattr(project.audio_settings, "tts_speed", 1.0))
         for utterance in project.utterances:
             check_cancel(cancel)
             phase_started = perf_counter()
-            raw_speaker = project.speakers.get(utterance.speaker_id)
-            speaker = Speaker(**raw_speaker) if raw_speaker else None
             current = False
-            if cache_state == "valid" and speaker and speaker.tts_voice_id:
+            if cache_state == "valid" and voice_id:
                 _, entry = find_segment_entry(
                     cache_manifest["segments"], utterance.tts_cache_key, text_source,
                 )
@@ -158,34 +136,11 @@ class TTSTimelineMixService:
                     and utterance.tts_generation_status in {"generated", "cached"}
                     and utterance.tts_fingerprint == entry.get("signature")
                     and utterance.tts_segment_id == entry.get("segment_id")
-                    and entry.get("voice_id") == speaker.tts_voice_id
+                    and entry.get("voice_id") == voice_id
                     and entry.get("source", TTS_SOURCE_DUBBING) == text_source
                     and entry.get("text") == resolve_tts_text(utterance, text_source)
-                    and float(entry.get("speed", -1)) == float(speaker.tts_speed)
+                    and float(entry.get("speed", -1)) == speed
                     and entry_path == stored_path
-                )
-            elif cache_state == "missing" and text_source == TTS_SOURCE_DUBBING:
-                try:
-                    current_fingerprint = (
-                        build_tts_fingerprint(utterance, speaker, server_base_url)
-                        if speaker and speaker.tts_voice_id
-                        else ""
-                    )
-                    expected_segment_id = (
-                        build_tts_segment_id(utterance, current_fingerprint)
-                        if current_fingerprint
-                        else ""
-                    )
-                except (TypeError, ValueError):
-                    current_fingerprint = ""
-                    expected_segment_id = ""
-                current = (
-                    utterance.tts_generation_status in {"generated", "cached"}
-                    and bool(utterance.tts_audio_path)
-                    and bool(utterance.tts_fingerprint)
-                    and bool(utterance.tts_segment_id)
-                    and utterance.tts_fingerprint == current_fingerprint
-                    and utterance.tts_segment_id == expected_segment_id
                 )
             if not current:
                 raise ValueError(

@@ -19,6 +19,7 @@ def chunk_fingerprint(project, settings, model, targets, before, after,
     """Fingerprint every semantic input that can affect this chunk or later memory."""
     return content_hash({
         "checkpoint_version": CHECKPOINT_VERSION,
+        "translate_source": getattr(project, "translate_source", "audio"),
         "prompt_version": PROMPT_VERSION,
         "schema": TRANSLATION_SCHEMA,
         "provider": settings.translation_provider,

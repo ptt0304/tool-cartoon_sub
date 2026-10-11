@@ -192,7 +192,7 @@ class TranslationCheckpointResumeTests(unittest.TestCase):
             saved = ProjectManager().load(temp)
             self.assertEqual(sum(bool(row.vi) for row in saved.segments), 7)
             self.assertEqual(saved.translation_status, "failed_resumable")
-            self.assertEqual(len(list((Path(temp) / "cache/translation/checkpoints").glob("*.json"))), 7)
+            self.assertEqual(len(list((Path(temp) / "cache/translation/audio/checkpoints").glob("*.json"))), 7)
 
             second = Client()
             result, _ = pipeline(store, second).run(saved, temp)
@@ -222,7 +222,7 @@ class TranslationCheckpointResumeTests(unittest.TestCase):
                     pipeline(Store(), client).run(make_project(5), temp)
                 saved = ProjectManager().load(temp)
                 self.assertEqual([row.id for row in saved.segments if row.vi], [1, 2])
-                completed = list((Path(temp) / "cache/translation/checkpoints").glob("*.json"))
+                completed = list((Path(temp) / "cache/translation/audio/checkpoints").glob("*.json"))
                 self.assertEqual(len(completed), 2)
 
     def test_cancel_retains_checkpoint_and_resumes(self):

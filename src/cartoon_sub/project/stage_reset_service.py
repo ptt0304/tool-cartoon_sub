@@ -79,6 +79,33 @@ class ProjectStageResetService:
             self._remove_dirs(result, ("cache/transcription", "cache/transcription_semantic"))
         return result
 
+    def clear_audio_transcript_cache(self):
+        """Remove only generated Audio Transcript data; Video regions/cache stay intact."""
+        result = StageResetResult("audio_transcript_cache")
+        self.project.cache_hashes.pop("transcription_raw", None)
+        self.project.cache_hashes.pop("transcript_semantic", None)
+        self._remove_dirs(result, ("cache/transcription", "cache/transcription_semantic"))
+        return result
+
+    def clear_video_transcript_cache(self):
+        """Remove generated Video Transcript data, never user-authored ROI regions."""
+        result = StageResetResult("video_transcript_cache")
+        self._remove_dirs(result, ("cache/transcript/video",))
+        for key in ("video_subtitle_detection", "video_subtitle_ocr", "video_subtitle_ocr_workload", "video_transcript_qaqc"):
+            self.project.selected_models.pop(key, None)
+        return result
+
+    def invalidate_video_ocr_cache(self):
+        """A Video OCR model change keeps the local detector manifest and user ROIs."""
+        result = StageResetResult("video_ocr_cache")
+        self._remove_dirs(result, ("cache/transcript/video/ocr",))
+        self._remove_files(result, ("cache/transcript/video/ocr_results.json",))
+        self.project.selected_models.pop("video_subtitle_ocr", None)
+        workload = self.project.selected_models.get("video_subtitle_ocr_workload")
+        if isinstance(workload, dict):
+            workload["status"] = "PENDING"
+        return result
+
     def reset_context(self):
         result = StageResetResult("context", warnings=self.protected_data("context"))
         self._clear_context_state(remove_approved=True)

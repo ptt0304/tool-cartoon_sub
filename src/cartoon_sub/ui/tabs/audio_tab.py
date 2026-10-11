@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class AudioPage(QWidget):
     connection_requested = Signal(str)
-    mapping_changed = Signal(str, object, float)
+    project_voice_changed = Signal(object)
     preview_requested = Signal(str)
     generate_requested = Signal()
     mix_dubbed_requested = Signal()
@@ -40,7 +40,6 @@ class AudioPage(QWidget):
     mix_final_requested = Signal()
     retry_start_requested = Signal()
     select_exe_requested = Signal()
-    batch_voice_requested = Signal(list, object)
     tts_source_changed = Signal(str)
     cache_clear_requested = Signal(str)
 
@@ -91,23 +90,15 @@ class AudioPage(QWidget):
         tts_layout.addWidget(self.tts_connection_status)
 
         # ----------------------------------------------------
-        # Section B: Character Voice Mapping
-        # ----------------------------------------------------
-        self.tts_table = QTableWidget(0, 7)
-        self.tts_table.setHorizontalHeaderLabels(("✓", "Speaker", "Character", "AI Voice", "Engine", "Speed", "Status"))
-        self.tts_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.tts_table.setMinimumHeight(180)
-        tts_layout.addWidget(self.tts_table)
-
-        batch_row = QHBoxLayout()
-        self.select_all_button = QPushButton("Select all")
-        self.clear_selection_button = QPushButton("Clear selection")
-        self.batch_voice = QComboBox()
-        self.apply_batch_voice_button = QPushButton("Apply voice to checked speakers")
-        batch_row.addWidget(self.select_all_button); batch_row.addWidget(self.clear_selection_button)
-        batch_row.addWidget(QLabel("AI Voice:")); batch_row.addWidget(self.batch_voice, 1)
-        batch_row.addWidget(self.apply_batch_voice_button)
-        tts_layout.addLayout(batch_row)
+        # Section B: one project-level TTS voice.
+        voice_row = QHBoxLayout()
+        voice_row.addWidget(QLabel("Giọng đọc:"))
+        self.tts_voice = QComboBox()
+        voice_row.addWidget(self.tts_voice, 1)
+        self.tts_voice_note = QLabel("Toàn bộ câu trong project dùng cùng một giọng.")
+        self.tts_voice_note.setWordWrap(True)
+        voice_row.addWidget(self.tts_voice_note)
+        tts_layout.addLayout(voice_row)
 
         tts_actions = QHBoxLayout()
         self.tts_source = QComboBox()
@@ -234,9 +225,8 @@ class AudioPage(QWidget):
         self.tts_generate_button.clicked.connect(self.generate_requested.emit)
         self.tts_source.currentIndexChanged.connect(lambda: self.tts_source_changed.emit(self.tts_source.currentData()))
         self.tts_mix_button.clicked.connect(self.mix_dubbed_requested.emit)
-        self.select_all_button.clicked.connect(lambda: self._set_all_checked(True))
-        self.clear_selection_button.clicked.connect(lambda: self._set_all_checked(False))
-        self.apply_batch_voice_button.clicked.connect(self._apply_batch_voice)
+        self.tts_voice.currentIndexChanged.connect(
+            lambda *_: self.project_voice_changed.emit(self.tts_voice.currentData()))
 
         self.orig_volume.valueChanged.connect(self._on_volume_changed)
         self.dub_volume.valueChanged.connect(self._on_volume_changed)
@@ -285,23 +275,7 @@ class AudioPage(QWidget):
         self.clear_additional_requested.emit()
 
     def selected_voice_id(self):
-        row = self.tts_table.currentRow()
-        combo = self.tts_table.cellWidget(row, 3) if row >= 0 else None
-        return combo.currentData() if combo and combo.currentData() else self.batch_voice.currentData()
-
-    def _set_all_checked(self, checked):
-        for row in range(self.tts_table.rowCount()):
-            item = self.tts_table.item(row, 0)
-            if item: item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-
-    def checked_speaker_ids(self):
-        return [self.tts_table.item(row, 1).text() for row in range(self.tts_table.rowCount())
-                if self.tts_table.item(row, 0) and self.tts_table.item(row, 0).checkState() == Qt.CheckState.Checked]
-
-    def _apply_batch_voice(self):
-        ids = self.checked_speaker_ids(); voice_id = self.batch_voice.currentData()
-        if ids and voice_id:
-            self.batch_voice_requested.emit(ids, voice_id)
+        return self.tts_voice.currentData()
 
     def set_settings(self, settings):
         if not self.tts_url.hasFocus():
@@ -360,65 +334,8 @@ class AudioPage(QWidget):
         self.tts_source.blockSignals(False)
         if voices is not None:
             self._voices = [v for v in voices if v.get("status") == "READY"]
-        ready = {voice["voice_id"]: voice for voice in (self._voices or [])}
-        selected_batch = self.batch_voice.currentData()
-        self._populate_voice_combo(self.batch_voice, selected_batch)
-
-        # Populate TTS mapping table
-        self.tts_table.setRowCount(0)
-        for row_index, speaker_id in enumerate(sorted(project.speakers)):
-            speaker = project.speakers[speaker_id]
-            self.tts_table.insertRow(row_index)
-            check = QTableWidgetItem(); check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            check.setCheckState(Qt.CheckState.Unchecked); self.tts_table.setItem(row_index, 0, check)
-            self.tts_table.setItem(row_index, 1, QTableWidgetItem(speaker_id))
-            self.tts_table.setItem(row_index, 2, QTableWidgetItem(speaker.get("name", "Unknown")))
-
-            combo = QComboBox()
-            saved = speaker.get("tts_voice_id")
-            self._populate_voice_combo(combo, saved, preserve_current=True)
-            self.tts_table.setCellWidget(row_index, 3, combo)
-
-            engine = QLabel()
-            self.tts_table.setCellWidget(row_index, 4, engine)
-
-            speed = QDoubleSpinBox()
-            speed.setRange(0.1, 3.0)
-            speed.setSingleStep(0.05)
-            speed.setDecimals(2)
-            speed.setValue(float(speaker.get("tts_speed", 1.0)))
-            speed.setKeyboardTracking(False)
-            self.tts_table.setCellWidget(row_index, 5, speed)
-
-            selected_voice = combo.currentData()
-            status_lbl = QLabel(ready.get(selected_voice, {}).get(
-                "status", "READY" if selected_voice in ready else ("MISSING" if selected_voice else "—"),
-            ))
-            self.tts_table.setCellWidget(row_index, 6, status_lbl)
-            selected_metadata = ready.get(selected_voice, {})
-            logger.info(
-                "[AUDIO DEBUG] speaker=%s table_voice=%r stored_voice_id=%r "
-                "runtime_voice_id=%r voice_exists=%s engine=%r status=%s",
-                speaker_id,
-                combo.currentText(),
-                saved,
-                selected_voice,
-                selected_voice in ready if selected_voice else False,
-                selected_metadata.get("engine") or selected_metadata.get("source"),
-                status_lbl.text(),
-            )
-
-            def changed(*_, sid=speaker_id, selector=combo, speed_box=speed, engine_label=engine, status_box=status_lbl):
-                vid = selector.currentData()
-                v = ready.get(vid, {})
-                engine_label.setText(str(v.get("engine") or v.get("source") or "—"))
-                status_box.setText(v.get("status", "READY" if vid in ready else ("MISSING" if vid else "—")))
-                self.mapping_changed.emit(sid, vid, speed_box.value())
-
-            combo.currentIndexChanged.connect(changed)
-            speed.valueChanged.connect(changed)
-            v = ready.get(combo.currentData(), {})
-            engine.setText(str(v.get("engine") or v.get("source") or "—"))
+        self._populate_voice_combo(
+            self.tts_voice, getattr(project.audio_settings, "tts_voice_id", None), preserve_current=True)
 
         # TTS Status
         generated = sum(row.tts_generation_status in {"generated", "cached"} for row in project.utterances)

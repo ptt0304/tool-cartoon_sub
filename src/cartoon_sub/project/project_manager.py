@@ -57,14 +57,6 @@ class ProjectManager:
             for row in payload.get("master_timeline", payload.get("segments", []))
         )
         project = Project.from_dict(payload)
-        migrated_speaker_baseline = False
-        if not project.speaker_review_initial_state:
-            from cartoon_sub.speaker.service import capture_initial_speaker_state
-            migrated_speaker_baseline = capture_initial_speaker_state(project)
-            if migrated_speaker_baseline:
-                logging.getLogger(__name__).info(
-                    "Migrated missing speaker-review baseline from current persisted state: %s", path,
-                )
         source = Path(project.source_video_path)
         if not source.is_absolute():
             project.source_video_path = str((paths.root / source).resolve())
@@ -82,6 +74,6 @@ class ProjectManager:
                 except ValueError:
                     utterance.tts_audio_path = None
                     utterance.tts_generation_status = "stale"
-        if migrated_speaker_baseline or migrated_tts_cache_keys:
+        if migrated_tts_cache_keys:
             self.save(project, paths.root)
         return project

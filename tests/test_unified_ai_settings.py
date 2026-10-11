@@ -1,6 +1,7 @@
 import json
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,9 +10,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
-from cartoon_sub.ai.gemini_client import GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 from cartoon_sub.ai.provider_errors import AIProviderError, ProviderErrorCategory
 from cartoon_sub.ai.openrouter_client import (OPENROUTER_CHAT_URL, OPENROUTER_MODELS_URL,
     OPENROUTER_KEY_URL, OPENROUTER_TRANSCRIPTION_MODELS_URL, OpenRouterCatalog,
@@ -20,7 +21,8 @@ from cartoon_sub.ai.openrouter_client import (OPENROUTER_CHAT_URL, OPENROUTER_MO
     validate_openrouter_key)
 from cartoon_sub.ai.openrouter_client import _parse_json_object_content
 from cartoon_sub.ai.text_client import text_client_factory
-from cartoon_sub.app.settings import (AISettings, SettingsStore, parse_openrouter_key_file,
+from cartoon_sub.app.settings import (AISettings, SettingsStore, application_root,
+                                      parse_openrouter_key_file,
                                       save_openrouter_key_file)
 from cartoon_sub.project.cache import atomic_json
 from cartoon_sub.media.process import CancelledError
@@ -493,6 +495,33 @@ class UnifiedAISettingsTests(unittest.TestCase):
             self.assertIn("gemini_key: KEEP-ME", text)
             self.assertEqual(parse_openrouter_key_file(path),
                              (True, ["TEST-NEW-A", "TEST-NEW-B"]))
+
+    def test_key_editor_save_persists_immediately_to_the_store_path(self):
+        """The nested production key editor's Save must not require parent Save."""
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root); path = root / "api_key.txt"
+            path.write_text("other_key: KEEP\nopenrouter_key: OLD\n", encoding="utf-8")
+            store = SettingsStore(root, MemoryVault(), root / ".env")
+            window = SettingsDialog(SimpleNamespace(settings_store=store))
+            editor = Mock()
+            editor.exec.return_value = QDialog.DialogCode.Accepted
+            editor.keys.return_value = ["NEW-UI-KEY", "NEW-UI-KEY"]
+            with patch("cartoon_sub.ui.settings_dialog.OpenRouterKeysDialog", return_value=editor):
+                window.edit_keys()
+            self.assertEqual(parse_openrouter_key_file(path), (True, ["NEW-UI-KEY"]))
+            self.assertIn("other_key: KEEP", path.read_text(encoding="utf-8"))
+            self.assertEqual(store.openrouter_key_pool().keys, ["NEW-UI-KEY"])
+            self.assertFalse(window.keys_edited)
+            self.assertIn("saved to canonical api_key.txt", window.connection_status.text())
+            window.close()
+
+    def test_application_root_uses_executable_directory_for_one_folder_build(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root); executable = root / "Cartoon_Sub.exe"
+            executable.touch(); (root / "_internal").mkdir()
+            with patch.object(sys, "frozen", True, create=True), \
+                 patch.object(sys, "executable", str(executable)):
+                self.assertEqual(application_root(), root)
 
     def test_different_working_directory_does_not_change_explicit_key_path(self):
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as other:

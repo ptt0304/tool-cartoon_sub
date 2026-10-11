@@ -7,6 +7,7 @@ import pysubs2
 from cartoon_sub.subtitle.models import DisplaySegment, Project, Utterance
 from cartoon_sub.subtitle.parser import export_srt
 from cartoon_sub.subtitle.segmentation import SegmentationSettings
+from cartoon_sub.subtitle.segmentation import SegmentationProfile
 from cartoon_sub.subtitle.segmentation_qc import review_display_segment
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService, presentation_segments, segmentation_fingerprint
 
@@ -40,6 +41,7 @@ class SegmentationPhase4Tests(unittest.TestCase):
             speaker_id="SPK_01")
         project = Project("p", "source.mp4", segments=[utterance])
         service = SubtitleSegmentationService()
+        service.update_settings(project, SegmentationProfile.CUSTOM, self.settings())
         changed, skipped = service.auto_segment(project)
         self.assertEqual((changed, skipped), ([1], []))
         self.assertGreaterEqual(len(utterance.display_segments), 1)

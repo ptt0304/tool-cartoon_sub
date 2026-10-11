@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from threading import Event
-from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 from cartoon_sub.ai.language_contract import USER_FACING_AI_CORRECTION, UserFacingLanguageError
 from cartoon_sub.project.cache import atomic_json, content_hash, check_cancel
 from .gemini_translator import TranslationValidationError
@@ -28,10 +28,11 @@ def _safe_error_record(exc, attempt, evidence_fingerprint=None):
 
 
 class CachedRequests:
-    def __init__(self, store, directory, model, retries, cancel=None, progress=None, client_factory=GeminiClient, provider="gemini"):
+    def __init__(self, store, directory, model, retries, cancel=None, progress=None, client_factory=None, provider="openrouter"):
         self.store, self.directory, self.model = store, Path(directory), model
         self.retries, self.cancel = retries, cancel or Event()
-        self.report, self.factory, self.provider = progress or (lambda text: None), client_factory, provider
+        from cartoon_sub.ai.text_client import text_client_factory
+        self.report, self.factory, self.provider = progress or (lambda text: None), (client_factory or text_client_factory("openrouter")), "openrouter"
         self.client = None
 
     def close(self):
@@ -40,10 +41,11 @@ class CachedRequests:
 
     def _ensure_client(self):
         if self.client is None:
-            credential = (self.store.get_gemini_keys() if self.provider == "gemini" and self.factory is GeminiClient
-                          else self.store.openrouter_key_pool() if self.provider == "openrouter"
-                          else self.store.get_key(self.provider))
+            credential = self.store.openrouter_key_pool()
             self.client = self.factory(credential)
+            from cartoon_sub.ai.runtime_debug import ai_debug
+            ai_debug("CachedRequests._ensure_client", provider=self.provider, model_id=self.model,
+                     client_class=type(self.client).__name__)
             if self.provider == "openrouter" and not getattr(self.client, "models", None):
                 cached = self.store.openrouter_catalog_cache()
                 if cached:

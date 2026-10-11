@@ -5,7 +5,7 @@ from cartoon_sub.syllable.vietnamese import count_syllables
 class UtteranceDialog(QDialog):
     def __init__(self,segment,parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Utterance {segment.id} — {segment.speaker_id}")
+        self.setWindowTitle(f"Utterance {segment.id}")
         self.resize(700,520)
         box=QFormLayout(self)
         zh=QPlainTextEdit(segment.zh); zh.setReadOnly(True); zh.setMaximumHeight(80); box.addRow("Chinese",zh)

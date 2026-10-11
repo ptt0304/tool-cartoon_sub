@@ -7,9 +7,7 @@ from .prompts import dubbing_prompt, dubbing_system, duration_rewrite_prompt, PR
 from .gemini_translator import TRANSLATION_SCHEMA, TranslationValidationError, validate_translation
 from .requests import CachedRequests
 from .artifacts import save_translation_artifacts
-from cartoon_sub.ai.gemini_client import GeminiClient
 from cartoon_sub.ai.text_client import text_client_factory
-from cartoon_sub.speaker.service import refresh_timeline
 from cartoon_sub.syllable.target import DubbingSettings
 from cartoon_sub.syllable.vietnamese import count_syllables
 from cartoon_sub.project.cache import check_cancel, content_hash
@@ -101,7 +99,7 @@ def eligible_dubbing_ids(project, ids, threshold, *, apply_threshold=True):
 
 
 class DubbingService:
-    def __init__(self, store, client_factory=GeminiClient):
+    def __init__(self, store, client_factory=None):
         self.store,self.factory=store,client_factory
 
     def _calibration_cache(self, directory):
@@ -118,13 +116,9 @@ class DubbingService:
             try:
                 if client.health().get("status") == "READY":
                     voices = {voice.get("voice_id"): voice for voice in client.list_voices()}
-                    needed = {
-                        (project.speakers[row.speaker_id].get("tts_voice_id"),
-                         float(project.speakers[row.speaker_id].get("tts_speed", 1.0)))
-                        for row in project.utterances if row.id in chosen
-                        and row.speaker_id in project.speakers
-                        and project.speakers[row.speaker_id].get("tts_voice_id")
-                    }
+                    voice_id = getattr(project.audio_settings, "tts_voice_id", None)
+                    speed = float(getattr(project.audio_settings, "tts_speed", 1.0))
+                    needed = {(voice_id, speed)} if voice_id else set()
                     cache = self._calibration_cache(directory)
                     for voice_id, speed in needed:
                         voice = voices.get(voice_id)
@@ -140,9 +134,8 @@ class DubbingService:
         for row in project.utterances:
             if row.id not in chosen:
                 continue
-            speaker = project.speakers.get(row.speaker_id, {})
-            voice_id = speaker.get("tts_voice_id")
-            speed = float(speaker.get("tts_speed", 1.0))
+            voice_id = getattr(project.audio_settings, "tts_voice_id", None)
+            speed = float(getattr(project.audio_settings, "tts_speed", 1.0))
             calibration = calibrations.get((voice_id, speed))
             row.dubbing_voice_id = voice_id
             row.dubbing_estimated_rate = (
@@ -161,7 +154,6 @@ class DubbingService:
         if apply_threshold and maximum_delta >= threshold:
             raise ValueError("Delta được lệch tối đa phải nhỏ hơn Delta target sẽ áp dụng")
         project=Project.from_dict(project.to_dict())
-        refresh_timeline(project)
         chosen=set(eligible_dubbing_ids(project, ids, threshold, apply_threshold=apply_threshold))
         if not chosen:
             return project,Path(directory)
@@ -173,10 +165,9 @@ class DubbingService:
                 "DUBBING_OPTIMIZE", "translate", ("text",)).model_id
         budget=DubbingSettings(**project.dubbing_settings)
         self._apply_voice_budgets(project, directory, chosen, budget, progress)
-        factory=(self.factory if self.factory is not GeminiClient
-                 else text_client_factory(settings.translation_provider))
+        factory=self.factory or text_client_factory("openrouter")
         requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",model,
-            settings.retry_count,cancel,progress,factory,settings.translation_provider)
+            settings.retry_count,cancel,progress,factory,"openrouter")
         all_rows=source_rows(project.segments)
         by_id={s.id:s for s in project.segments}
         def fingerprint(segment):
@@ -286,12 +277,10 @@ class DubbingService:
             from cartoon_sub.ai.model_resolver import AIModelResolver
             model = AIModelResolver(self.store).resolve(
                 "DUBBING_DURATION_REWRITE", "translate", ("text",)).model_id
-        factory = self.factory if self.factory is not GeminiClient else (
-            text_client_factory(settings.translation_provider)
-        )
+        factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
             self.store, Path(directory) / "cache" / "dubbing_duration", model,
-            settings.retry_count, cancel, progress, factory, settings.translation_provider,
+            settings.retry_count, cancel, progress, factory, "openrouter",
         )
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
         changed = []
@@ -307,8 +296,7 @@ class DubbingService:
                     "chinese_source": row.zh,
                     "full_vi_subtitle": row.vi_subtitle,
                     "current_vi_dubbing": row.vi_dubbing,
-                    "speaker": row.speaker_id,
-                    "voice_id": row.dubbing_voice_id or project.speakers.get(row.speaker_id, {}).get("tts_voice_id"),
+                    "voice_id": row.dubbing_voice_id or getattr(project.audio_settings, "tts_voice_id", None),
                     "available_duration": round(allowed, 3),
                     "actual_tts_duration": round(float(row.tts_duration or 0), 3),
                     "required_reduction_percent": round(max(0.0, 1.0 - allowed / float(row.tts_duration or allowed)) * 100, 1),

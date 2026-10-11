@@ -29,6 +29,7 @@ def translation_qa_fingerprint(segment, project=None):
         "target_hash": content_hash(segment.vi_subtitle),
     }
     if project is not None:
+        value["translate_source"] = getattr(project, "translate_source", "audio")
         value["translation_guidance_hash"] = content_hash({
             "genres": project.translation_genres,
             "style": project.translation_preset,
@@ -47,7 +48,8 @@ def qa_entry_is_current(segment, entry, project=None):
             and entry.get("source_hash") == fingerprint["source_hash"]
             and entry.get("target_hash") == fingerprint["target_hash"]
             and (project is None or entry.get("translation_guidance_hash")
-                 == fingerprint["translation_guidance_hash"]))
+                 == fingerprint["translation_guidance_hash"]
+                 and entry.get("translate_source") == fingerprint["translate_source"]))
 
 
 def store_qa_result(project, segment, status, issues=None, attempts=0, last_failed_reason=""):
@@ -225,18 +227,6 @@ def review_translation(project):
 def utterance_warnings(segment, project):
     notes=[]
     config=DubbingSettings(**project.dubbing_settings)
-    if segment.speaker_id=="SPK_UNKNOWN": notes.append("Chưa gán speaker")
-    if segment.speaker_confidence is not None and segment.speaker_confidence<0.6: notes.append("Speaker cần nghe lại (ước lượng AI thấp)")
-    if segment.duration<0.25: notes.append("Utterance rất ngắn")
-    if segment.overlap: notes.append("Overlap hợp lệ: "+str(segment.overlap_group))
-    peers=[s for s in project.segments if s.id!=segment.id and s.start<segment.end and s.end>segment.start]
-    if any(s.speaker_id==segment.speaker_id for s in peers): notes.append("Kiểm tra overlap cùng speaker")
-    ordered=sorted(project.segments,key=lambda s:(s.start,s.id))
-    index=next((i for i,s in enumerate(ordered) if s.id==segment.id),-1)
-    if 0<index<len(ordered)-1 and segment.duration<0.5:
-        a,b=ordered[index-1],ordered[index+1]
-        if a.speaker_id==b.speaker_id!=segment.speaker_id and b.start-a.end<1:
-            notes.append("Đổi speaker A–B–A rất nhanh; cần nghe lại")
     if segment.semantic_compression: notes.append("Meaning may be compressed — bản dubbing đã nén")
     if segment.translation_mode in ("syllable_match","strict_iso_syllabic","short_dub"):
         notes.append("Mode cho phép nén nghĩa/sắc thái")

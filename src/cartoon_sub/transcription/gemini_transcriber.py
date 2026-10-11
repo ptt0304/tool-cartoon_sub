@@ -7,32 +7,30 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
 
-from cartoon_sub.ai.gemini_client import GeminiClient, GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
+from cartoon_sub.ai.openrouter_client import OpenRouterTranscriptionClient
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.cache import atomic_json, check_cancel, content_hash
 from cartoon_sub.prompts import read
-from cartoon_sub.speaker.service import detect_overlaps
 from cartoon_sub.subtitle.models import Segment
 from cartoon_sub.transcription.contracts import (
     normalize_confidence,
-    normalize_speaker_hint,
     normalize_word_timestamps,
 )
 from cartoon_sub.transcription.segmentation_normalizer import TranscriptSegmentationNormalizer
+from cartoon_sub.transcription.speech_regions import VAD_VERSION, detect_speech_regions, fallback_regions
+from cartoon_sub.transcription.timing_quality import evaluate_timing, TRUSTED, PARTIAL
+from cartoon_sub.transcription.language_consistency import assess_rows
 
-PROMPT_VERSION = "zh-utterance-v2"
-SPEAKER_DETECTION_VERSION = "voice-reference-v1"
-CHUNK_SECONDS = 60
+PROMPT_VERSION = "zh-utterance-v4-language-guard"
+LANGUAGE_RETRY_VERSION = "zh-language-retry-v1"
 TRANSCRIPT_GEMINI_BACKOFF_SECONDS = (2, 4, 8, 16, 32)
 PROMPT = read("transcription_v2.txt")
-SCHEMA = {"type":"OBJECT", "properties":{"segments":{"type":"ARRAY","items":{
+SCHEMA = {"type":"OBJECT","properties":{"segments":{"type":"ARRAY","items":{
     "type":"OBJECT","properties":{
         "id":{"type":"INTEGER"}, "start":{"type":"NUMBER"}, "end":{"type":"NUMBER"},
-        "speaker_id":{"type":"STRING"}, "zh":{"type":"STRING"},
-        "overlap":{"type":"BOOLEAN"}, "overlap_group":{"type":"STRING","nullable":True},
-        "speaker_confidence":{"type":"NUMBER","nullable":True},
-        "transcript_confidence":{"type":"NUMBER","nullable":True}},
-    "required":["id","start","end","speaker_id","zh","overlap","overlap_group","speaker_confidence","transcript_confidence"]}}},"required":["segments"]}
+        "zh":{"type":"STRING"}, "transcript_confidence":{"type":"NUMBER","nullable":True}},
+    "required":["id","start","end","zh","transcript_confidence"]}}},"required":["segments"]}
 
 log = logging.getLogger(__name__)
 
@@ -131,17 +129,38 @@ def validate_response(payload, duration):
             raise TranscriptValidationError(f"dòng {index}, end={end:.3f}s vượt độ dài audio {duration:.3f}s")
         try:
             segment = Segment(index, start, end, item["zh"],
-                speaker_id=normalize_speaker_hint(item.get("speaker_id", "SPK_UNKNOWN")),
-                speaker_confidence=normalize_confidence(item.get("speaker_confidence")),
                 transcript_confidence=normalize_confidence(item.get("transcript_confidence")))
         except ValueError:
-            raise TranscriptValidationError(f"dòng {index}, speaker_id hoặc confidence không hợp lệ") from None
+            raise TranscriptValidationError(f"dòng {index}, confidence không hợp lệ") from None
         segments.append(segment)
     segments.sort(key=lambda s: (s.start, s.end, s.id))
     for index, segment in enumerate(segments, 1):
         segment.id = index
-    detect_overlaps(segments)
+    _detect_timing_overlaps(segments)
     return segments
+
+
+def _detect_timing_overlaps(segments):
+    """Mark only timestamp intersections; identity metadata is deliberately ignored."""
+    ordered = sorted(segments, key=lambda row: (row.start, row.end, row.id))
+    for row in ordered:
+        row.overlap = False
+        row.overlap_group = None
+        row.overlap_type = "NONE"
+        row.overlap_diagnostics = []
+    group = 0
+    for index, row in enumerate(ordered):
+        overlapping = [other for other in ordered[index + 1:] if other.start < row.end and other.end > row.start]
+        if not overlapping:
+            continue
+        group += 1
+        group_id = f"OVERLAP_{group:03d}"
+        members = [row, *overlapping]
+        for member in members:
+            member.overlap = True
+            member.overlap_group = group_id
+            member.overlap_type = "LEGITIMATE_OVERLAP"
+            member.overlap_diagnostics = ["Timestamp overlap"]
 
 
 def _raw_time_range(payload):
@@ -158,13 +177,120 @@ def _raw_time_range(payload):
 
 class GeminiTranscriber:
     """Bounded chunk pipeline; client_factory may be Gemini or another ASR adapter."""
-    def __init__(self, key_provider, model, cache_directory, retry_count=2, client_factory=GeminiClient):
+    def __init__(self, key_provider, model, cache_directory, retry_count=2, client_factory=OpenRouterTranscriptionClient,
+                 timing_retry_model="assemblyai/universal-3-5-pro"):
         self.key_provider = key_provider
         self.model = model
         self.cache_directory = Path(cache_directory)
         self.retry_count = retry_count
         self.client_factory = client_factory
+        self.timing_retry_model = timing_retry_model
         self.last_raw_result = None
+        self.language_stats = {}
+        self.timing_manifest = []
+
+    @staticmethod
+    def _apply_language_normalization(rows):
+        """Normalize only high-confidence non-lexical foreign vocal sounds."""
+        output, mismatch = [], False
+        stats = {"language_mismatch": 0, "isolated_foreign_script": 0,
+                 "vocalization_normalized": 0}
+        for row, assessment in zip(rows, assess_rows(rows, project_language="zh")):
+            if assessment.isolated_foreign_script:
+                stats["isolated_foreign_script"] += 1
+            if assessment.classification == "VOCALIZATION":
+                output.append(replace(row, zh=assessment.normalized_text,
+                                      transcript_language_status="VOCALIZATION_NORMALIZED",
+                                      transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh))
+                stats["vocalization_normalized"] += 1
+            elif assessment.classification == "LANGUAGE_MISMATCH":
+                output.append(replace(row, transcript_language_status="LANGUAGE_MISMATCH",
+                                      transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh))
+                stats["language_mismatch"] += 1
+                mismatch = True
+            else:
+                output.append(replace(row, transcript_language_status="PASS",
+                                      transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh))
+        return output, mismatch, stats
+
+    def _language_retry(self, client, audio_bytes, duration, region, source_rows, *, cancel, progress):
+        """Retry one foreign-script region once, with independent durable cache."""
+        import hashlib
+        retry_key = content_hash({"audio": hashlib.sha256(audio_bytes).hexdigest(), "model": self.model,
+                                  "language": "zh", "region": [round(region.start, 6), round(region.end, 6)],
+                                  "version": LANGUAGE_RETRY_VERSION})
+        path = self.cache_directory / "language_retry" / f"{retry_key}.json"
+        state = None
+        try:
+            if path.exists():
+                state = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            state = None
+        if isinstance(state, dict) and state.get("status") == "completed":
+            payload = state.get("response")
+            cache_hit = 1
+        elif isinstance(state, dict) and state.get("status") == "manual_review":
+            return [replace(row, transcript_language_status="NEEDS_MANUAL_REVIEW",
+                            transcript_language_retry_count=1,
+                            transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh) for row in source_rows], False, {
+                                         "retry_regions": 0, "retry_success": 0,
+                                         "retry_failed": 1, "retry_cache_hits": 1}
+        else:
+            cache_hit = 0
+            try:
+                payload = client.transcribe_json(
+                    audio_bytes,
+                    PROMPT + "\nMandatory language constraint: transcribe Mandarin Chinese only. "
+                    "Do not render non-lexical vocal sounds as Japanese, Korean, or English.",
+                    SCHEMA, self.model, cancel=cancel, progress=progress)
+                atomic_json(path, {"status": "completed", "response": payload})
+            except GeminiError as exc:
+                atomic_json(path, {"status": "manual_review", "error": type(exc).__name__})
+                return [replace(row, transcript_language_status="NEEDS_MANUAL_REVIEW",
+                                transcript_language_retry_count=1,
+                                transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh) for row in source_rows], False, {
+                    "retry_regions": 1, "retry_success": 0, "retry_failed": 1, "retry_cache_hits": cache_hit}
+        try:
+            candidate = validate_response(payload, duration)
+            candidate, mismatch, _ = self._apply_language_normalization(candidate)
+        except (ValueError, TypeError, KeyError, GeminiError):
+            mismatch = True
+            candidate = source_rows
+        if not mismatch:
+            return [replace(row, transcript_language_retry_count=1) for row in candidate], True, {
+                                     "retry_regions": 1, "retry_success": 1,
+                                     "retry_failed": 0, "retry_cache_hits": cache_hit}
+        retry_text = "\n".join(row.zh for row in candidate).strip()
+        atomic_json(path, {"status": "manual_review", "response": payload})
+        return [replace(row, transcript_language_status="NEEDS_MANUAL_REVIEW",
+                        transcript_language_retry_count=1,
+                        transcript_raw_stt_text=row.transcript_raw_stt_text or row.zh,
+                        transcript_language_retry_text=retry_text) for row in source_rows], False, {
+            "retry_regions": 1, "retry_success": 0, "retry_failed": 1, "retry_cache_hits": cache_hit}
+
+    def _timing_retry(self, client, audio_bytes, duration, region, primary, primary_quality, *, cancel, progress):
+        """One bounded OpenRouter-only re-transcription for bad timing evidence."""
+        import hashlib
+        key = content_hash({"audio": hashlib.sha256(audio_bytes).hexdigest(), "model": self.timing_retry_model,
+                            "language": "zh", "region": [round(region.start, 6), round(region.end, 6)],
+                            "version": "timing-retry-v1"})
+        path = self.cache_directory / "timing_retry" / f"{key}.json"
+        payload = None
+        try:
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8")).get("response")
+            if not isinstance(payload, dict):
+                payload = client.transcribe_json(audio_bytes, PROMPT, SCHEMA, self.timing_retry_model,
+                                                 cancel=cancel, progress=progress)
+                atomic_json(path, {"response": payload})
+            candidate = validate_response(payload, duration)
+            quality = evaluate_timing(candidate, payload.get("words"), 0.0, duration)
+        except (GeminiError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return primary, primary_quality, False
+        # A retry is selected only if it has usable acoustic timestamps.
+        if quality.status in {TRUSTED, PARTIAL}:
+            return candidate, quality, True
+        return primary, primary_quality, False
 
     def transcribe(self, audio_path, *, cancel=None, progress=None):
         cancel = cancel or Event()
@@ -175,28 +301,33 @@ class GeminiTranscriber:
         raw_words = []
         languages = []
         capabilities = set()
-        references = {}
+        language_stats = {"language_mismatch": 0, "isolated_foreign_script": 0,
+                          "vocalization_normalized": 0, "retry_regions": 0,
+                          "retry_success": 0, "retry_failed": 0, "retry_cache_hits": 0}
         try:
             with wave.open(str(audio_path), "rb") as audio:
                 if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 16000):
                     raise ValueError("Audio phải là WAV PCM 16-bit mono 16 kHz")
-                frames_per_chunk = CHUNK_SECONDS * audio.getframerate()
-                total = math.ceil(audio.getnframes() / frames_per_chunk)
                 source_duration = audio.getnframes() / audio.getframerate()
-                log.info("[TRANSCRIPT TRACE] source_audio_duration=%.6f chunks=%d chunk_seconds=%d",
-                         source_duration, total, CHUNK_SECONDS)
-                for chunk_index in range(total):
+                regions = detect_speech_regions(audio_path)
+                vad_fallback = not regions
+                regions = regions or fallback_regions(source_duration)
+                total = len(regions)
+                log.info("[TRANSCRIPT TRACE] source_audio_duration=%.6f speech_regions=%d vad_fallback=%s",
+                         source_duration, total, vad_fallback)
+                for chunk_index, region in enumerate(regions):
                     check_cancel(cancel)
-                    raw = audio.readframes(frames_per_chunk)
-                    duration = len(raw) / 32000
+                    audio.setpos(int(region.start * audio.getframerate()))
+                    raw = audio.readframes(int((region.end - region.start) * audio.getframerate()))
+                    duration = len(raw) / (audio.getframerate() * audio.getsampwidth())
                     buffer = io.BytesIO()
                     with wave.open(buffer, "wb") as chunk:
                         chunk.setnchannels(1); chunk.setsampwidth(2); chunk.setframerate(16000); chunk.writeframes(raw)
                     import hashlib
                     key = content_hash({"audio": hashlib.sha256(buffer.getvalue()).hexdigest(),
                         "model": self.model, "prompt": PROMPT, "schema": SCHEMA, "version": PROMPT_VERSION,
-                        "speaker_version": SPEAKER_DETECTION_VERSION,
-                        "references": {k: hashlib.sha256(v).hexdigest() for k, v in references.items()}})
+                        "vad_version": VAD_VERSION, "region": [round(region.start, 6), round(region.end, 6)],
+                        "timestamp_policy": "region_relative"})
                     path = self.cache_directory / f"{key}.json"
                     state = None
                     if path.exists():
@@ -212,8 +343,8 @@ class GeminiTranscriber:
                                 state = None
                         except (ValueError, KeyError, AttributeError, GeminiError):
                             state = None
-                    chunk_start = chunk_index * CHUNK_SECONDS
-                    chunk_end = chunk_start + duration
+                    chunk_start = region.start
+                    chunk_end = region.start + duration
                     log.info(
                         "[TRANSCRIPT TRACE] chunk_index=%d chunk_start=%.6f chunk_end=%.6f "
                         "chunk_duration=%.6f cache_used=%s cache_timestamp_basis=relative",
@@ -258,9 +389,8 @@ class GeminiTranscriber:
                                                   else client.transcribe_json)
                                     payload = transcribe(
                                         buffer.getvalue(),
-                                        PROMPT + f"\nTARGET AUDIO duration: {duration:.6f} seconds. Known IDs: "
-                                                 f"{sorted({s.speaker_id for s in result})}" + correction,
-                                        SCHEMA, self.model, cancel=cancel, references=references, progress=report)
+                                        PROMPT + f"\nTARGET AUDIO duration: {duration:.6f} seconds." + correction,
+                                        SCHEMA, self.model, cancel=cancel, progress=report)
                                     raw_start, raw_end = _raw_time_range(payload)
                                     log.info(
                                         "[TRANSCRIPT TRACE] chunk_index=%d raw_model_start=%s raw_model_end=%s "
@@ -338,6 +468,61 @@ class GeminiTranscriber:
                                 break
                         if not completed:
                             raise _transcript_exhausted_error(last_transient, key_count)
+                    primary_quality = evaluate_timing(local, response.get("words"), 0.0, duration)
+                    selected_source = "PRIMARY"
+                    timing_retry_used = False
+                    if primary_quality.status not in {TRUSTED, PARTIAL}:
+                        if client is None:
+                            client = self.client_factory(self.key_provider())
+                        local, selected_quality, timing_retry_used = self._timing_retry(
+                            client, buffer.getvalue(), duration, region, local, primary_quality,
+                            cancel=cancel, progress=report)
+                        if timing_retry_used:
+                            selected_source = "RETRY"
+                            response = {"segments": [{"start": row.start, "end": row.end, "zh": row.zh}
+                                                     for row in local]}
+                    else:
+                        selected_quality = primary_quality
+                    provenance = (("RETRY_" if timing_retry_used else "PRIMARY_")
+                                  + selected_quality.timestamp_capability
+                                  if selected_quality.timestamp_capability in {"WORD", "SEGMENT"}
+                                  else "COARSE_ONLY")
+                    if selected_quality.status not in {TRUSTED, PARTIAL}:
+                        provenance = "COARSE_ONLY"
+                    local = [replace(row, transcript_timing_provenance=provenance,
+                                     transcript_timing_confidence=(selected_quality.valid_ratio
+                                                                    if provenance != "COARSE_ONLY" else 0.0),
+                                     transcript_language_status=("NEEDS_MANUAL_REVIEW"
+                                         if provenance == "COARSE_ONLY" else row.transcript_language_status))
+                             for row in local]
+                    self.timing_manifest.append({
+                        "region_id": chunk_index + 1, "coarse_start": region.start, "coarse_end": region.end,
+                        "primary_model": self.model, "primary_timestamp_type": primary_quality.timestamp_capability,
+                        "primary_quality": primary_quality.status, "primary_span": primary_quality.span,
+                        "retry_used": timing_retry_used, "retry_model": self.timing_retry_model if timing_retry_used else "",
+                        "retry_quality": selected_quality.status if timing_retry_used else "",
+                        "retry_span": selected_quality.span if timing_retry_used else 0.0,
+                        "selected_source": selected_source,
+                        "timing_source": provenance,
+                        "status": selected_quality.status,
+                    })
+                    local, mismatch, local_language_stats = self._apply_language_normalization(local)
+                    if provenance == "COARSE_ONLY":
+                        local = [replace(row, transcript_language_status="NEEDS_MANUAL_REVIEW") for row in local]
+                    for name, value in local_language_stats.items():
+                        language_stats[name] += value
+                    if mismatch:
+                        if client is None:
+                            client = self.client_factory(self.key_provider())
+                        local, accepted, retry_stats = self._language_retry(
+                            client, buffer.getvalue(), duration, region, local, cancel=cancel, progress=report)
+                        for name, value in retry_stats.items():
+                            language_stats[name] += value
+                        if accepted:
+                            # Count the accepted retry output, not the rejected foreign first pass.
+                            _, _, accepted_stats = self._apply_language_normalization(local)
+                            for name in ("isolated_foreign_script", "vocalization_normalized"):
+                                language_stats[name] += accepted_stats[name]
                     raw_local = list(local)
                     raw_word_local = normalize_word_timestamps(response.get("words"), duration)
                     if response.get("language"):
@@ -346,9 +531,9 @@ class GeminiTranscriber:
                     # The completed cache remains raw provider-neutral evidence.
                     # Segmentation is deliberately recomputed so algorithm changes
                     # never require another paid STT request.
-                    local = TranscriptSegmentationNormalizer().normalize(
-                        local, response.get("words"), response.get("language", "zh"), source="stt")
-                    offset = chunk_index * CHUNK_SECONDS
+                    local = TranscriptSegmentationNormalizer().normalize_region(
+                        local, response.get("words"), response.get("language", "zh"), source="vad")
+                    offset = region.start
                     raw_segments.extend(replace(s, id=len(raw_segments) + i,
                                                 start=s.start + offset, end=s.end + offset)
                                         for i, s in enumerate(raw_local, 1))
@@ -369,27 +554,15 @@ class GeminiTranscriber:
                     )
                     result.extend(replace(s, id=base_id + i, start=s.start + offset, end=s.end + offset)
                                   for i, s in enumerate(local, 1))
-                    for segment in local:
-                        if (segment.speaker_id == "SPK_UNKNOWN" or segment.speaker_id in references
-                                or segment.overlap or len(references) >= 8):
-                            continue
-                        sample = raw[int(segment.start * 16000) * 2:
-                                     int(min(segment.end, segment.start + 3) * 16000) * 2]
-                        if len(sample) < 16000:
-                            continue
-                        voice = io.BytesIO()
-                        with wave.open(voice, "wb") as output:
-                            output.setnchannels(1); output.setsampwidth(2); output.setframerate(16000)
-                            output.writeframes(sample)
-                        references[segment.speaker_id] = voice.getvalue()
             check_cancel(cancel)
-            detect_overlaps(result)
+            _detect_timing_overlaps(result)
             self.last_raw_result = {
                 "segments": raw_segments,
                 "words": raw_words,
                 "language": languages[0] if languages else "zh",
                 "transcription_capabilities": sorted(capabilities),
             }
+            self.language_stats = language_stats
             return result
         finally:
             if client is not None:

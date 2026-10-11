@@ -1,0 +1,7 @@
+{
+  "default_ai_model": "google/gemini-2.5-flash",
+  "transcription_model": "google/gemini-3.5-transcribe",
+  "translation_provider": "openrouter",
+  "transcription_provider": "openrouter",
+  "api_key_file": "api_key.txt"
+}

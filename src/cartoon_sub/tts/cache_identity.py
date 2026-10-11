@@ -26,23 +26,6 @@ def normalize_local_tts_base_url(base_url: str) -> str:
     return urlunsplit((scheme, authority, path, "", ""))
 
 
-def build_tts_fingerprint(utterance, speaker, server_base_url: str) -> str:
-    """Legacy v2 fingerprint retained for safe migration of existing segment WAVs."""
-    value = {
-        "version": 2,
-        "server": normalize_local_tts_base_url(server_base_url),
-        "utterance_id": utterance.id,
-        "speaker_id": utterance.speaker_id,
-        "text": utterance.vi_dubbing,
-        "voice_id": speaker.tts_voice_id,
-        "speed": float(speaker.tts_speed),
-    }
-    encoded = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def build_tts_segment_id(utterance, fingerprint: str) -> str:
     return f"utt_{utterance.id:06d}_{fingerprint[:12]}"
 
@@ -70,12 +53,12 @@ def resolve_tts_text(utterance, source: str) -> str:
     raise ValueError("Nguồn TTS không hợp lệ")
 
 
-def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metadata=None,
+def compute_tts_signature(utterance, voice_id: str, speed: float, server_base_url: str, voice_metadata=None,
                           source: str = TTS_SOURCE_DUBBING) -> str:
     """Hash only inputs that can change the raw waveform; timing/row number are excluded."""
     metadata = voice_metadata if isinstance(voice_metadata, dict) else {}
     voice_identity = {field: metadata.get(field) for field in _VOICE_IDENTITY_FIELDS}
-    voice_identity["voice_id"] = speaker.tts_voice_id
+    voice_identity["voice_id"] = voice_id
     value = {
         "version": 1,
         "server": normalize_local_tts_base_url(server_base_url),
@@ -83,7 +66,7 @@ def compute_tts_signature(utterance, speaker, server_base_url: str, voice_metada
         "source": source,
         "text": resolve_tts_text(utterance, source),
         "voice": voice_identity,
-        "speed": float(speaker.tts_speed),
+        "speed": float(speed),
     }
     encoded = json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")

@@ -19,21 +19,27 @@ RANKINGS_URL = "https://openrouter.ai/rankings#top-models"
 PROVIDERS_URL = "https://openrouter.ai/providers"
 
 
-class OpenRouterKeysDialog(QDialog):
+class ProviderKeysDialog(QDialog):
     """Explicit editor: environment keys are never populated here automatically."""
-    def __init__(self, keys, parent=None):
+    def __init__(self, provider, keys, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit OpenRouter API Keys"); self.resize(620, 300)
+        self.provider = provider
+        self.setWindowTitle(f"Edit {provider} API Keys"); self.resize(620, 300)
         layout = QVBoxLayout(self)
         note = QLabel("One API key per line. Order is preserved and duplicates are removed on Save.")
         note.setWordWrap(True); layout.addWidget(note)
-        self.editor = QPlainTextEdit(); self.editor.setPlaceholderText("sk-or-v1-…\nsk-or-v1-…")
+        self.editor = QPlainTextEdit(); self.editor.setPlaceholderText("One key per line")
         self.editor.setPlainText("\n".join(keys)); layout.addWidget(self.editor, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
 
     def keys(self):
         return parse_openrouter_api_keys(self.editor.toPlainText())
+
+
+class OpenRouterKeysDialog(ProviderKeysDialog):
+    def __init__(self, keys, parent=None):
+        super().__init__("OpenRouter", keys, parent)
 
 
 def _format_context(value):
@@ -54,7 +60,7 @@ def _token_price(value):
 
 
 class ModelSelector(QWidget):
-    """Reusable searchable OpenRouter selector with capability-aware metadata."""
+    """Reusable searchable provider-aware selector with capability metadata."""
     selectionChanged = Signal()
 
     def __init__(self, title, capability, placeholder, *, rankings=False,
@@ -83,7 +89,7 @@ class ModelSelector(QWidget):
         links = f'<a href="{MODELS_URL}">View on OpenRouter ↗</a>'
         if rankings:
             links += f' &nbsp; <a href="{RANKINGS_URL}">View Rankings ↗</a>'
-        link = QLabel(links); link.setOpenExternalLinks(True); form.addRow("", link)
+        self.links = QLabel(links); self.links.setOpenExternalLinks(True); form.addRow("", self.links)
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.addWidget(group)
 
         self.search.textChanged.connect(self.rebuild)
@@ -92,8 +98,18 @@ class ModelSelector(QWidget):
     def set_catalog(self, catalog, preferred=None):
         self.catalog = list(catalog)
         if preferred is not None:
-            self._selected_id = preferred
+            selection = self._selection_from_value(preferred)
+            self._selected_id = selection.model_id
+            self._selected_provider = selection.provider
         self.rebuild()
+
+    def _selection_from_value(self, value):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        if isinstance(value, AIModelSelection):
+            return value
+        if isinstance(value, dict):
+            return AIModelSelection.from_value(value)
+        return AIModelSelection("openrouter", str(value or ""))
 
     def set_author(self, author):
         self.author = author or "all"
@@ -108,9 +124,18 @@ class ModelSelector(QWidget):
             return ""
         return self.model.currentData() or self._selected_id
 
+    def selected_selection(self):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        raw = self.model.currentData(Qt.ItemDataRole.UserRole + 1)
+        if isinstance(raw, dict):
+            return AIModelSelection.from_value(raw)
+        return AIModelSelection(getattr(self, "_selected_provider", "openrouter"), self.selected_id())
+
     def selected_model(self):
-        selected = self.selected_id()
-        return next((item for item in self.catalog if item["id"] == selected), None)
+        selected = self.selected_selection()
+        return next((item for item in self.catalog
+                     if item["id"] == selected.model_id
+                     and str(item.get("provider") or "openrouter") == selected.provider), None)
 
     def selection_is_compatible(self):
         model = self.selected_model()
@@ -118,7 +143,8 @@ class ModelSelector(QWidget):
                                or supports_capability(model, self.capability)))
 
     def rebuild(self, *_args):
-        preferred = self.model.currentData() or self._selected_id
+        preferred = self.selected_selection() if self.model.currentData() else self._selection_from_value(
+            {"provider": getattr(self, "_selected_provider", "openrouter"), "model_id": self._selected_id})
         options = filter_models(self.catalog, capability=self.capability, author=self.author,
                                 search=self.search.text())
         self.model.blockSignals(True); self.model.clear()
@@ -126,12 +152,17 @@ class ModelSelector(QWidget):
             self.model.addItem(self.empty_choice, "")
         for item in options:
             self.model.addItem(f"{item['name']} — {item['id']}", item["id"])
-        index = self.model.findData(preferred)
-        if index < 0 and preferred:
-            existing = next((item for item in self.catalog if item["id"] == preferred), None)
+            self.model.setItemData(self.model.count() - 1, {
+                "provider": str(item.get("provider") or "openrouter"), "model_id": item["id"]},
+                Qt.ItemDataRole.UserRole + 1)
+        index = next((i for i in range(self.model.count())
+                      if self.model.itemData(i, Qt.ItemDataRole.UserRole + 1) == preferred.to_dict()), -1)
+        if index < 0 and preferred.model_id:
+            existing = next((item for item in self.catalog if item["id"] == preferred.model_id
+                             and str(item.get("provider") or "openrouter") == preferred.provider), None)
             if self.capability == "transcription_catalog" and existing is None:
                 self._selected_id = ""
-                preferred = ""
+                preferred = self._selection_from_value("")
             elif existing and not (self.capability == "transcription_catalog"
                                  or supports_capability(existing, self.capability)):
                 prefix = "[Incompatible]"
@@ -139,8 +170,9 @@ class ModelSelector(QWidget):
                 prefix = "[Hidden by filter]"
             else:
                 prefix = "[Unavailable]"
-            if preferred:
-                self.model.insertItem(0, f"{prefix} {preferred}", preferred); index = 0
+            if preferred.model_id:
+                self.model.insertItem(0, f"{prefix} {preferred.model_id}", preferred.model_id)
+                self.model.setItemData(0, preferred.to_dict(), Qt.ItemDataRole.UserRole + 1); index = 0
         if self.model.count():
             self.model.setCurrentIndex(index if index >= 0 else 0)
         else:
@@ -157,6 +189,7 @@ class ModelSelector(QWidget):
         value = self.model.currentData()
         if value:
             self._selected_id = value
+            self._selected_provider = self.selected_selection().provider
         elif self.allow_empty and value == "":
             self._selected_id = ""
         model = self.selected_model()
@@ -174,6 +207,7 @@ class ModelSelector(QWidget):
             self.metadata.setText(self._metadata_html(model))
         else:
             self.warning.clear(); self.metadata.setText(self._metadata_html(model))
+        self.links.setText(f'<a href="{MODELS_URL}">View on OpenRouter ↗</a>')
         self.selectionChanged.emit()
 
     @staticmethod
@@ -223,7 +257,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(body); outer.addWidget(scroll, 1)
 
         intro = QLabel(
-            f'AI models are provided through OpenRouter. &nbsp; '
+            f'OpenRouter is used by all production AI features. &nbsp; '
             f'<a href="{MODELS_URL}">OpenRouter Models</a> &nbsp; '
             f'<a href="{RANKINGS_URL}">OpenRouter Rankings</a> &nbsp; '
             f'<a href="{PROVIDERS_URL}">OpenRouter Providers</a>')
@@ -303,7 +337,6 @@ class SettingsDialog(QDialog):
         self.catalog_timer.timeout.connect(self._poll_catalog_sync)
         if self.controller.settings_store.catalog_sync_snapshot()["state"] == "syncing":
             self.catalog_timer.start()
-
     def _update_keys_summary(self):
         if self.keys_edited or self.pending_keys:
             source = "api_key.txt" if self.key_source == "file" else self.key_source
@@ -312,12 +345,20 @@ class SettingsDialog(QDialog):
             self.keys_summary.setText("No keys stored in Settings. Using OPENROUTER_API_KEY.")
         else:
             self.keys_summary.setText("No OpenRouter API keys configured.")
-
     def edit_keys(self):
         dialog = OpenRouterKeysDialog(self.pending_keys, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.pending_keys = dialog.keys(); self.keys_edited = True
-            self._update_keys_summary(); self.connection_status.clear()
+            try:
+                # This nested dialog owns a visible Save button. Persist at this
+                # boundary, rather than requiring a second Save on its parent.
+                self.pending_keys = self.controller.settings_store.save_openrouter_keys(dialog.keys())
+                self.keys_edited = False
+                self.key_source = self.controller.settings_store.openrouter_key_source()
+                self._update_keys_summary()
+                self.connection_status.setText(
+                    "✓ OpenRouter API keys saved to canonical api_key.txt and activated.")
+            except Exception as exc:
+                QMessageBox.critical(self, "OpenRouter API Keys", str(exc))
 
     def _toggle_advanced(self, expanded):
         self.advanced.setVisible(expanded)
@@ -330,19 +371,19 @@ class SettingsDialog(QDialog):
         self.general_models = list(general["models"])
         self.transcription_models = list(transcription["models"])
         self._populate_authors(preferred=self.saved_settings.provider_filter if initial else self.author.currentData())
+        saved_stt_selection = self.saved_settings.default_selection("stt")
         transcription_ids = {model["id"] for model in self.transcription_models}
-        transcription_preferred = self.saved_settings.transcription_model if initial else None
-        if transcription_preferred not in transcription_ids:
+        transcription_preferred = saved_stt_selection if initial else None
+        if (saved_stt_selection.provider == "openrouter"
+                and saved_stt_selection.model_id not in transcription_ids):
             # Legacy Gemini/OpenAI compatibility IDs do not belong in the
             # dedicated OpenRouter transcription selector. Let the selector
             # choose the first live catalog entry instead of showing stale UI.
             transcription_preferred = None
             if initial:
                 self.transcription_selector._selected_id = ""
-        self.transcription_selector.set_catalog(self.transcription_models,
-                                                transcription_preferred)
-        self.default_selector.set_catalog(self.general_models,
-            self.saved_settings.default_ai_model if initial else None)
+        self._refresh_model_selectors(initial=initial,
+            transcription_preferred=transcription_preferred)
         self._show_catalog_status(snapshot, general, transcription)
 
     def _show_catalog_status(self, snapshot, general, transcription):
@@ -366,6 +407,25 @@ class SettingsDialog(QDialog):
         state = self.controller.settings_store.catalog_sync_snapshot()["state"]
         if state != "syncing":
             self.catalog_timer.stop(); self._reload_catalogs()
+
+    def _openrouter_usable(self):
+        keys = self.pending_keys if self.keys_edited else self.controller.settings_store.get_openrouter_keys()
+        return bool(keys) and (not self.key_test_results or any(item.get("status") == "VALID" for item in self.key_test_results))
+
+    def _refresh_model_selectors(self, *, initial=False, transcription_preferred=None):
+        if not hasattr(self, "general_models"):
+            return
+        from cartoon_sub.ui.model_display import production_models
+        usable = self._openrouter_usable()
+        text_models = production_models(self.general_models, openrouter_usable=usable, capability="text")
+        stt_models = production_models(self.transcription_models, openrouter_usable=usable, capability="transcription")
+        default_preferred = self.saved_settings.default_selection()
+        stt_preferred = self.saved_settings.default_selection("stt")
+        if not usable:
+            default_preferred = None
+            stt_preferred = None
+        self.default_selector.set_catalog(text_models, default_preferred if initial else None)
+        self.transcription_selector.set_catalog(stt_models, stt_preferred if initial else transcription_preferred)
 
     def _populate_authors(self, *_args, preferred=None):
         current = preferred or self.author.currentData() or "all"
@@ -422,6 +482,7 @@ class SettingsDialog(QDialog):
         valid = sum(item["status"] == "VALID" for item in results)
         lines.append(f"\nSummary: {valid} / {len(results)} keys valid")
         self.connection_status.setText("\n".join(lines))
+        self._refresh_model_selectors()
 
     def _worker_finished(self):
         self.worker.deleteLater(); self.worker = None
@@ -430,33 +491,32 @@ class SettingsDialog(QDialog):
         self._reload_catalogs()
 
     def values(self):
-        transcription = self.transcription_selector.selected_id()
+        transcription_selection = self.transcription_selector.selected_selection()
+        transcription = transcription_selection.model_id
         if not transcription:
             raise ValueError("Speech-to-Text: select a model.")
-        # Transcription selections are OpenRouter model IDs from the dedicated catalog.
-        if "/" not in transcription:
-            raise ValueError("Speech-to-Text: legacy selection requires an OpenRouter model selection.")
-        default_model = self.default_selector.selected_id()
+        default_selection = self.default_selector.selected_selection()
+        default_model = default_selection.model_id
         if not default_model or not self.default_selector.selection_is_compatible():
             raise ValueError("Model AI mặc định là bắt buộc. Hãy chọn một model text → text hợp lệ.")
         return AISettings(
             default_ai_model=default_model,
+            default_ai_selection=default_selection.to_dict(),
             tab_model_overrides=dict(self.saved_settings.tab_model_overrides or {}),
             ai_model_routing_version=1,
             transcription_model=transcription,
-            transcription_provider="openrouter",
+            default_stt_selection=transcription_selection.to_dict(),
+            transcription_provider=transcription_selection.provider,
             translation_model=self.saved_settings.translation_model,
-            translation_provider="openrouter",
+            translation_provider=default_selection.provider,
             vision_speaker_model=self.saved_settings.vision_speaker_model,
             vision_input_mode="frames" if self.frames_mode.isChecked() else "video",
             review_model_mode=self.saved_settings.review_model_mode,
             review_model=self.saved_settings.review_model,
+            review_provider=self.saved_settings.review_provider,
             translation_chunk_size=self.chunk.value(), retry_count=self.retry.value(),
             provider_filter=self.author.currentData() or "all",
-            gemini_api_keys_file=self.saved_settings.gemini_api_keys_file,
             api_key_file=self.saved_settings.api_key_file,
-            legacy_gemini_video_model=self.saved_settings.legacy_gemini_video_model,
-            legacy_gemini_audio_model=self.saved_settings.legacy_gemini_audio_model,
             ui_zoom_percent=self.saved_settings.ui_zoom_percent,
         ).validate()
 
@@ -476,7 +536,8 @@ class SettingsDialog(QDialog):
 
     def reject(self):
         if self.worker is not None:
-            self.worker.cancel(); self.connection_status.setText("Waiting for current request to stop…")
+            self.worker.cancel()
+            self.connection_status.setText("Waiting for current request to stop…")
         else:
             super().reject()
 

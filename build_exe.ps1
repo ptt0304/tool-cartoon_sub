@@ -12,7 +12,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 
 Push-Location $root
 try {
-    & $python -c "import PyInstaller, PySide6, pysubs2, dotenv, keyring, google.genai, httpx, cartoon_sub"
+    & $python -c "import PyInstaller, PySide6, pysubs2, dotenv, keyring, httpx, cartoon_sub"
     if ($LASTEXITCODE -ne 0) {
         & $python -m pip install --disable-pip-version-check "PyInstaller==6.21.0" .
         if ($LASTEXITCODE -ne 0) {

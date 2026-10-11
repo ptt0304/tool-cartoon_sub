@@ -205,7 +205,7 @@ class ChineseSemanticBoundaryResolverTests(unittest.TestCase):
         self.assertNotEqual(transcript_timeline_signature(children), transcript_timeline_signature(changed))
         self.assertEqual(project.speaker_review_hash, "approved")
         invalidate_transcript_dependents(project)
-        self.assertEqual(project.speaker_review_hash, "")
+        self.assertEqual(project.speaker_review_hash, "approved")
 
 
 if __name__ == "__main__":

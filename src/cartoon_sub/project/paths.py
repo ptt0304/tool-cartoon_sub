@@ -25,6 +25,8 @@ class ProjectPaths:
     @property
     def transcript_cache_dir(self): return self.root / "cache" / "transcription"
     @property
+    def transcript_video_cache_dir(self): return self.root / "cache" / "transcript" / "video"
+    @property
     def translate_dir(self): return self.root / "translation"
     @property
     def translate_cache_dir(self): return self.root / "cache" / "translation"

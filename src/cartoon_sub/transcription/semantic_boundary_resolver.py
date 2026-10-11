@@ -5,11 +5,10 @@ import logging
 from pathlib import Path
 from threading import Event
 
-from cartoon_sub.ai.gemini_client import GeminiError
+from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
 from cartoon_sub.ai.openrouter_client import OpenRouterClient
 from cartoon_sub.media.process import CancelledError
 from cartoon_sub.project.cache import atomic_json, check_cancel, content_hash
-from cartoon_sub.transcription.contracts import normalize_speaker_hint
 from cartoon_sub.transcription.segmentation_normalizer import TranscriptSegmentationNormalizer
 
 
@@ -21,7 +20,7 @@ Return JSON only. Never rewrite, correct, punctuate, translate, or repeat source
 Operate only on the supplied target IDs and source character indices.
 KEEP/REMOVE applies to existing candidate boundaries; ADD applies to a missing boundary.
 Prefer natural sentence, clause, vocative, question/answer, and likely dialogue-turn boundaries.
-Be conservative: do not create tiny fragments and do not identify speakers."""
+Be conservative: do not create tiny fragments."""
 SCHEMA = {
     "type": "object",
     "properties": {"targets": {"type": "array", "items": {
@@ -59,6 +58,7 @@ class SemanticBoundaryStats:
     removed: int = 0
     changed: bool = False
     model: str = ""
+    target_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,8 +117,6 @@ class ChineseSemanticBoundaryResolver:
         if source == "srt" and len(children) <= 1:
             return False
         if words:
-            return False
-        if normalize_speaker_hint(parent.speaker_id) != "SPK_UNKNOWN":
             return False
         strong = sum(parent.zh.count(mark) for mark in "。！？?!") + parent.zh.count("…")
         if strong >= max(1, len(children) - 1):
@@ -242,6 +240,7 @@ class ChineseSemanticBoundaryResolver:
         targets = self._targets(raw_segments, deterministic, words, source)
         if not targets:
             return SemanticBoundaryResult(deterministic, SemanticBoundaryStats())
+        target_ids = tuple(target["target_id"] for target in targets)
         settings = self.store.load()
         from cartoon_sub.ai.model_resolver import AIModelResolver
         model = AIModelResolver(self.store).resolve(
@@ -266,7 +265,7 @@ class ChineseSemanticBoundaryResolver:
                     output, added, removed = self._apply(raw_segments, deterministic, targets, decisions)
                     report("Semantic boundaries: dùng cache")
                     return SemanticBoundaryResult(output, SemanticBoundaryStats(
-                        len(targets), 0, 1, added, removed, output != deterministic, model))
+                        len(targets), 0, 1, added, removed, output != deterministic, model, target_ids))
             except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError):
                 pass
         client = None
@@ -291,7 +290,7 @@ class ChineseSemanticBoundaryResolver:
                     output, added, removed = self._apply(raw_segments, deterministic, targets, decisions)
                     atomic_json(path, {"status": "completed", "response": payload})
                     return SemanticBoundaryResult(output, SemanticBoundaryStats(
-                        len(targets), requests, 0, added, removed, output != deterministic, model))
+                        len(targets), requests, 0, added, removed, output != deterministic, model, target_ids))
                 except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, GeminiError) as exc:
                     retryable = not isinstance(exc, GeminiError) or bool(getattr(exc, "retryable", False))
                     atomic_json(path, {"status": "failed", "attempt": attempt + 1,
@@ -303,7 +302,7 @@ class ChineseSemanticBoundaryResolver:
                         log.warning("Semantic boundary fallback to deterministic output: %s", type(exc).__name__)
                         break
             return SemanticBoundaryResult(deterministic, SemanticBoundaryStats(
-                len(targets), requests, 0, model=model))
+                len(targets), requests, 0, model=model, target_ids=target_ids))
         except CancelledError:
             raise
         finally:

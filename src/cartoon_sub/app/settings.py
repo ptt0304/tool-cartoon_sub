@@ -1,7 +1,9 @@
 """Global AI preferences. Secrets are only stored in the OS credential vault."""
 import json
+import logging
 import os
 import re
+import sys
 import tempfile
 from threading import Lock
 from dataclasses import dataclass, asdict, fields
@@ -12,9 +14,19 @@ from cartoon_sub.project.cache import atomic_json
 from cartoon_sub.tts.cache_identity import normalize_local_tts_base_url
 
 
-APP_ROOT = Path(__file__).resolve().parents[3]
+def application_root():
+    """Return the writable application directory for source and one-folder builds."""
+    if getattr(sys, "frozen", False):
+        executable_root = Path(sys.executable).resolve().parent
+        if (executable_root / "_internal").is_dir():
+            return executable_root
+    return Path(__file__).resolve().parents[3]
+
+
+APP_ROOT = application_root()
 DEFAULT_API_KEY_PATH = APP_ROOT / "api_key.txt"
 OPENROUTER_KEY_NAME = "openrouter_key"
+log = logging.getLogger(__name__)
 
 
 def parse_openrouter_key_file(path):
@@ -116,50 +128,64 @@ class LocalTTSSettings:
 
 @dataclass
 class AISettings:
-    default_ai_model: str = ""
+    default_ai_selection: dict = None
+    default_stt_selection: dict = None
+    openrouter_enabled: bool = True
+    default_ai_model: str = "google/gemini-2.5-flash"
     tab_model_overrides: dict = None
     ai_model_routing_version: int = 1
-    transcription_model: str = "gemini-3.8-flash"
+    transcription_model: str = "google/gemini-3.5-transcribe"
+    transcription_timing_retry_model: str = "assemblyai/universal-3-5-pro"
     translation_model: str = ""
     vision_speaker_model: str = ""
     vision_input_mode: str = "frames"
     review_model_mode: str = "translation"
     review_model: str = ""
+    review_provider: str = "openrouter"
     translation_chunk_size: int = 40
     retry_count: int = 2
     translation_provider: str = "openrouter"
-    gemini_api_keys_file: str = ""
     api_key_file: str = ""
     provider_filter: str = "all"
-    transcription_provider: str = "gemini"
-    legacy_gemini_video_model: str = "gemini-3.8-flash"
-    legacy_gemini_audio_model: str = "gemini-3.8-flash"
+    transcription_provider: str = "openrouter"
     ui_zoom_percent: int = 100
 
     def validate(self):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        if type(self.openrouter_enabled) is not bool:
+            raise ValueError("Trạng thái AI provider không hợp lệ")
         if self.tab_model_overrides is None:
             self.tab_model_overrides = {}
         if not isinstance(self.tab_model_overrides, dict):
             raise ValueError("Cấu hình model AI theo tab không hợp lệ")
-        allowed_tabs = {"transcript", "transcript_stt", "translate", "subtitle", "audio"}
+        allowed_tabs = {"transcript", "transcript_stt", "transcript_video", "translate", "subtitle", "audio", "master_dialogue"}
         cleaned = {}
         for tab, model in self.tab_model_overrides.items():
-            if tab not in allowed_tabs or not isinstance(model, str) or any(c.isspace() for c in model):
+            if tab not in allowed_tabs:
                 raise ValueError("Cấu hình model AI theo tab không hợp lệ")
-            if model.strip():
-                cleaned[tab] = model.strip()
+            selection = AIModelSelection.from_value(model, self.transcription_provider if tab == "transcript_stt" else self.translation_provider)
+            if selection.model_id:
+                cleaned[tab] = selection.to_dict()
         self.tab_model_overrides = cleaned
+        self.default_ai_selection = AIModelSelection.from_value(self.default_ai_selection or self.default_ai_model, self.translation_provider).to_dict()
+        self.default_stt_selection = AIModelSelection.from_value(self.default_stt_selection or self.transcription_model, self.transcription_provider).to_dict()
+        self.default_ai_model = self.default_ai_selection["model_id"]
+        self.transcription_model = self.default_stt_selection["model_id"]
+        self.translation_provider = self.transcription_provider = self.review_provider = "openrouter"
+        if self.translation_model:
+            self.translation_model = AIModelSelection.from_value(self.translation_model).model_id
+        if self.review_model:
+            self.review_model = AIModelSelection.from_value(self.review_model).model_id
         if not isinstance(self.default_ai_model, str) or any(c.isspace() for c in self.default_ai_model):
             raise ValueError("Model AI mặc định không hợp lệ")
         self.default_ai_model = self.default_ai_model.strip()
         for label, model in (("transcription", self.transcription_model),
+                             ("timing retry", self.transcription_timing_retry_model),
                              ("dịch", self.translation_model),
                              ("vision", self.vision_speaker_model),
                              ("QA", self.review_model)):
             if not isinstance(model, str) or any(c.isspace() for c in model):
                 raise ValueError(f"Model {label} không hợp lệ")
-        if self.translation_provider != "openrouter" and not self.translation_model:
-            raise ValueError("Model dịch không được rỗng")
         if self.vision_input_mode not in {"frames", "video"}:
             raise ValueError("Visual Input không hợp lệ")
         if self.review_model_mode not in {"translation", "separate"}:
@@ -172,51 +198,56 @@ class AISettings:
             raise ValueError("Retry count phải từ 0 đến 5")
         if type(self.ui_zoom_percent) is not int or not 0 <= self.ui_zoom_percent <= 100:
             raise ValueError("Thu phóng giao diện phải từ 0 đến 100%")
-        from cartoon_sub.ai.text_client import PROVIDER_CATALOG
-        if self.translation_provider not in PROVIDER_CATALOG:
-            raise ValueError("Provider dịch không hợp lệ")
-        if self.transcription_provider not in PROVIDER_CATALOG:
-            raise ValueError("Provider transcription không hợp lệ")
         if (not isinstance(self.provider_filter, str) or not self.provider_filter
                 or any(c.isspace() for c in self.provider_filter)):
             raise ValueError("Bộ lọc provider không hợp lệ")
-        if not isinstance(self.gemini_api_keys_file, str):
-            raise ValueError("Đường dẫn file Gemini API keys không hợp lệ")
         if not isinstance(self.api_key_file, str):
             raise ValueError("Đường dẫn file API keys không hợp lệ")
-        self.gemini_api_keys_file = self.gemini_api_keys_file.strip()
         self.api_key_file = self.api_key_file.strip()
         return self
 
     def resolved_review_model(self):
         return self.translation_model if self.review_model_mode == "translation" else self.review_model
 
+    def default_selection(self, kind="ai"):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        raw = self.default_stt_selection if kind == "stt" else self.default_ai_selection
+        legacy = self.transcription_model if kind == "stt" else self.default_ai_model
+        provider = self.transcription_provider if kind == "stt" else self.translation_provider
+        selection = AIModelSelection.from_value(raw or legacy, provider)
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("AISettings.default_selection", kind=kind, raw=raw or legacy,
+                 raw_type=type(raw or legacy).__name__, provider=selection.provider,
+                 model_id=selection.model_id, selection_type=type(selection).__name__)
+        return selection
 
-def load_api_keys(path):
-    from cartoon_sub.ai.text_client import PROVIDER_CATALOG
-    path = Path(path)
-    if not path.is_file():
-        raise ValueError("Không tìm thấy file API key.")
-    try:
-        lines = path.read_text(encoding="utf-8-sig").splitlines()
-    except (OSError, UnicodeError):
-        raise ValueError("Không đọc được file API key.") from None
-    by_name = {item["key_name"]: provider for provider, item in PROVIDER_CATALOG.items()}
-    result = {}
-    disabled = {"", "null", "none", '""', "''"}
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        name, value = (part.strip() for part in line.split(":", 1))
-        provider = by_name.get(name.casefold())
-        if provider:
-            result[provider] = None if value.casefold() in disabled else value
-    return result
+    def tab_selection(self, tab):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        raw = (self.tab_model_overrides or {}).get(tab)
+        if raw:
+            selection = AIModelSelection.from_value(
+                raw, self.transcription_provider if tab == "transcript_stt" else self.translation_provider)
+        elif tab == "transcript_video":
+            # Video OCR has its own stable default; it must not inherit Audio STT.
+            selection = AIModelSelection("openrouter", "google/gemini-2.5-flash")
+        else:
+            selection = self.default_selection("stt" if tab == "transcript_stt" else "ai")
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("AISettings.tab_selection", tab=tab, raw_override=raw,
+                 raw_override_type=type(raw).__name__, provider=selection.provider,
+                 model_id=selection.model_id, selection_type=type(selection).__name__)
+        return selection
+
+    def is_ai_provider_enabled(self, provider):
+        return provider == "openrouter" and self.openrouter_enabled
+
+    def require_ai_provider_enabled(self, provider):
+        if self.is_ai_provider_enabled(provider):
+            return
+        raise ValueError("OpenRouter is disabled in Settings > AI.")
 
 
 class SettingsStore:
-    service = "CartoonSub.Gemini"
     openrouter_service = "CartoonSub.OpenRouter"
     legacy_openrouter_service = "CartoonSub.openrouter"
     account = "api-key"
@@ -244,22 +275,13 @@ class SettingsStore:
             return AISettings()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if "gemini_keys_file" in data and "gemini_api_keys_file" not in data:
-                data["gemini_api_keys_file"] = data["gemini_keys_file"]
-            if "legacy_gemini_video_model" not in data and data.get("transcription_provider") == "gemini":
-                data["legacy_gemini_video_model"] = data.get("transcription_model", "gemini-3.8-flash")
-            if "legacy_gemini_audio_model" not in data and data.get("transcription_provider") == "gemini":
-                data["legacy_gemini_audio_model"] = data.get("transcription_model", "gemini-3.8-flash")
+            # Legacy provider/model values are normalized by AISettings.validate().
+            # Provider identity was absent for the review path before Phase 2.
+            data.setdefault("review_provider", "openrouter")
             allowed = {item.name for item in fields(AISettings)}
             explicit_new_default = "default_ai_model" in data
             settings = AISettings(**{key: value for key, value in data.items() if key in allowed}).validate()
             cached = self.openrouter_catalog_cache()
-            if settings.translation_provider != "openrouter" and cached:
-                migrated = self._legacy_openrouter_model(
-                    settings.translation_provider, settings.translation_model, cached["models"])
-                if migrated:
-                    settings.translation_provider = "openrouter"
-                    settings.translation_model = migrated
             if not explicit_new_default and not settings.default_ai_model:
                 available = {item.get("id") for item in (cached or {}).get("models", [])}
                 migrated = next((candidate for candidate in (
@@ -282,66 +304,60 @@ class SettingsStore:
             candidates.append(f"{prefixes[provider]}/{model}")
         return next((candidate for candidate in candidates if candidate in available), None)
 
-    def save(self, settings, new_key="", translation_key="", openrouter_key="",
-             openrouter_keys=None):
+    def save(self, settings, new_key="", translation_key="", openrouter_key="", openrouter_keys=None):
         settings.validate()
         if new_key.strip():
             try:
                 self.vault.set_password(self.service, self.account, new_key.strip())
             except Exception:
-                raise RuntimeError("Không lưu được key vào OS keyring. Có thể cấu hình GEMINI_API_KEY trong .env cho môi trường dev.") from None
-        if translation_key.strip() and settings.translation_provider != "gemini":
-            try:
-                self.vault.set_password(f"CartoonSub.{settings.translation_provider}", self.account, translation_key.strip())
-            except Exception:
-                raise RuntimeError("Không lưu được translation API key vào OS keyring.") from None
+                raise RuntimeError("Không lưu được key vào OS keyring.") from None
         if openrouter_keys is not None or openrouter_key.strip():
             from cartoon_sub.ai.openrouter_client import parse_openrouter_api_keys
             keys = (parse_openrouter_api_keys("\n".join(openrouter_keys))
                     if openrouter_keys is not None else parse_openrouter_api_keys(openrouter_key))
-            try:
-                keys = save_openrouter_key_file(self.api_key_path, keys)
-                from cartoon_sub.ai.openrouter_client import OpenRouterKeyPool
-                with self._openrouter_pool_lock:
-                    self._openrouter_pool = OpenRouterKeyPool(keys)
-            except Exception:
-                raise RuntimeError("Không lưu được OpenRouter API keys vào api_key.txt.") from None
+            self.save_openrouter_keys(keys)
         atomic_json(self.folder / "settings.json", asdict(settings))
+
+    def save_openrouter_keys(self, keys):
+        """Persist explicitly edited OpenRouter keys and activate them immediately."""
+        from cartoon_sub.ai.openrouter_client import OpenRouterKeyPool, mask_api_key
+        try:
+            keys = save_openrouter_key_file(self.api_key_path, keys)
+            with self._openrouter_pool_lock:
+                self._openrouter_pool = OpenRouterKeyPool(keys)
+        except Exception:
+            raise RuntimeError("Không lưu được OpenRouter API keys vào api_key.txt.") from None
+        masked = mask_api_key(keys[0]) if keys else "<empty>"
+        log.info("[OPENROUTER_KEY_SAVE] path=%s key_count=%d first=%s",
+                 self.api_key_path.resolve(), len(keys), masked)
+        return keys
 
     def save_ui_zoom(self, percent):
         settings = self.load()
         settings.ui_zoom_percent = int(percent)
         atomic_json(self.folder / "settings.json", asdict(settings.validate()))
 
-    def set_tab_model_override(self, tab, model_id):
+    def set_tab_model_override(self, tab, model_id, provider=None):
+        from cartoon_sub.ai.model_selection import AIModelSelection
+        from cartoon_sub.ai.runtime_debug import ai_debug
         settings = self.load()
         overrides = dict(settings.tab_model_overrides or {})
-        if str(model_id or "").strip():
-            overrides[tab] = str(model_id).strip()
+        selection = AIModelSelection.from_value(model_id, provider or (
+            settings.transcription_provider if tab == "transcript_stt" else settings.translation_provider))
+        if selection.model_id:
+            overrides[tab] = selection.to_dict()
         else:
             overrides.pop(tab, None)
         settings.tab_model_overrides = overrides
+        ai_debug("SettingsStore.set_tab_model_override", tab=tab, raw=model_id,
+                 raw_type=type(model_id).__name__, provider=selection.provider,
+                 model_id=selection.model_id, selection_type=type(selection).__name__)
         atomic_json(self.folder / "settings.json", asdict(settings.validate()))
 
-    def get_key(self, provider="gemini"):
-        if provider == "openrouter":
-            return self.openrouter_key_pool().current_key()
-        settings = self.load()
-        if settings.api_key_file and provider != "openrouter":
-            return self.get_api_key(provider, settings)
-        try:
-            service = (self.service if provider == "gemini" else
-                       self.openrouter_service if provider == "openrouter" else f"CartoonSub.{provider}")
-            key = self.vault.get_password(service, self.account)
-        except Exception:
-            key = None
-        env_name = f"{provider.upper()}_API_KEY" if provider != "gemini" else "GEMINI_API_KEY"
-        key = key or os.environ.get(env_name) or dotenv_values(self.env_path).get(env_name)
-        if (not key or not key.strip()) and settings.api_key_file:
-            key = load_api_keys(settings.api_key_file).get(provider)
-        if not key or not key.strip():
-            raise ValueError(f"Chưa có {provider} API key trong File API keys.")
-        return key.strip()
+    def get_key(self, provider="openrouter"):
+        if provider != "openrouter":
+            raise ValueError("Only OpenRouter credentials are supported.")
+        return self.openrouter_key_pool().current_key()
 
     @staticmethod
     def _decode_openrouter_credentials(stored):
@@ -435,39 +451,6 @@ class SettingsStore:
     def openrouter_key_pool(self):
         with self._openrouter_pool_lock:
             return self._openrouter_pool
-
-    def get_api_key(self, provider, settings=None):
-        settings = settings or self.load()
-        keys = load_api_keys(settings.api_key_file)
-        key = keys.get(provider)
-        if not key:
-            raise ValueError(f"Provider {provider} chưa được cấu hình trong File API keys.")
-        return key
-
-    def get_gemini_keys(self, settings=None):
-        from cartoon_sub.ai.gemini_client import load_gemini_keys
-        settings = settings or self.load()
-        if settings.api_key_file:
-            return [self.get_api_key("gemini", settings)]
-        if settings.gemini_api_keys_file:
-            return load_gemini_keys(settings.gemini_api_keys_file)
-        return [self.get_key("gemini")]
-
-    def available_api_providers(self, settings=None):
-        settings = settings or self.load()
-        if not settings.api_key_file:
-            return []
-        return [provider for provider, key in load_api_keys(settings.api_key_file).items() if key]
-
-    def key_status(self, provider="gemini"):
-        try:
-            if provider == "openrouter":
-                count = len(self.get_openrouter_keys())
-                return f"Đã cấu hình {count} OpenRouter key." if count else "Chưa cấu hình OpenRouter key."
-            self.get_key(provider)
-            return f"Đã có {provider} key trong keyring hoặc biến môi trường. Để trống ô key để giữ nguyên."
-        except ValueError:
-            return f"Chưa cấu hình {provider} key."
 
     def openrouter_catalog_cache(self):
         return self.openrouter_catalog_cache_for("general")

@@ -29,15 +29,36 @@ class AIModelResolver:
 
     def selected_model_id(self, tab, settings=None):
         settings = settings or self.store.load()
-        overrides = settings.tab_model_overrides or {}
-        custom = str(overrides.get(tab, "") or "").strip()
-        return (custom, "TAB_OVERRIDE") if custom else (
-            str(settings.default_ai_model or "").strip(), "GLOBAL_DEFAULT")
+        overrides = getattr(settings, "tab_model_overrides", None) or {}
+        raw = overrides.get(tab)
+        if hasattr(settings, "tab_selection"):
+            selection = settings.tab_selection(tab)
+        else:
+            from cartoon_sub.ai.model_selection import AIModelSelection
+            fallback = (getattr(settings, "transcription_model", "") if tab == "transcript_stt"
+                        else getattr(settings, "default_ai_model", ""))
+            selection = AIModelSelection.from_value(raw or fallback)
+        source = "TAB_OVERRIDE" if raw else "GLOBAL_DEFAULT"
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("AIModelResolver.selected_model_id", tab=tab, raw_override=raw,
+                 raw_override_type=type(raw).__name__, normalized_selection=selection.to_dict(),
+                 provider=selection.provider, model_id=selection.model_id,
+                 selection_type=type(selection).__name__, source=source)
+        return selection, source
 
     def resolve(self, feature, tab, required_capabilities=None):
         capabilities = tuple(required_capabilities or ("text",))
         settings = self.store.load()
-        model_id, source = self.selected_model_id(tab, settings)
+        selection, source = self.selected_model_id(tab, settings)
+        from cartoon_sub.ai.runtime_debug import ai_debug
+        ai_debug("AIModelResolver.resolve", feature=feature, tab=tab, provider=selection.provider,
+                 model_id=selection.model_id, selection_type=type(selection).__name__, source=source)
+        if selection.provider != "openrouter":
+            ai_debug("ERROR", warning="Gemini/native selection entered OpenRouter resolver",
+                     provider=selection.provider, model_id=selection.model_id)
+            raise ValueError(
+                f"Provider '{selection.provider}' phải được route trực tiếp, không qua OpenRouter resolver.")
+        model_id = selection.model_id
         if not model_id:
             raise AIModelNotConfiguredError(
                 "Chưa chọn Model AI mặc định.\n"
@@ -47,6 +68,9 @@ class AIModelResolver:
         models = list((cached or {}).get("models", []))
         metadata = next((item for item in models if item.get("id") == model_id), None)
         if metadata is None:
+            ai_debug("OpenRouter catalog error", input_value=model_id,
+                     input_type=type(model_id).__name__, provider=selection.provider,
+                     model_id=model_id)
             raise ValueError(
                 f"Model '{model_id}' không tồn tại trong OpenRouter catalog hiện tại.\n"
                 "Hãy chọn model khác cho tab này hoặc đổi Model AI mặc định."

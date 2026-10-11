@@ -1,30 +1,52 @@
-.venv/
-.build-venv/
-build/
-dist/
+# Python
 __pycache__/
 *.py[cod]
-*.egg-info/
 .pytest_cache/
-.coverage
-coverage/
 .mypy_cache/
 .ruff_cache/
-.env
-/api_key.txt
-/Cartoon_Sub.exe
+*.egg-info/
+.coverage
+coverage/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.build-venv/
+
+# Build and packaged runtime
+build/
+dist/
 /_internal/
-projects/
-*.log
+/_internal*/
+/Cartoon_Sub.exe
+*.exe
+
+# Secrets and machine-local settings
+/api_key.txt
+/settings.json
+.env
+.env.*
+!.env.example
+
+# User projects and generated runtime data
+/Projects/
+/logs/
+/backups/
+/work/
 .tmp/
 .tmp-tests/
-_inventory/
-_share_*/
-/[0-9]*/
+
+# Generated media
 *.wav
 *.mp3
-*.mp4
+*.m4a
 
-# Cartoon_Sub user projects / generated runtime data
-[0-9]*/
-Projects/
+# IDE and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local Codex investigation artifacts
+/codex_ai_provider_source_report.txt

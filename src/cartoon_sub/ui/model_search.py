@@ -7,7 +7,7 @@ from cartoon_sub.ai.openrouter_client import model_author
 class SearchableModelBinding(QObject):
     """Filter a model combo locally without changing its persisted selection."""
 
-    explicitSelectionChanged = Signal(str)
+    explicitSelectionChanged = Signal(object)
 
     def __init__(self, search, combo, parent=None):
         super().__init__(parent)
@@ -21,7 +21,7 @@ class SearchableModelBinding(QObject):
 
     def set_models(self, catalog, *, selected_id="", default_label=None):
         self.catalog = list(catalog or [])
-        self.selected_id = str(selected_id or "")
+        self.selected_id = selected_id or ""
         if default_label is not None:
             self.default_label = default_label
         self.rebuild()
@@ -44,20 +44,27 @@ class SearchableModelBinding(QObject):
         for model in matches:
             model_id = model.get("id", "")
             if model_id:
+                selection = {"provider": model.get("provider", "openrouter"), "model_id": model_id}
                 self.combo.addItem(
                     f"{model.get('name') or model.get('display_name') or model_id} — {model_id}",
-                    model_id,
+                    selection,
                 )
-        index = self.combo.findData(self.selected_id)
+        wanted = self.selected_id if isinstance(self.selected_id, dict) else {"provider": "openrouter", "model_id": self.selected_id}
+        index = self.combo.findData(wanted)
         if index < 0 and self.selected_id:
             # Match Settings > AI behavior: retain an explicit selection while
             # it is temporarily hidden by the local search filter.
+            selected_model_id = (self.selected_id.get("model_id", "")
+                                 if isinstance(self.selected_id, dict) else self.selected_id)
+            selected_provider = (self.selected_id.get("provider", "openrouter")
+                                 if isinstance(self.selected_id, dict) else "openrouter")
             model = next((item for item in self.catalog
-                          if item.get("id") == self.selected_id), None)
+                          if item.get("id") == selected_model_id
+                          and item.get("provider", "openrouter") == selected_provider), None)
             if model:
-                label = model.get("name") or model.get("display_name") or self.selected_id
-                self.combo.insertItem(0, f"[Ẩn bởi tìm kiếm] {label} — {self.selected_id}",
-                                      self.selected_id)
+                label = model.get("name") or model.get("display_name") or selected_model_id
+                self.combo.insertItem(0, f"[Ẩn bởi tìm kiếm] {label} — {selected_model_id}",
+                                      {"provider": selected_provider, "model_id": selected_model_id})
                 index = 0
         self.combo.setCurrentIndex(index if index >= 0 else 0)
         self.combo.blockSignals(False)

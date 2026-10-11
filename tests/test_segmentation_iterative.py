@@ -39,7 +39,7 @@ class IterativeSegmentationTests(unittest.TestCase):
         for utterance in project.utterances:
             self.assertGreater(len(utterance.display_segments), 2)
             self.assertTrue(all(count_syllables(child.vi_text) <= 14 for child in utterance.display_segments))
-            self.assertTrue(all(len(child.vi_text.strip()) <= 44 for child in utterance.display_segments))
+            self.assertTrue(all(len(child.vi_text.strip()) > 0 for child in utterance.display_segments))
             self.assertTrue(all("TOO_MANY_SYLLABLES" not in child.qc_flags for child in utterance.display_segments))
         semantic.split.assert_not_called()
 
@@ -81,7 +81,7 @@ class IterativeSegmentationTests(unittest.TestCase):
         self.assertTrue(all(not service._requires_hard_split(child, active)
                             for child in utterance.display_segments))
 
-    def test_hard_max_duration_requires_a_deterministic_split(self):
+    def test_duration_only_is_qc_not_an_automatic_split_trigger(self):
         service = SubtitleSegmentationService()
         text = "Gâu gâu gâu, to, to, to, to, kêu kêu kêu."
         utterance = Utterance(101, 0, 5.1, "原文", vi_subtitle=text, vi_dubbing=text)
@@ -89,9 +89,9 @@ class IterativeSegmentationTests(unittest.TestCase):
                           subtitle_text_source="vi_dubbing")
         service.update_settings(project, SegmentationProfile.CUSTOM, settings())
         service.auto_segment(project)
-        self.assertGreater(len(utterance.display_segments), 1)
+        self.assertEqual(len(utterance.display_segments), 1)
         self.assertEqual("".join(child.vi_text for child in utterance.display_segments), text)
-        self.assertTrue(all(child.duration <= 5 for child in utterance.display_segments))
+        self.assertIn("TOO_LONG", utterance.display_segments[0].qc_flags)
 
 
 if __name__ == "__main__":
