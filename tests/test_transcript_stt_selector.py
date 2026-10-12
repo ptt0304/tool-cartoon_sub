@@ -11,7 +11,7 @@ from cartoon_sub.app.settings import AISettings, SettingsStore
 from cartoon_sub.transcription.pipeline import resolve_transcript_stt_settings
 from cartoon_sub.ui.model_search import SearchableModelBinding
 from cartoon_sub.ui.tabs.transcript_tab import build
-from cartoon_sub.ui.tabs import translate_tab, subtitle_tab, audio_tab
+from cartoon_sub.ui.tabs import translate_tab
 
 
 MODELS = [
@@ -31,15 +31,13 @@ class TranscriptSTTSelectorTests(unittest.TestCase):
         self.assertIsNot(tab.stt_model_search, tab.ai_model_search)
         tab.close()
 
-    def test_other_ai_tabs_expose_searchable_general_selector(self):
-        tabs = [translate_tab.build(), audio_tab.build()]
+    def test_translate_tab_exposes_searchable_general_selector(self):
+        tab = translate_tab.build()
         try:
-            for tab in tabs:
-                self.assertIsInstance(tab.ai_model_search, QLineEdit)
-                self.assertIsInstance(tab.ai_model, QComboBox)
+            self.assertIsInstance(tab.ai_model_search, QLineEdit)
+            self.assertIsInstance(tab.ai_model, QComboBox)
         finally:
-            for tab in tabs:
-                tab.close()
+            tab.close()
 
     def test_search_matches_provider_name_and_id_without_losing_selection(self):
         search, combo = QLineEdit(), QComboBox()

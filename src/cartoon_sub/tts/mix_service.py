@@ -4,6 +4,7 @@ import math
 import os
 import wave
 import logging
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -57,6 +58,71 @@ class MixDiagnostics:
             f"Cache: {self.cache}\n"
             f"Total: {self.total:.3f}s"
         )
+
+
+MASTER_TTS_FILTER = "volume=20dB,alimiter=limit=0.891251:level=false"
+
+
+def _wav_metadata(path: Path, *, ffprobe_executable: str = "ffprobe", cancel=None) -> tuple[float, int, int]:
+    try:
+        with wave.open(str(path), "rb") as reader:
+            rate = reader.getframerate()
+            channels = reader.getnchannels()
+            frames = reader.getnframes()
+        if rate <= 0 or channels <= 0 or frames <= 0:
+            raise RuntimeError(f"Final TTS WAV không hợp lệ: {path}")
+        return frames / rate, rate, channels
+    except wave.Error:
+        raw = run_process([
+            ffprobe_executable, "-v", "error", "-show_entries",
+            "stream=sample_rate,channels,duration:format=duration", "-of", "json", str(path),
+        ], cancel=cancel)
+        payload = json.loads(raw)
+        streams = payload.get("streams") or []
+        if not streams:
+            raise RuntimeError(f"Final TTS WAV không hợp lệ: {path}")
+        stream = streams[0]
+        duration = float(stream.get("duration") or (payload.get("format") or {}).get("duration") or 0)
+        rate = int(stream.get("sample_rate") or 0)
+        channels = int(stream.get("channels") or 0)
+        if duration <= 0 or rate <= 0 or channels <= 0:
+            raise RuntimeError(f"Final TTS WAV không hợp lệ: {path}")
+        return duration, rate, channels
+
+
+def process_final_tts_audio(input_path: Path, output_path: Path, *, ffmpeg_executable: str = "ffmpeg", ffprobe_executable: str = "ffprobe", cancel=None) -> Path:
+    """Apply the one final master gain pass after timeline assembly, without touching segment WAVs."""
+    input_path, output_path = Path(input_path), Path(output_path)
+    temporary = output_path.with_name(f"{output_path.stem}.boosted.tmp.wav")
+    temporary.unlink(missing_ok=True)
+    duration_before, sample_rate, channels = _wav_metadata(
+        input_path, ffprobe_executable=ffprobe_executable, cancel=cancel)
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Final TTS master processing started | Input: %s | Gain: +20 dB | Limiter: 0.891251 | Codec: pcm_s24le",
+        input_path,
+    )
+    command = [
+        ffmpeg_executable, "-nostdin", "-y", "-i", str(input_path),
+        "-af", MASTER_TTS_FILTER,
+        "-c:a", "pcm_s24le", str(temporary),
+    ]
+    try:
+        run_process(command, cancel=cancel)
+        duration_after, output_rate, output_channels = _wav_metadata(
+            temporary, ffprobe_executable=ffprobe_executable, cancel=cancel)
+        tolerance = max(0.002, 1.0 / sample_rate)
+        if output_rate != sample_rate or output_channels != channels:
+            raise RuntimeError("Final TTS master processing changed sample rate or channel count")
+        if abs(duration_after - duration_before) > tolerance:
+            raise RuntimeError("Final TTS master processing changed duration")
+        os.replace(temporary, output_path)
+        logger.info("Final TTS master processing completed | Output: %s", output_path)
+        return output_path
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        logger.exception("Final TTS master processing failed; original merged audio preserved")
+        raise
 
 
 class TTSTimelineMixService:
@@ -182,9 +248,12 @@ class TTSTimelineMixService:
         output_dir = root / "audio" / "tts"
         output_dir.mkdir(parents=True, exist_ok=True)
         destination = output_dir / "dubbed_mix.wav"
-        temporary = output_dir / "dubbed_mix.tmp.wav"
+        raw_destination = output_dir / "dubbed_mix.raw.wav"
+        temporary = output_dir / "dubbed_mix.raw.tmp.wav"
+        boosted_temporary = output_dir / "dubbed_mix.boosted.tmp.wav"
         filter_script = output_dir / "dubbed_mix.filter"
         temporary.unlink(missing_ok=True)
+        boosted_temporary.unlink(missing_ok=True)
 
         filters = [
             f"[0:a]atrim=0:{duration:.6f},asetpts=PTS-STARTPTS[base]",
@@ -230,7 +299,11 @@ class TTSTimelineMixService:
             finalize_started = perf_counter()
             if not self._valid_wav(temporary):
                 raise RuntimeError("FFmpeg không tạo WAV mix hợp lệ")
-            os.replace(temporary, destination)
+            os.replace(temporary, raw_destination)
+            process_final_tts_audio(
+                raw_destination, destination,
+                ffmpeg_executable=self.ffmpeg_executable, cancel=cancel,
+            )
             from cartoon_sub.project.cache_status_service import write_dubbed_mix_state
             write_dubbed_mix_state(project, root, text_source)
             finalize_time = perf_counter() - finalize_started
@@ -240,7 +313,7 @@ class TTSTimelineMixService:
                 duration_headers=duration_time, alignment=alignment_time,
                 graph_build=graph_time, ffmpeg_timeline_mix=mix_time,
                 finalize_replace=finalize_time, total=perf_counter() - total_started,
-                ffprobe_processes=0, ffmpeg_processes=1,
+                ffprobe_processes=0, ffmpeg_processes=2,
                 input_count=len(inputs) + 1, filter_count=len(filters),
                 filter_complex_chars=len(filter_text),
             )
@@ -251,6 +324,7 @@ class TTSTimelineMixService:
             return destination
         except Exception:
             temporary.unlink(missing_ok=True)
+            boosted_temporary.unlink(missing_ok=True)
             raise
         finally:
             filter_script.unlink(missing_ok=True)

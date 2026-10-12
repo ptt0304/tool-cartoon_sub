@@ -181,30 +181,6 @@ def build():
     for edit in (widget.prompt, widget.glossary, widget.custom_genre,
                  widget.custom_style, widget.custom_name_rule):
         edit.textChanged.connect(update_context_description)
-    # Master Dialogue AI is intentionally separated from the timeline.  It
-    # creates proposals only; users apply them explicitly from this tab.
-    master_ai = QWidget(); master_ai_layout = QVBoxLayout(master_ai)
-    master_ai_intro = QLabel("Chọn dòng trong Master dialogue timeline, rồi chạy AI để xem đề xuất. AI không tự ghi đè hội thoại.")
-    master_ai_intro.setWordWrap(True); master_ai_layout.addWidget(master_ai_intro)
-    master_ai_row = QHBoxLayout()
-    widget.master_ai_model_search = QLineEdit(); widget.master_ai_model = NoWheelComboBox(); widget.master_ai_model_effective = QLabel()
-    widget.master_ai_model_search.setPlaceholderText("Tìm model OpenRouter…")
-    master_ai_row.addWidget(QLabel("Model AI")); master_ai_row.addWidget(widget.master_ai_model_search, 1); master_ai_row.addWidget(widget.master_ai_model, 2); master_ai_row.addWidget(widget.master_ai_model_effective)
-    master_ai_layout.addLayout(master_ai_row)
-    master_ai_actions = QHBoxLayout()
-    widget.master_ai_dubbing_button = QPushButton("Tối ưu Dubbing")
-    widget.master_ai_qa_button = QPushButton("QA/QC AI")
-    widget.master_ai_apply_selected_button = QPushButton("Apply đề xuất cho dòng đã chọn")
-    widget.master_ai_apply_all_button = QPushButton("Apply tất cả đề xuất")
-    for control in (widget.master_ai_dubbing_button, widget.master_ai_qa_button,
-                    widget.master_ai_apply_selected_button, widget.master_ai_apply_all_button):
-        master_ai_actions.addWidget(control)
-    master_ai_layout.addLayout(master_ai_actions)
-    widget.master_ai_results = QPlainTextEdit(); widget.master_ai_results.setReadOnly(True)
-    widget.master_ai_results.setPlaceholderText("Kết quả có cấu trúc sẽ hiện ở đây. Chưa có đề xuất nào.")
-    master_ai_layout.addWidget(widget.master_ai_results, 1)
-    inner_tabs.addTab(master_ai, "AI tối ưu & QA/QC")
-
     from cartoon_sub.ui.timeline_table import create_table, install_delta_target_filter
     timeline=QWidget(); timeline_layout=QVBoxLayout(timeline)
     toolbar=QHBoxLayout()

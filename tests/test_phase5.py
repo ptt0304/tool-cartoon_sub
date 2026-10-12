@@ -178,7 +178,7 @@ class Phase5Tests(unittest.TestCase):
         page.close()
 
     def test_docs_button_and_copyright_are_available(self):
-        dialog=DocsWindow();self.assertEqual(len(TOPICS),10);self.assertIn('PHẠM THANH TÙNG',TOPICS[0][1]);self.assertIn('Master dialogue timeline',TOPICS[4][1]);self.assertIn('Δ target',TOPICS[4][1]);dialog.open_topic(3)
+        dialog=DocsWindow();self.assertEqual(len(TOPICS),11);self.assertIn('PHẠM THANH TÙNG',TOPICS[0][1]);self.assertIn('Master dialogue timeline',TOPICS[4][1]);self.assertIn('Δ target',TOPICS[4][1]);self.assertEqual(TOPICS[10][0], '11. Quy trình');dialog.open_topic(3)
         self.assertEqual(len(dialog.topic_windows),1)
         window=MainWindow();self.assertEqual(window.docs_button.text(),'Docs');self.assertIn('PHẠM THANH TÙNG',window.copyright_label.text())
         for topic in dialog.topic_windows:topic.close()

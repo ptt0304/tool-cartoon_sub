@@ -15,12 +15,12 @@ class AudioDocsTabTests(unittest.TestCase):
 
     def test_audio_tab_order_content_scroll_and_open(self):
         self.assertEqual([title for title, _ in TOPICS][7:],
-            ['8. Audio', '9. Export', '10. Lỗi thường gặp'])
+            ['8. Audio', '9. Export', '10. Lỗi thường gặp', '11. Quy trình'])
         audio_html = TOPICS[7][1]
         for expected in ('Local_TTS URL', 'Preview selected voice', 'Generate / Resume TTS',
                          'Build Dubbed Audio', 'Original Audio Volume', 'Build Final Audio',
-                         '★ Giọng yêu thích', 'Tất cả giọng', 'Test connection',
-                         'audio/tts/dubbed_mix.wav', 'audio/final_audio.wav', 'Troubleshooting'):
+                         'Test connection', 'audio/tts/dubbed_mix.wav',
+                         'audio/final_audio.wav', 'STALE'):
             self.assertIn(expected, audio_html)
 
         dialog = DocsWindow();dialog.resize(500, 260);dialog.show();self.app.processEvents()

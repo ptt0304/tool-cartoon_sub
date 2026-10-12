@@ -202,7 +202,7 @@ class ProjectStageResetService:
 
     def _clear_dubbed_and_final(self, result):
         self._remove_files(result, (
-            "audio/tts/dubbed_mix.wav", "audio/tts/dubbed_mix.json",
+            "audio/tts/dubbed_mix.wav", "audio/tts/dubbed_mix.raw.wav", "audio/tts/dubbed_mix.json",
             "audio/tts/dubbed_mix.filter", "audio/final_audio.wav",
         ))
         self.project.final_audio_status = "not_generated"

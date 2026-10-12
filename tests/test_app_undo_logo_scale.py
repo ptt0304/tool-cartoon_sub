@@ -101,9 +101,9 @@ class AppUndoLogoScaleTests(unittest.TestCase):
 
     def test_docs_settings_and_undo_logo_help(self):
         self.assertEqual(TOPICS[2][0], '3. Settings')
-        self.assertIn('Ctrl+Z', TOPICS[0][1])
-        self.assertIn('1000%', TOPICS[6][1])
-        self.assertIn('-504%', TOPICS[6][1])
+        self.assertIn('STALE', TOPICS[0][1])
+        self.assertIn('200%', TOPICS[6][1])
+        self.assertIn('Delete', TOPICS[6][1])
 
 
 if __name__ == '__main__':

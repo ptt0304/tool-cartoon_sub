@@ -31,7 +31,6 @@ from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
 from cartoon_sub.translation.dubbing_service import DubbingService
-from cartoon_sub.translation.master_dialogue_ai import MasterDialogueAIService
 from cartoon_sub.subtitle.segmentation_service import SubtitleSegmentationService
 from cartoon_sub.subtitle.export_service import export_current_srt
 from cartoon_sub.tts.process_manager import LocalTTSProcessManager
@@ -52,7 +51,6 @@ class Controller:
         self.translation_source_service = TranslationSourceService()
         self.translation_qa_service = TranslationQAService(self.settings_store)
         self.dubbing_service=DubbingService(self.settings_store)
-        self.master_dialogue_ai_service=MasterDialogueAIService(self.settings_store)
         self.segmentation_service=SubtitleSegmentationService()
         self.local_tts_manager = LocalTTSProcessManager()
 
@@ -442,17 +440,6 @@ class Controller:
         model = self.ai_model_resolver.resolve("TRANSLATION_QA", "translate", ("text",)).model_id
         return self.translation_qa_service.run_selected_manual(
             self.project, self.directory, ids, model=model, **job)
-
-    def master_dialogue_ai(self, ids, operation, **job):
-        selection = self.settings_store.load().tab_selection("master_dialogue")
-        return self.master_dialogue_ai_service.run(
-            self.project, self.directory, ids, operation, selection, **job)
-
-    def apply_master_dialogue_ai(self, operation, ids):
-        changed = self.master_dialogue_ai_service.apply(self.project, self.directory, operation, ids)
-        if changed:
-            self.save()
-        return changed
 
     def transcribe(self, **job):
         return self.pipeline.run(self.project, self.directory, **job)

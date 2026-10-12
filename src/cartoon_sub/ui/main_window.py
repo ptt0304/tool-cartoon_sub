@@ -63,17 +63,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.pages = [module.build() for module in (video_tab, transcript_tab, translate_tab, subtitle_tab, mask_style_tab, audio_tab, export_tab)]
         self.ai_model_bindings = {}
-        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("audio", 5)):
+        for tab_name, page_index in (("transcript", 1), ("translate", 2)):
             page = self.pages[page_index]
             binding = SearchableModelBinding(page.ai_model_search, page.ai_model, page)
             binding.explicitSelectionChanged.connect(
                 lambda _model, name=tab_name, target=page:
                     self._save_ai_tab_override(name, target))
             self.ai_model_bindings[tab_name] = binding
-        master_page = self.pages[2]
-        self.master_dialogue_binding = SearchableModelBinding(
-            master_page.master_ai_model_search, master_page.master_ai_model, master_page)
-        self.master_dialogue_binding.explicitSelectionChanged.connect(self._save_master_dialogue_override)
         transcript = self.pages[1]
         self.transcript_stt_binding = SearchableModelBinding(
             transcript.stt_model_search, transcript.stt_model, transcript)
@@ -148,12 +144,6 @@ class MainWindow(QMainWindow):
         self.pages[2].optimize_bulk_button.clicked.connect(
             lambda: self.optimize_dubbing(bulk_mode=True))
         self.pages[2].manual_qa_button.clicked.connect(self.qa_selected_translation)
-        self.pages[2].master_ai_dubbing_button.clicked.connect(
-            lambda: self.run_master_dialogue_ai("dubbing"))
-        self.pages[2].master_ai_qa_button.clicked.connect(
-            lambda: self.run_master_dialogue_ai("qa"))
-        self.pages[2].master_ai_apply_selected_button.clicked.connect(self.apply_master_dialogue_ai_selected)
-        self.pages[2].master_ai_apply_all_button.clicked.connect(self.apply_master_dialogue_ai_all)
         self.pages[2].revert_optimize_button.clicked.connect(self.revert_dubbing_optimization)
         self.pages[2].apply_edits_button.clicked.connect(self.apply_manual_edits)
         self.pages[2].revert_edits_button.clicked.connect(self.revert_manual_edits)
@@ -185,7 +175,6 @@ class MainWindow(QMainWindow):
         audio.audio_settings_changed.connect(self.update_audio_settings)
         audio.clear_additional_requested.connect(self.clear_additional_audio)
         audio.mix_final_requested.connect(self.mix_final_audio)
-        audio.reset_ai_button.clicked.connect(lambda: self.reset_ai_stage("audio"))
         audio.cache_clear_requested.connect(self.clear_audio_cache)
 
         export = self.pages[6]
@@ -1151,14 +1140,6 @@ class MainWindow(QMainWindow):
             self.controller.invalidate_video_ocr_cache()
         self.refresh_ai_model_selectors()
 
-    def _save_master_dialogue_override(self, _selection):
-        page = self.pages[2]
-        if getattr(page, "_loading_master_ai_model", False):
-            return
-        self.controller.settings_store.set_tab_model_override(
-            "master_dialogue", page.master_ai_model.currentData() or "")
-        self.refresh_ai_model_selectors()
-
     def refresh_ai_model_selectors(self):
         from cartoon_sub.ui.model_display import production_models
         settings = self.controller.settings_store.load()
@@ -1166,7 +1147,7 @@ class MainWindow(QMainWindow):
         models = production_models(cached.get("models", []),
             openrouter_usable=bool(self.controller.settings_store.get_openrouter_keys()), capability="text")
         default = settings.default_ai_model or "chưa chọn"
-        for tab_name, page_index in (("transcript", 1), ("translate", 2), ("audio", 5)):
+        for tab_name, page_index in (("transcript", 1), ("translate", 2)):
             page = self.pages[page_index]
             selected = (settings.tab_model_overrides or {}).get(tab_name, {})
             page._loading_ai_model = True
@@ -1181,17 +1162,6 @@ class MainWindow(QMainWindow):
             source = "Tùy chỉnh cho tab" if selected else "Mặc định"
             page.ai_model_effective.setText(
                 f"Model hiệu lực: {effective.model_id or 'chưa chọn'} ({source})")
-
-        master = self.pages[2]
-        master_selected = (settings.tab_model_overrides or {}).get("master_dialogue", {})
-        master._loading_master_ai_model = True
-        self.master_dialogue_binding.set_models(
-            models, selected_id=master_selected, default_label=f"Mặc định — {default}")
-        master._loading_master_ai_model = False
-        master_effective = settings.tab_selection("master_dialogue")
-        master_source = "Tùy chỉnh Master Dialogue" if master_selected else "Mặc định"
-        master.master_ai_model_effective.setText(
-            f"Model hiệu lực: {master_effective.model_id or 'chưa chọn'} ({master_source})")
 
         transcript = self.pages[1]
         transcription_cache = (
@@ -1275,60 +1245,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error(exc)
 
-    def run_master_dialogue_ai(self, operation):
-        try:
-            ids = selected_ids(self.pages[2].table)
-            if not ids:
-                raise ValueError("Chọn ít nhất một dòng Master Dialogue trước khi gọi AI.")
-            if get_dirty_rows(self.pages[2].table):
-                raise ValueError("Hãy áp dụng hoặc hoàn tác sửa tay trước khi gọi AI.")
-            self.controller.save()
-            self.start_job(
-                lambda **job: self.controller.master_dialogue_ai(ids, operation, **job),
-                self.accept_master_dialogue_ai)
-        except Exception as exc:
-            self.error(exc)
-
-    def _show_master_dialogue_ai_results(self):
-        page = self.pages[2]
-        rows = []
-        for operation, record in (self.controller.project.master_dialogue_ai_results or {}).items():
-            selection = record.get("selection", {})
-            rows.append(f"{operation.upper()} • {selection.get('provider', '')} / {selection.get('model_id', '')}")
-            for item in record.get("items", []):
-                rows.append("ID {id} • {status} • {issue_type}\nGốc: {original}\nĐề xuất: {suggested}\nLý do: {reason}".format(**item))
-        page.master_ai_results.setPlainText("\n\n".join(rows))
-
-    def accept_master_dialogue_ai(self, result):
-        self.accept_project(result)
-        self._show_master_dialogue_ai_results()
-        self.statusBar().showMessage("Đề xuất AI đã sẵn sàng; chưa có dòng nào bị ghi đè.", 8000)
-
-    def apply_master_dialogue_ai_selected(self):
-        try:
-            ids = selected_ids(self.pages[2].table)
-            if not ids:
-                raise ValueError("Chọn các dòng có đề xuất cần áp dụng.")
-            operation = "qa" if self.controller.project.master_dialogue_ai_results.get("qa") else "dubbing"
-            changed = self.controller.apply_master_dialogue_ai(operation, ids)
-            self._show_master_dialogue_ai_results(); self.refresh()
-            self.statusBar().showMessage(f"Đã áp dụng {len(changed)} đề xuất.", 6000)
-        except Exception as exc:
-            self.error(exc)
-
-    def apply_master_dialogue_ai_all(self):
-        try:
-            operation = "qa" if self.controller.project.master_dialogue_ai_results.get("qa") else "dubbing"
-            record = self.controller.project.master_dialogue_ai_results.get(operation, {})
-            ids = [item.get("id") for item in record.get("items", []) if isinstance(item.get("id"), int)]
-            if not ids:
-                raise ValueError("Chưa có đề xuất để áp dụng.")
-            changed = self.controller.apply_master_dialogue_ai(operation, ids)
-            self._show_master_dialogue_ai_results(); self.refresh()
-            self.statusBar().showMessage(f"Đã áp dụng {len(changed)} đề xuất.", 6000)
-        except Exception as exc:
-            self.error(exc)
-
     def analyze_context(self):
         try:
             self.sync_options()
@@ -1407,7 +1323,6 @@ class MainWindow(QMainWindow):
             check.setChecked(key in project.translation_genres)
         page.proper_name_mode.setCurrentIndex(max(0, page.proper_name_mode.findData(project.proper_name_mode)))
         page.update_context_description()
-        self._show_master_dialogue_ai_results()
         from cartoon_sub.translation.context_service import translation_readiness
         ready, readiness_message = translation_readiness(project)
         page.translate_button.setEnabled(available and ready)

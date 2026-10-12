@@ -39,14 +39,26 @@ class FinalAudioMixService:
         self.ffmpeg_executable = ffmpeg_executable
         self.ffprobe_executable = ffprobe_executable
 
-    @staticmethod
-    def _valid_wav(path: Path) -> bool:
+    def _valid_wav(self, path: Path) -> bool:
         try:
             if not path.is_file() or path.stat().st_size <= 44:
                 return False
             with wave.open(str(path), "rb") as reader:
                 return reader.getnchannels() > 0 and reader.getframerate() > 0 and reader.getnframes() > 0
-        except (OSError, EOFError, wave.Error):
+        except wave.Error:
+            try:
+                raw = run_process([
+                    self.ffprobe_executable, "-v", "error", "-show_entries",
+                    "stream=codec_name,sample_rate,channels:format=duration", "-of", "json", str(path),
+                ])
+                payload = json.loads(raw)
+                stream = (payload.get("streams") or [None])[0] or {}
+                return (stream.get("codec_name") == "pcm_s24le" and int(stream.get("sample_rate") or 0) > 0
+                        and int(stream.get("channels") or 0) > 0
+                        and float((payload.get("format") or {}).get("duration") or 0) > 0)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError, RuntimeError):
+                return False
+        except (OSError, EOFError):
             return False
 
     def _validate_additional_audio(self, path: Path) -> None:

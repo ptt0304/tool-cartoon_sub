@@ -1,0 +1,112 @@
+{
+  "project_root": "D:\\Documents\\MMO\\Youtube\\Tools\\Cartoon_Sub",
+  "regression_project": "D:\\Documents\\MMO\\Youtube\\Tools\\Cartoon_Sub\\Projects\\1",
+  "current_phase": 1,
+  "phase_complete": false,
+  "files_changed": [
+    "src/cartoon_sub/subtitle/models.py",
+    "src/cartoon_sub/app/settings.py",
+    "src/cartoon_sub/project/paths.py",
+    "src/cartoon_sub/project/stage_reset_service.py",
+    "src/cartoon_sub/app/controller.py",
+    "src/cartoon_sub/ui/tabs/transcript_tab.py",
+    "src/cartoon_sub/ui/main_window.py"
+  ],
+  "files_new": [
+    "src/cartoon_sub/transcription/mode.py",
+    "src/cartoon_sub/transcription/video/__init__.py",
+    "src/cartoon_sub/transcription/video/pipeline.py",
+    "tests/test_transcript_mode_routing.py",
+    "logs/transcript_video/phase_0_audit.log",
+    "docs/CODEX_HANDOFF_TRANSCRIPT.md",
+    "docs/CODEX_HANDOFF_TRANSCRIPT.json"
+  ],
+  "audio_mode": {
+    "status": "Routes to the original pipeline; Controller.transcribe and TranscriptionPipeline were not edited in Phase 1. Regression NOT VERIFIED.",
+    "entry_points": [
+      "ui/main_window.py MainWindow.transcribe",
+      "app/controller.py Controller.run_transcript",
+      "app/controller.py Controller.transcribe",
+      "transcription/pipeline.py TranscriptionPipeline.run",
+      "app/main.py --runtime-transcribe-project -> Controller.transcribe"
+    ]
+  },
+  "video_mode": {
+    "status": "Routing, persistence and a controlled stub only. No extraction logic.",
+    "implemented": [
+      "mode selector in transcript_tab (mode_combo, apply_mode, set_mode)",
+      "mode persistence via Project.transcript_source_mode and Controller.set_transcript_source_mode",
+      "Controller.run_transcript / Controller.transcribe_video routing",
+      "VideoTranscriptionPipeline stub raising ValueError (imported SRT, empty ROI) or VideoTranscriptNotImplemented",
+      "Project.video_subtitle_roi field with normalized validation",
+      "VIDEO_SUBTITLE provenance accepted by Utterance.validate",
+      "transcript_video accepted in AISettings.tab_model_overrides",
+      "ProjectPaths.transcript_video_cache_dir and reset of cache/transcript/video"
+    ],
+    "pending": [
+      "ROI selector UI and setter for video_subtitle_roi",
+      "ffmpeg cropped frame sampling (binary-safe helper; run_process returns text)",
+      "local subtitle detection",
+      "start/end boundary refinement",
+      "OpenRouter Vision OCR via AIModelResolver.resolve(..., 'transcript_video', ('vision_frames',))",
+      "vision model selector UI for transcript_video",
+      "final integration into project.segments, zh.srt and exports with provenance VIDEO_SUBTITLE",
+      "Video-side guard for manual_split rows",
+      "English 'Video Transcript is not implemented yet' stub wording if still required"
+    ]
+  },
+  "new_fields": {
+    "Project.transcript_source_mode": {"type": "str", "default": "audio", "allowed": ["audio", "video"], "invalid": "ValueError in Project.from_dict"},
+    "Project.video_subtitle_roi": {"type": "dict", "default": {}, "keys": ["x_pct", "y_pct", "w_pct", "h_pct"], "rules": "x,y>=0; w,h>0; x+w<=1; y+h<=1; finite numbers; {} means not selected"}
+  },
+  "new_enums": [
+    "TranscriptSourceMode(AUDIO='audio', VIDEO='video') in transcription/mode.py",
+    "transcript_timing_provenance value VIDEO_SUBTITLE (added to allowed set in subtitle/models.py)"
+  ],
+  "new_settings_keys": ["transcript_video"],
+  "new_cache_paths": ["cache/transcript/video (ProjectPaths.transcript_video_cache_dir; not created by ensure(); removed by reset_transcript when clear_stt_cache)"],
+  "tests": {
+    "routing_test": "tests/test_transcript_mode_routing.py: 11 tests; first run 10 passed, 1 failed (bad assertion in test); assertion corrected; NOT re-run, current status unverified",
+    "known_failures": [
+      {"test": "test_unified_ai_model_routing.test_missing_default_blocks", "kind": "error", "classification": "unclassified"},
+      {"test": "test_unified_ai_model_routing.test_legacy_migration_once_and_exact_persistence", "kind": "failure", "classification": "unclassified"},
+      {"test": "test_unified_ai_model_routing.test_tab_override_persists_as_application_preference", "kind": "failure", "classification": "unclassified"},
+      {"test": "test_stage_reset_service.test_buttons_exist_and_cancel_changes_nothing", "kind": "error", "classification": "unclassified"},
+      {"test": "test_stage_reset_service.test_confirmed_reset_refreshes_ui_without_restart", "kind": "error", "classification": "unclassified"},
+      {"test": "test_canonical_timeline.test_renderer_uses_one_overlap_event_without_speaker_prefix", "kind": "error", "classification": "unclassified"},
+      {"test": "test_manual_edits.test_apply_manual_edits_timing_and_overlap", "kind": "failure", "classification": "unclassified"},
+      {"test": "test_manual_edits.test_dirty_tracking_in_timeline_table", "kind": "failure", "classification": "unclassified"},
+      {"test": "test_transcript_segmentation_normalizer.test_completed_raw_cache_is_renormalized_without_network", "kind": "error", "classification": "unclassified"},
+      {"test": "test_transcript_segmentation_normalizer.test_downstream_invalidation_only_when_signature_changes", "kind": "failure", "classification": "unclassified"},
+      {"test": "test_transcript_segmentation_normalizer.test_word_pause_and_speaker_change_are_boundaries", "kind": "failure", "classification": "unclassified", "observed": "speaker ids ['SPK_UNKNOWN','SPK_UNKNOWN'] vs expected ['SPK_01','SPK_02']"},
+      {"test": "one additional error from the 6 errors / 6 failures total was not captured by name", "kind": "error", "classification": "unclassified"}
+    ]
+  },
+  "unverified": [
+    "full Phase 1 regression and cause of the 12 earlier failures/errors",
+    "test_transcript_mode_routing.py after the assertion fix",
+    "Project 1 end-to-end (project.json status is failed, 34 rows; only read, never modified)",
+    "build/publish",
+    "canonical EXE smoke",
+    "GUI behavior of the mode selector and Video error popup",
+    "whether older builds can read project.json containing the new fields (inferred TypeError from cls(**data), not run)",
+    "line-ending consistency (git warned LF->CRLF for paths.py, stage_reset_service.py, transcript_tab.py)"
+  ],
+  "risks": [
+    "Utterance.validate whitelists provenance values; further new values need a models.py edit",
+    "transcript_video key is accepted but nothing resolves it and no UI selector exists",
+    "reset removes cache/transcript/video only when clear_stt_cache is true; mode/ROI are not reset",
+    "Project.from_dict raises on invalid transcript_source_mode or video_subtitle_roi",
+    "Video stub always ends in a ValueError subclass; GUI error path not run; stub text is Vietnamese",
+    "set_transcript_source_mode saves with ProjectManager.save directly, no undo entry",
+    "working tree is far ahead of HEAD 72eac81 (about 61 modified, 7 deleted, 22 untracked before the handoff files); HEAD is not a valid baseline; do not reset/stash/checkout",
+    ".kiro/skills does not exist in this workspace"
+  ],
+  "next_action": [
+    "inspect current git diff of the Phase 1 files",
+    "rerun tests/test_transcript_mode_routing.py",
+    "stabilize Phase 1",
+    "classify the 12 earlier failures/errors one module at a time without using HEAD as baseline",
+    "only then start the Video ROI phase (Phase 2 ROI selection only)"
+  ]
+}
