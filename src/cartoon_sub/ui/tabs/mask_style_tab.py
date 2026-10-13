@@ -8,6 +8,7 @@ from cartoon_sub.subtitle.models import Mask,SubtitleStyle,LogoOverlay,Watermark
 from cartoon_sub.ui.undo import AppliedValueCommand
 from cartoon_sub.transcription.video.roi import clamp_roi
 from cartoon_sub.subtitle.mask_roi import DEFAULT_MASK_ROI, normalize_mask_roi
+from cartoon_sub.media.mask_timeline import text_mask_geometry
 from cartoon_sub.ui.transcript_roi_dialog import MaskRoiDialog
 from copy import deepcopy
 
@@ -102,6 +103,12 @@ class MaskCanvas(QWidget):
         factor=max(2,round(strength*2.4))
         reduced=source.scaled(max(1,source.width()//factor),max(1,source.height()//factor),Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.FastTransformation)
         p.drawPixmap(rect.toRect(),reduced.scaled(rect.size().toSize(),Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation))
+    def draw_center_crosshair(self,p,r,box):
+        x,y,w,h=box
+        cx=r.x()+(x+w/2)*r.width()/self.pixmap.width();cy=r.y()+(y+h/2)*r.height()/self.pixmap.height()
+        p.setPen(QPen(QColor(0,0,0,210),3));p.drawLine(round(cx-7),round(cy),round(cx+7),round(cy));p.drawLine(round(cx),round(cy-7),round(cx),round(cy+7))
+        p.setPen(QPen(QColor('#00baff'),1));p.drawLine(round(cx-7),round(cy),round(cx+7),round(cy));p.drawLine(round(cx),round(cy-7),round(cx),round(cy+7))
+        p.setBrush(QColor('#ffffff'));p.drawEllipse(QRectF(cx-1.5,cy-1.5,3,3))
     def draw_preview_subtitle(self,p,r):
         style=self.style;text='Phụ đề mẫu tiếng Việt';mask=self.mask
         if mask.width < 2 or mask.height < 2:
@@ -145,12 +152,15 @@ class MaskCanvas(QWidget):
         if r.isEmpty():
             p.setPen(Qt.GlobalColor.white);p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,'Lấy khung hình rồi kéo vùng che phụ đề Trung.');return
         p.drawPixmap(r.toRect(),self.pixmap);m=self.mask
-        box=self.drag or ((m.x,m.y,m.width,m.height) if m.enabled else None)
-        if box and m.kind != 'none':
+        box=self.drag or ((m.x,m.y,m.width,m.height) if m.width >= 2 and m.height >= 2 else None)
+        if box:
             x,y,w,h=box;sx=r.width()/self.pixmap.width();sy=r.height()/self.pixmap.height()
-            rect=QRectF(r.x()+x*sx,r.y()+y*sy,w*sx,h*sy)
-            self.draw_mask_effect(p,rect,x,y,w,h,m.kind,m.strength,m.mask_color)
-            p.setPen(QPen(QColor('#00baff'),2));p.drawRect(rect)
+            roi_rect=QRectF(r.x()+x*sx,r.y()+y*sy,w*sx,h*sy)
+            if m.enabled and m.kind != 'none':
+                mx,my,mw,mh=text_mask_geometry('Phụ đề mẫu tiếng Việt',m,self.style,self.pixmap.width(),self.pixmap.height())
+                mask_rect=QRectF(r.x()+mx*sx,r.y()+my*sy,mw*sx,mh*sy)
+                self.draw_mask_effect(p,mask_rect,mx,my,mw,mh,m.kind,m.strength,m.mask_color)
+            p.setPen(QPen(QColor('#00baff'),2));p.drawRect(roi_rect);self.draw_center_crosshair(p,r,box)
         for logo in self.logos:
             image=QPixmap(logo.path)
             if image.isNull(): continue
@@ -189,9 +199,8 @@ class MaskStylePage(QWidget):
         self.kind=QComboBox();self.kind.addItem('Solid','solid');self.kind.addItem('Gaussian','gaussian');self.kind.addItem('No mask','none');form.addRow('Kiểu mask',self.kind)
         self.mask_color=ColorButton('#000000');form.addRow('Màu khung mask',self.mask_color)
         self.strength=QSpinBox();self.strength.setRange(1,20);self.strength.setValue(12);form.addRow('Độ nhòe (1–20)',self.strength)
-        self.geometry_mode=QComboBox();self.geometry_mode.addItem('Auto-fit theo text','auto_fit');self.geometry_mode.addItem('Toàn bộ ROI','roi_full');form.addRow('Mask geometry',self.geometry_mode)
-        self.padding_x=QSpinBox();self.padding_x.setRange(0,500);self.padding_x.setValue(18);form.addRow('Mask padding ngang',self.padding_x)
-        self.padding_y=QSpinBox();self.padding_y.setRange(0,500);self.padding_y.setValue(8);form.addRow('Mask padding dọc',self.padding_y)
+        self.padding_x=QSpinBox();self.padding_x.setRange(0,500);self.padding_x.setValue(18);form.addRow('Kích thước lề ngang',self.padding_x)
+        self.padding_y=QSpinBox();self.padding_y.setRange(0,500);self.padding_y.setValue(8);form.addRow('Kích thước lề dọc',self.padding_y)
         self.coords=[]
         for label in ('X','Y','Width','Height'):
             spin=QSpinBox();spin.setRange(0,32768);form.addRow(label,spin);self.coords.append(spin);spin.valueChanged.connect(self.update_mask)
@@ -203,7 +212,7 @@ class MaskStylePage(QWidget):
         self.outline_color=ColorButton('#000000');form.addRow('Màu viền chữ',self.outline_color)
         self.shadow=QDoubleSpinBox();self.shadow.setRange(0,20);form.addRow('Bóng',self.shadow)
         self.margin=QSpinBox();self.margin.setRange(0,32768);form.addRow('Lề dọc',self.margin)
-        info=QLabel('Khi bật, phụ đề nằm chính giữa vùng solid/blur đã chọn. Tọa độ theo video gốc.');info.setWordWrap(True);form.addRow(info)
+        info=QLabel('Kéo vùng để thay đổi vị trí. Tâm của vùng là vị trí tâm phụ đề. Kích thước vùng không quyết định kích thước mask; mask sẽ tự bám theo kích thước chữ và phần lề.');info.setWordWrap(True);form.addRow(info)
         self.logo=QComboBox();self.load_logo=QPushButton('Load logo ảnh');self.remove_logo=QPushButton('Xóa logo chọn')
         logo_buttons=QHBoxLayout();logo_buttons.addWidget(self.load_logo);logo_buttons.addWidget(self.remove_logo);form.addRow('Logo',self.logo);form.addRow(logo_buttons)
         self.logo_controls=[]
@@ -219,7 +228,7 @@ class MaskStylePage(QWidget):
         self.watermark_transparency=QSpinBox();self.watermark_transparency.setRange(0,100);form.addRow('Trong suốt watermark %',self.watermark_transparency)
         self.watermark_speed=QSpinBox();self.watermark_speed.setRange(10,1000);form.addRow('Tốc độ watermark',self.watermark_speed)
         self.output=QLabel('Chưa tạo preview.');self.output.setWordWrap(True);self.output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse);outer.addWidget(self.output)
-        self.canvas.selected.connect(self.set_rectangle);self.enabled.toggled.connect(self.update_mask);self.kind.currentTextChanged.connect(self.update_mask);self.strength.valueChanged.connect(self.update_mask);self.geometry_mode.currentIndexChanged.connect(self.update_mask);self.padding_x.valueChanged.connect(self.update_mask);self.padding_y.valueChanged.connect(self.update_mask)
+        self.canvas.selected.connect(self.set_rectangle);self.enabled.toggled.connect(self.update_mask);self.kind.currentTextChanged.connect(self.update_mask);self.strength.valueChanged.connect(self.update_mask);self.padding_x.valueChanged.connect(self.update_mask);self.padding_y.valueChanged.connect(self.update_mask)
         self.roi_button.clicked.connect(self.select_mask_roi)
         self.mask_color.colorChanged.connect(self.update_mask);self.text_color.colorChanged.connect(self.update_mask);self.outline_color.colorChanged.connect(self.update_mask)
         self.load_logo.clicked.connect(self.add_logo);self.remove_logo.clicked.connect(self.delete_logo);self.logo.currentIndexChanged.connect(self.load_selected_logo)
@@ -239,7 +248,7 @@ class MaskStylePage(QWidget):
         self.player.errorOccurred.connect(lambda *args:self.output.setText('Không phát được preview: '+self.player.errorString()))
         for spin in (*self.coords,self.strength,self.padding_x,self.padding_y,self.size,self.outline,self.shadow,self.margin):
             spin.setKeyboardTracking(False);spin.editingFinished.connect(self.commit_visual_state)
-        for signal in (self.enabled.toggled,self.kind.currentIndexChanged,self.geometry_mode.currentIndexChanged,self.font.currentIndexChanged,self.bold.toggled,
+        for signal in (self.enabled.toggled,self.kind.currentIndexChanged,self.font.currentIndexChanged,self.bold.toggled,
                        self.mask_color.colorChanged,self.text_color.colorChanged,self.outline_color.colorChanged):
             signal.connect(self.commit_visual_state)
     def set_undo_stack(self,stack,commit=None):
@@ -278,7 +287,7 @@ class MaskStylePage(QWidget):
             self._set_roi(dialog.value());self.update_mask();self.commit_visual_state()
     def values(self):
         legacy_max_lines=getattr(getattr(self._project,'subtitle_style',None),'max_lines',2)
-        return (Mask(self.enabled.isChecked(),self.kind.currentData(),*(s.value() for s in self.coords),self.strength.value(),self.mask_color.color(),dict(self._mask_roi),self.geometry_mode.currentData(),self.padding_x.value(),self.padding_y.value()),
+        return (Mask(self.enabled.isChecked(),self.kind.currentData(),*(s.value() for s in self.coords),self.strength.value(),self.mask_color.color(),dict(self._mask_roi),"auto_fit",self.padding_x.value(),self.padding_y.value()),
             SubtitleStyle(self.font.currentText(),self.size.value(),self.bold.isChecked(),self.outline.value(),self.shadow.value(),5,self.margin.value(),legacy_max_lines,True,'off',self.text_color.color(),self.outline_color.color()))
     def overlay_values(self):
         return list(self.canvas.logos), WatermarkStyle(self.watermark_text.text(),self.watermark_font.currentText(),
@@ -403,7 +412,7 @@ class MaskStylePage(QWidget):
     def _apply_visual_state(self,state):
         m,s=deepcopy(state);self.loading=True
         self.enabled.setChecked(m.enabled);self.kind.setCurrentIndex(max(0,self.kind.findData(m.kind)));self.mask_color.set_color(m.mask_color);self.strength.setValue(m.strength)
-        self.geometry_mode.setCurrentIndex(max(0,self.geometry_mode.findData(getattr(m,'geometry_mode','roi_full'))));self.padding_x.setValue(getattr(m,'padding_x',18));self.padding_y.setValue(getattr(m,'padding_y',8))
+        self.padding_x.setValue(getattr(m,'padding_x',18));self.padding_y.setValue(getattr(m,'padding_y',8))
         self._set_roi(m.roi or self._roi_from_mask(m))
         if self.font.findText(s.font)<0:self.font.insertItem(0,s.font)
         self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold);self.text_color.set_color(s.text_color);self.outline.setValue(s.outline);self.outline_color.set_color(s.outline_color);self.shadow.setValue(s.shadow);self.margin.setValue(s.margin_bottom)
@@ -418,7 +427,7 @@ class MaskStylePage(QWidget):
         self.kind.setCurrentIndex(index if index >= 0 else self.kind.findText(m.kind))
         self.mask_color.set_color(m.mask_color)
         self.strength.setValue(m.strength)
-        self.geometry_mode.setCurrentIndex(max(0,self.geometry_mode.findData(getattr(m,'geometry_mode','roi_full'))));self.padding_x.setValue(getattr(m,'padding_x',18));self.padding_y.setValue(getattr(m,'padding_y',8))
+        self.padding_x.setValue(getattr(m,'padding_x',18));self.padding_y.setValue(getattr(m,'padding_y',8))
         self._set_roi(m.roi or self._roi_from_mask(m))
         if self.font.findText(s.font) < 0:self.font.insertItem(0,s.font)
         self.font.setCurrentText(s.font);self.size.setValue(s.font_size);self.bold.setChecked(s.bold)

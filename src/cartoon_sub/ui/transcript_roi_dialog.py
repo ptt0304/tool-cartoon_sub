@@ -59,10 +59,10 @@ class RoiCanvas(QWidget):
     changed=Signal(dict)
     HANDLE_RADIUS = 7
     MINIMUM_ROI_PIXELS = 24
-    def __init__(self,path,roi):
+    def __init__(self,path,roi,*,show_center_crosshair=False):
         super().__init__();self.setMinimumSize(640,360)
         self.pixmap = path if isinstance(path, QPixmap) else QPixmap(str(path))
-        self.roi=clamp_roi(roi);self.drag=None
+        self.roi=clamp_roi(roi);self.drag=None;self.show_center_crosshair=show_center_crosshair
     def _image_rect(self):
         x,y,w,h=image_rect(self.width(),self.height(),self.pixmap.width(),self.pixmap.height());return QRectF(x,y,w,h)
     def _rect(self): return QRectF(*normalized_to_display(self.roi,tuple(self._image_rect().getRect())))
@@ -71,6 +71,8 @@ class RoiCanvas(QWidget):
         painter.setBrush(QColor('#ffffff')); painter.setPen(QPen(QColor('#00baff'),1))
         for point in (roi.topLeft(), roi.topRight(), roi.bottomLeft(), roi.bottomRight()):
             painter.drawRect(QRectF(point.x()-self.HANDLE_RADIUS, point.y()-self.HANDLE_RADIUS, self.HANDLE_RADIUS*2, self.HANDLE_RADIUS*2))
+        if self.show_center_crosshair:
+            center=roi.center();painter.setPen(QPen(QColor(0,0,0,210),3));painter.drawLine(round(center.x()-7),round(center.y()),round(center.x()+7),round(center.y()));painter.drawLine(round(center.x()),round(center.y()-7),round(center.x()),round(center.y()+7));painter.setPen(QPen(QColor('#00baff'),1));painter.drawLine(round(center.x()-7),round(center.y()),round(center.x()+7),round(center.y()));painter.drawLine(round(center.x()),round(center.y()-7),round(center.x()),round(center.y()+7));painter.setBrush(QColor('#ffffff'));painter.drawEllipse(center,1.5,1.5)
         painter.setPen(Qt.GlobalColor.white);painter.drawText(roi.adjusted(6,6,-6,-6),Qt.AlignmentFlag.AlignTop,'Vùng phụ đề')
 
     def _hit_test(self, point):
@@ -142,9 +144,9 @@ class MaskRoiDialog(QDialog):
         super().__init__(parent); self.setWindowTitle('Chọn vùng phụ đề / Mask'); self.resize(960, 680)
         self.default_roi = clamp_roi(default_roi or roi or DEFAULT_VIDEO_SUBTITLE_ROI)
         layout = QVBoxLayout(self)
-        note = QLabel('Kéo vùng để di chuyển; kéo cạnh hoặc góc để đổi kích thước. Vùng chỉ xác định vị trí phụ đề/Mask, không thay đổi kiểu Mask.')
+        note = QLabel('Kéo vùng để thay đổi vị trí. Tâm của vùng là vị trí tâm phụ đề. Kích thước vùng không quyết định kích thước mask; mask sẽ tự bám theo kích thước chữ và phần lề.')
         note.setWordWrap(True); layout.addWidget(note)
-        self.canvas = RoiCanvas(preview, roi or self.default_roi); layout.addWidget(self.canvas, 1)
+        self.canvas = RoiCanvas(preview, roi or self.default_roi, show_center_crosshair=True); layout.addWidget(self.canvas, 1)
         actions = QHBoxLayout(); default = QPushButton('ROI mặc định dưới giữa')
         default.clicked.connect(lambda: self.canvas.set_roi(self.default_roi))
         actions.addWidget(default); actions.addStretch(1); layout.addLayout(actions)

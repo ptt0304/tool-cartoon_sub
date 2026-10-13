@@ -1,17 +1,600 @@
 [
-  {"task":"video_ocr","feature":"Video Transcript OCR","file":"src/cartoon_sub/transcription/video/ocr_service.py","function":"VideoSubtitleOcrService.run/_ocr_one","model_key":"VIDEO_SUBTITLE_OCR","endpoint":"POST /api/v1/chat/completions","input_modality":"one image/png ROI crop per visual event","system_prompt":"Bạn là OCR phụ đề. Chỉ đọc chữ Trung Quốc đang nhìn thấy trong ảnh crop phụ đề.","user_prompt_template":"Đọc only visible Chinese subtitles; return has_subtitle and text only.","dynamic_context_fields":[{"field":"ROI PNG crop","classification":"REQUIRED"},{"field":"event/ROI identity","classification":"USEFUL local cache"}],"media":"One native-size FFmpeg PNG ROI crop; no resize/compression","expected_response":"{has_subtitle:boolean,text:string}","consumed_response_fields":["has_subtitle","text"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/transcript/video/ocr/{identity}.json","retry":"up to 2 attempts; resends image","input_cost_risk":"HIGH","output_cost_risk":"LOW","media_cost_risk":"HIGH","overall_cost_risk":"HIGH","recommendations":["retain strict minimal schema","downscale only oversized ROI","add small output cap"]},
-  {"task":"audio_stt","feature":"Run Chinese Transcript","file":"src/cartoon_sub/transcription/gemini_transcriber.py; src/cartoon_sub/ai/openrouter_client.py","function":"GeminiTranscriber.transcribe; OpenRouterTranscriptionClient.transcribe_json","model_key":"configured STT selection","endpoint":"POST /api/v1/audio/transcriptions","input_modality":"one VAD PCM WAV speech region","system_prompt":"local transcription_v2.txt; not transmitted","user_prompt_template":"{model,input_audio:{data:base64 WAV,format:wav},language:zh,response_format:verbose_json}","dynamic_context_fields":[{"field":"audio","classification":"REQUIRED"},{"field":"language zh","classification":"REQUIRED"},{"field":"local prompt/schema","classification":"QUESTIONABLE: adapter discards"}],"media":"mono 16kHz 16-bit WAV VAD region","expected_response":"verbose_json text/segments/words","consumed_response_fields":["text","segments","segments.start/end","words","words.start/end"],"temperature":"not set","max_tokens":"not set","cache":"cache/transcription/{identity}.json","retry":"configured retry_count for retryable errors","input_cost_risk":"MEDIUM","output_cost_risk":"LOW","media_cost_risk":"MEDIUM","overall_cost_risk":"MEDIUM","recommendations":["clarify supported STT prompt/schema controls","preserve verbose timing output"]},
-  {"task":"stt_language_retry","feature":"Transcript language consistency retry","file":"src/cartoon_sub/transcription/gemini_transcriber.py","function":"GeminiTranscriber._language_retry","model_key":"configured STT selection","endpoint":"POST /api/v1/audio/transcriptions","input_modality":"same isolated VAD WAV region","system_prompt":"local retry instruction; not transmitted","user_prompt_template":"same audio STT payload","dynamic_context_fields":[{"field":"audio","classification":"REQUIRED"},{"field":"foreign-script trigger","classification":"USEFUL local"}],"media":"one WAV resend for eligible region","expected_response":"verbose_json","consumed_response_fields":["segments","words","text"],"temperature":"not set","max_tokens":"not set","cache":"cache/transcription/language_retry/{identity}.json","retry":"one bounded higher-level retry","input_cost_risk":"MEDIUM","output_cost_risk":"LOW","media_cost_risk":"MEDIUM","overall_cost_risk":"MEDIUM","recommendations":["do not rely on discarded prompt","keep eligibility bounded"]},
-  {"task":"stt_timing_retry","feature":"Transcript timing-quality retry","file":"src/cartoon_sub/transcription/gemini_transcriber.py","function":"GeminiTranscriber._timing_retry","model_key":"configured timing_retry_model","endpoint":"POST /api/v1/audio/transcriptions","input_modality":"same VAD WAV region","system_prompt":"local STT prompt; not transmitted","user_prompt_template":"same audio STT payload","dynamic_context_fields":[{"field":"audio","classification":"REQUIRED"},{"field":"primary timing quality","classification":"USEFUL local trigger"}],"media":"one WAV resend on insufficient timing","expected_response":"verbose_json with timing","consumed_response_fields":["segments.start/end","words.start/end","text"],"temperature":"not set","max_tokens":"not set","cache":"cache/transcription/timing_retry/{identity}.json","retry":"one bounded higher-level retry","input_cost_risk":"MEDIUM","output_cost_risk":"LOW","media_cost_risk":"MEDIUM","overall_cost_risk":"MEDIUM","recommendations":["preserve timing data","evaluate provider controls separately"]},
-  {"task":"semantic_boundary","feature":"Ambiguous Chinese boundary resolution","file":"src/cartoon_sub/transcription/semantic_boundary_resolver.py","function":"ChineseSemanticBoundaryResolver.resolve/_apply","model_key":"SEMANTIC_BOUNDARY","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"Identify Mandarin boundaries; JSON only; never rewrite/correct/translate source.","user_prompt_template":"{targets:[{target_id,source,indexed_source,existing_boundaries,previous,next}]}","dynamic_context_fields":[{"field":"source/indexed_source","classification":"REQUIRED"},{"field":"candidate boundaries","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"}],"media":"none","expected_response":"boundaries with after_index/action/type/confidence","consumed_response_fields":["target_id","after_index","action","confidence"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/transcription_semantic/{identity}.json","retry":"at most two attempts","input_cost_risk":"MEDIUM","output_cost_risk":"LOW","media_cost_risk":"LOW","overall_cost_risk":"LOW","recommendations":["review unused type","consider compact index mapping"]},
-  {"task":"transcript_ai_repair","feature":"Transcript suspicious-region repair","file":"src/cartoon_sub/transcription/qa_repair.py","function":"TranscriptAIRepairService.repair/_request_rows","model_key":"TRANSCRIPT_REPAIR","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"Review suspicious Mandarin only; JSON only; preserve source IDs and character order.","user_prompt_template":"{regions:[{region_id,affected_ids,range,violations,rows,context_before,context_after}]}","dynamic_context_fields":[{"field":"affected rows/IDs/violations","classification":"REQUIRED"},{"field":"range/neighbours","classification":"USEFUL"}],"media":"none","expected_response":"region_id/source_ids/action/parts/confidence","consumed_response_fields":["region_id","source_ids","action","parts","confidence"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"transcript QA-repair cache","retry":"one repair pass; failure preserves manual review","input_cost_risk":"MEDIUM","output_cost_risk":"LOW","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["deterministic batching only if region volume grows"]},
-  {"task":"translation_batch","feature":"Translate","file":"src/cartoon_sub/translation/pipeline.py; src/cartoon_sub/translation/prompts.py","function":"TranslationPipeline.run; translation_prompt; editorial","model_key":"TRANSLATION","endpoint":"POST /api/v1/chat/completions","input_modality":"text or evidence media","system_prompt":"EDITORIAL_RULES Vietnamese dialogue/preservation contract","user_prompt_template":"{editorial,reference_before,reference_after,previous_translation,targets,audiovisual_evidence}","dynamic_context_fields":[{"field":"Chinese IDs/timing","classification":"REQUIRED"},{"field":"neighbours/prior translations/evidence","classification":"USEFUL"},{"field":"editorial glossary/rules/continuity","classification":"USEFUL but duplicated/broad"},{"field":"voice/rate/syllable fields","classification":"QUESTIONABLE for subtitle translation"}],"media":"optional ConversationMediaBuilder evidence","expected_response":"translations, continuity_updates, uncertainties","consumed_response_fields":["vi","review_note","meaning_preservation","compressed","continuity_updates","uncertainties"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/translation/{source} plus checkpoints","retry":"configured CachedRequests retry and correction","input_cost_risk":"HIGH","output_cost_risk":"MEDIUM","media_cost_risk":"MEDIUM","overall_cost_risk":"HIGH","recommendations":["remove duplicate editorial fields","bound glossary/continuity by relevance","review unused confidence","cap output"]},
-  {"task":"selected_retranslation","feature":"Retranslate selected","file":"src/cartoon_sub/translation/pipeline.py","function":"TranslationPipeline.retranslate_selected","model_key":"Translate tab selection","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"same EDITORIAL_RULES","user_prompt_template":"one target + two neighbours each side + text_only evidence","dynamic_context_fields":[{"field":"target","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"},{"field":"full editorial","classification":"USEFUL but broad"}],"media":"none","expected_response":"translation schema","consumed_response_fields":["vi","review_note","meaning_preservation","compressed","continuity_updates"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/translation/retranslate; force=true","retry":"configured shared retry","input_cost_risk":"MEDIUM","output_cost_risk":"MEDIUM","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["retain force refresh","consider lean one-row context/schema"]},
-  {"task":"translation_semantic_qa","feature":"Automatic Translation QA and rewrite retry","file":"src/cartoon_sub/translation/qa_service.py","function":"TranslationQAService.run/_semantic_check/_retry_failed_row","model_key":"review selection","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"SEMANTIC_QA_RULES Vietnamese dialogue QA; do not rewrite PASS.","user_prompt_template":"{editorial,before[5],after[5],target,current_vietnamese}; retry includes issues","dynamic_context_fields":[{"field":"target/current VI","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"},{"field":"full editorial","classification":"USEFUL but duplicated/broad"},{"field":"issues","classification":"REQUIRED on retry"}],"media":"none","expected_response":"QA status/issues; retry translation schema","consumed_response_fields":["id","status","issues","retry translation fields"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/translation_qa/{source}","retry":"one rewrite maximum plus shared retries","input_cost_risk":"MEDIUM","output_cost_risk":"MEDIUM","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["QA-specific lean editorial projection","retain issue details"]},
-  {"task":"manual_translation_qa","feature":"Manual selected AI QA","file":"src/cartoon_sub/translation/qa_service.py","function":"TranslationQAService.run_selected_manual","model_key":"review selection","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"same SEMANTIC_QA_RULES","user_prompt_template":"{editorial,target,before[3],after[3],current_vi_subtitle,current_vi_dubbing,attempt,previous_issues}","dynamic_context_fields":[{"field":"target/current VI","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"},{"field":"previous issues","classification":"REQUIRED after failure"}],"media":"none","expected_response":"id/status/issues/corrected_vi_subtitle/reason","consumed_response_fields":["id","status","issues","corrected_vi_subtitle","reason"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/manual_translation_qa/{source}; force=true","retry":"up to two manual attempts","input_cost_risk":"MEDIUM","output_cost_risk":"MEDIUM","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["keep correction/reason","cap issue detail length","use lean editorial"]},
-  {"task":"dubbing_optimization","feature":"Selected/bulk dubbing optimization","file":"src/cartoon_sub/translation/dubbing_service.py","function":"DubbingService.optimize","model_key":"DUBBING_OPTIMIZE","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"dubbing_system meaning-preserving dubbing contract","user_prompt_template":"{task,editorial,modes,budget_settings,reference_before,reference_after,targets}","dynamic_context_fields":[{"field":"Chinese/current dubbing/subtitle/budget","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"},{"field":"voice/rate broad fields","classification":"QUESTIONABLE if duplicated"},{"field":"editorial","classification":"USEFUL but broad"}],"media":"none","expected_response":"translation schema","consumed_response_fields":["vi","compressed","meaning_preservation","review_note"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/dubbing plus segment fingerprint","retry":"shared retry plus up to two shortening passes","input_cost_risk":"MEDIUM","output_cost_risk":"MEDIUM","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["retain semantic safeguards","reduce duplicated row/editorial fields","review unused confidence"]},
-  {"task":"duration_fit_rewrite","feature":"TTS duration-fit rewrite","file":"src/cartoon_sub/translation/dubbing_service.py","function":"DubbingService.rewrite_duration_failures","model_key":"DUBBING_DURATION_REWRITE","endpoint":"POST /api/v1/chat/completions","input_modality":"text","system_prompt":"same dubbing_system","user_prompt_template":"Chinese/subtitle/current dubbing/voice/duration/reduction/rewrite attempt + 3 neighbours","dynamic_context_fields":[{"field":"duration/current dubbing","classification":"REQUIRED"},{"field":"neighbours","classification":"USEFUL"},{"field":"editorial","classification":"USEFUL but broad"}],"media":"none","expected_response":"translation schema","consumed_response_fields":["vi","review_note","meaning_preservation","compressed"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/dubbing_duration","retry":"shared retry plus bounded semantic rewrite count","input_cost_risk":"MEDIUM","output_cost_risk":"MEDIUM","media_cost_risk":"LOW","overall_cost_risk":"MEDIUM","recommendations":["preserve real duration constraints","reduce duplicated editorial"]},
-  {"task":"visual_context_hidden_compatibility","feature":"Visual Context hidden compatibility path","file":"src/cartoon_sub/translation/visual_context.py","function":"VisualContextAnalyzer.analyze/_request","model_key":"context/vision resolver","endpoint":"POST /api/v1/chat/completions","input_modality":"adaptive JPEG frames or one proxy MP4","system_prompt":"VISUAL_CONTEXT_SYSTEM","user_prompt_template":"pass/language/video range/target IDs/registry/contracts/rows/neighbours/rules/glossary/context/sampling","dynamic_context_fields":[{"field":"target/reference rows","classification":"REQUIRED"},{"field":"full registry/story context","classification":"QUESTIONABLE for narrow rescans"},{"field":"rules/glossary","classification":"USEFUL"}],"media":"480px high JPEG quality 4 adaptive frames or proxy MP4","expected_response":"broad CONTEXT_SCHEMA StoryContext","consumed_response_fields":["StoryContext and registry fields"],"temperature":"0.3 if supported","max_tokens":"not set","cache":"cache/visual_context plus registry cache","retry":"provider failures propagate; cache avoids repeat","input_cost_risk":"HIGH","output_cost_risk":"HIGH","media_cost_risk":"HIGH","overall_cost_risk":"HIGH","recommendations":["keep hidden unless needed","send relevant registry/context only","cap frames"]},
-  {"task":"openrouter_connection_validation","feature":"Settings connection test (non-inference)","file":"src/cartoon_sub/app/controller.py; src/cartoon_sub/ai/openrouter_client.py","function":"Controller.test_connection/test_translation_connection; OpenRouterClient.test_connection","model_key":"none","endpoint":"GET authenticated OpenRouter key endpoint","input_modality":"no model input","system_prompt":"none","user_prompt_template":"none","dynamic_context_fields":[],"media":"none","expected_response":"HTTP success only","consumed_response_fields":["HTTP success"],"temperature":"not applicable","max_tokens":"not applicable","cache":"none","retry":"key-pool behavior only","input_cost_risk":"LOW","output_cost_risk":"LOW","media_cost_risk":"LOW","overall_cost_risk":"LOW","recommendations":["keep separate from inference accounting"]},
-  {"task":"openrouter_catalog_refresh","feature":"Model catalog refresh (non-inference)","file":"src/cartoon_sub/ai/openrouter_client.py","function":"OpenRouterClient.get_models","model_key":"none","endpoint":"GET /api/v1/models","input_modality":"no model input","system_prompt":"none","user_prompt_template":"none","dynamic_context_fields":[],"media":"none","expected_response":"model catalog JSON","consumed_response_fields":["model metadata"],"temperature":"not applicable","max_tokens":"not applicable","cache":"catalog cache managed by catalog service","retry":"key-pool behavior only","input_cost_risk":"LOW","output_cost_risk":"LOW","media_cost_risk":"LOW","overall_cost_risk":"LOW","recommendations":["keep separate from inference accounting"]}
+  {
+    "task": "video_ocr",
+    "feature": "Video Transcript OCR",
+    "file": "src/cartoon_sub/transcription/video/ocr_service.py",
+    "function": "VideoSubtitleOcrService.run/_ocr_one",
+    "model_key": "VIDEO_SUBTITLE_OCR",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "one image/png ROI crop per visual event",
+    "system_prompt": "Bạn là OCR phụ đề. Chỉ đọc chữ Trung Quốc đang nhìn thấy trong ảnh crop phụ đề.",
+    "user_prompt_template": "Đọc only visible Chinese subtitles; return has_subtitle and text only.",
+    "dynamic_context_fields": [
+      {
+        "field": "ROI PNG crop",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "event/ROI identity",
+        "classification": "USEFUL local cache"
+      }
+    ],
+    "media": "One native-size FFmpeg PNG ROI crop; no resize/compression",
+    "expected_response": "{has_subtitle:boolean,text:string}",
+    "consumed_response_fields": [
+      "has_subtitle",
+      "text"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/transcript/video/ocr/{identity}.json",
+    "retry": "up to 2 attempts; resends image",
+    "input_cost_risk": "HIGH",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "HIGH",
+    "overall_cost_risk": "HIGH",
+    "recommendations": [
+      "retain strict minimal schema",
+      "downscale only oversized ROI",
+      "add small output cap"
+    ]
+  },
+  {
+    "task": "audio_stt",
+    "feature": "Run Chinese Transcript",
+    "file": "src/cartoon_sub/transcription/gemini_transcriber.py; src/cartoon_sub/ai/openrouter_client.py",
+    "function": "GeminiTranscriber.transcribe; OpenRouterTranscriptionClient.transcribe_json",
+    "model_key": "configured STT selection",
+    "endpoint": "POST /api/v1/audio/transcriptions",
+    "input_modality": "one VAD PCM WAV speech region",
+    "system_prompt": "local transcription_v2.txt; not transmitted",
+    "user_prompt_template": "{model,input_audio:{data:base64 WAV,format:wav},language:zh,response_format:verbose_json}",
+    "dynamic_context_fields": [
+      {
+        "field": "audio",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "language zh",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "local prompt/schema",
+        "classification": "QUESTIONABLE: adapter discards"
+      }
+    ],
+    "media": "mono 16kHz 16-bit WAV VAD region",
+    "expected_response": "verbose_json text/segments/words",
+    "consumed_response_fields": [
+      "text",
+      "segments",
+      "segments.start/end",
+      "words",
+      "words.start/end"
+    ],
+    "temperature": "not set",
+    "max_tokens": "not set",
+    "cache": "cache/transcription/{identity}.json",
+    "retry": "configured retry_count for retryable errors",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "MEDIUM",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "clarify supported STT prompt/schema controls",
+      "preserve verbose timing output"
+    ]
+  },
+  {
+    "task": "stt_language_retry",
+    "feature": "Transcript language consistency retry",
+    "file": "src/cartoon_sub/transcription/gemini_transcriber.py",
+    "function": "GeminiTranscriber._language_retry",
+    "model_key": "configured STT selection",
+    "endpoint": "POST /api/v1/audio/transcriptions",
+    "input_modality": "same isolated VAD WAV region",
+    "system_prompt": "local retry instruction; not transmitted",
+    "user_prompt_template": "same audio STT payload",
+    "dynamic_context_fields": [
+      {
+        "field": "audio",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "foreign-script trigger",
+        "classification": "USEFUL local"
+      }
+    ],
+    "media": "one WAV resend for eligible region",
+    "expected_response": "verbose_json",
+    "consumed_response_fields": [
+      "segments",
+      "words",
+      "text"
+    ],
+    "temperature": "not set",
+    "max_tokens": "not set",
+    "cache": "cache/transcription/language_retry/{identity}.json",
+    "retry": "one bounded higher-level retry",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "MEDIUM",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "do not rely on discarded prompt",
+      "keep eligibility bounded"
+    ]
+  },
+  {
+    "task": "stt_timing_retry",
+    "feature": "Transcript timing-quality retry",
+    "file": "src/cartoon_sub/transcription/gemini_transcriber.py",
+    "function": "GeminiTranscriber._timing_retry",
+    "model_key": "configured timing_retry_model",
+    "endpoint": "POST /api/v1/audio/transcriptions",
+    "input_modality": "same VAD WAV region",
+    "system_prompt": "local STT prompt; not transmitted",
+    "user_prompt_template": "same audio STT payload",
+    "dynamic_context_fields": [
+      {
+        "field": "audio",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "primary timing quality",
+        "classification": "USEFUL local trigger"
+      }
+    ],
+    "media": "one WAV resend on insufficient timing",
+    "expected_response": "verbose_json with timing",
+    "consumed_response_fields": [
+      "segments.start/end",
+      "words.start/end",
+      "text"
+    ],
+    "temperature": "not set",
+    "max_tokens": "not set",
+    "cache": "cache/transcription/timing_retry/{identity}.json",
+    "retry": "one bounded higher-level retry",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "MEDIUM",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "preserve timing data",
+      "evaluate provider controls separately"
+    ]
+  },
+  {
+    "task": "semantic_boundary",
+    "feature": "Ambiguous Chinese boundary resolution",
+    "file": "src/cartoon_sub/transcription/semantic_boundary_resolver.py",
+    "function": "ChineseSemanticBoundaryResolver.resolve/_apply",
+    "model_key": "SEMANTIC_BOUNDARY",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "Identify Mandarin boundaries; JSON only; never rewrite/correct/translate source.",
+    "user_prompt_template": "{targets:[{target_id,source,indexed_source,existing_boundaries,previous,next}]}",
+    "dynamic_context_fields": [
+      {
+        "field": "source/indexed_source",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "candidate boundaries",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      }
+    ],
+    "media": "none",
+    "expected_response": "boundaries with after_index/action/type/confidence",
+    "consumed_response_fields": [
+      "target_id",
+      "after_index",
+      "action",
+      "confidence"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/transcription_semantic/{identity}.json",
+    "retry": "at most two attempts",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "LOW",
+    "recommendations": [
+      "review unused type",
+      "consider compact index mapping"
+    ]
+  },
+  {
+    "task": "transcript_ai_repair",
+    "feature": "Transcript suspicious-region repair",
+    "file": "src/cartoon_sub/transcription/qa_repair.py",
+    "function": "TranscriptAIRepairService.repair/_request_rows",
+    "model_key": "TRANSCRIPT_REPAIR",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "Review suspicious Mandarin only; JSON only; preserve source IDs and character order.",
+    "user_prompt_template": "{regions:[{region_id,affected_ids,range,violations,rows,context_before,context_after}]}",
+    "dynamic_context_fields": [
+      {
+        "field": "affected rows/IDs/violations",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "range/neighbours",
+        "classification": "USEFUL"
+      }
+    ],
+    "media": "none",
+    "expected_response": "region_id/source_ids/action/parts/confidence",
+    "consumed_response_fields": [
+      "region_id",
+      "source_ids",
+      "action",
+      "parts",
+      "confidence"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "transcript QA-repair cache",
+    "retry": "one repair pass; failure preserves manual review",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "deterministic batching only if region volume grows"
+    ]
+  },
+  {
+    "task": "translation_batch",
+    "feature": "Translate",
+    "file": "src/cartoon_sub/translation/pipeline.py; src/cartoon_sub/translation/prompts.py",
+    "function": "TranslationPipeline.run; translation_prompt; editorial",
+    "model_key": "TRANSLATION",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text or evidence media",
+    "system_prompt": "EDITORIAL_RULES Vietnamese dialogue/preservation contract",
+    "user_prompt_template": "{editorial,reference_before,reference_after,previous_translation,targets,audiovisual_evidence}",
+    "dynamic_context_fields": [
+      {
+        "field": "Chinese IDs/timing",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours/prior translations/evidence",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "editorial glossary/rules/continuity",
+        "classification": "USEFUL but duplicated/broad"
+      },
+      {
+        "field": "voice/rate/syllable fields",
+        "classification": "QUESTIONABLE for subtitle translation"
+      }
+    ],
+    "media": "optional ConversationMediaBuilder evidence",
+    "expected_response": "translations, continuity_updates, uncertainties",
+    "consumed_response_fields": [
+      "vi",
+      "review_note",
+      "meaning_preservation",
+      "compressed",
+      "continuity_updates",
+      "uncertainties"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/translation/{source} plus checkpoints",
+    "retry": "configured CachedRequests retry and correction",
+    "input_cost_risk": "HIGH",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "MEDIUM",
+    "overall_cost_risk": "HIGH",
+    "recommendations": [
+      "remove duplicate editorial fields",
+      "bound glossary/continuity by relevance",
+      "review unused confidence",
+      "cap output"
+    ]
+  },
+  {
+    "task": "selected_retranslation",
+    "feature": "Retranslate selected",
+    "file": "src/cartoon_sub/translation/pipeline.py",
+    "function": "TranslationPipeline.retranslate_selected",
+    "model_key": "Translate tab selection",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "same EDITORIAL_RULES",
+    "user_prompt_template": "one target + two neighbours each side + text_only evidence",
+    "dynamic_context_fields": [
+      {
+        "field": "target",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "full editorial",
+        "classification": "USEFUL but broad"
+      }
+    ],
+    "media": "none",
+    "expected_response": "translation schema",
+    "consumed_response_fields": [
+      "vi",
+      "review_note",
+      "meaning_preservation",
+      "compressed",
+      "continuity_updates"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/translation/retranslate; force=true",
+    "retry": "configured shared retry",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "retain force refresh",
+      "consider lean one-row context/schema"
+    ]
+  },
+  {
+    "task": "translation_semantic_qa",
+    "feature": "Automatic Translation QA and rewrite retry",
+    "file": "src/cartoon_sub/translation/qa_service.py",
+    "function": "TranslationQAService.run/_semantic_check/_retry_failed_row",
+    "model_key": "review selection",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "SEMANTIC_QA_RULES Vietnamese dialogue QA; do not rewrite PASS.",
+    "user_prompt_template": "{editorial,before[5],after[5],target,current_vietnamese}; retry includes issues",
+    "dynamic_context_fields": [
+      {
+        "field": "target/current VI",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "full editorial",
+        "classification": "USEFUL but duplicated/broad"
+      },
+      {
+        "field": "issues",
+        "classification": "REQUIRED on retry"
+      }
+    ],
+    "media": "none",
+    "expected_response": "QA status/issues; retry translation schema",
+    "consumed_response_fields": [
+      "id",
+      "status",
+      "issues",
+      "retry translation fields"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/translation_qa/{source}",
+    "retry": "one rewrite maximum plus shared retries",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "QA-specific lean editorial projection",
+      "retain issue details"
+    ]
+  },
+  {
+    "task": "manual_translation_qa",
+    "feature": "Manual selected AI QA",
+    "file": "src/cartoon_sub/translation/qa_service.py",
+    "function": "TranslationQAService.run_selected_manual",
+    "model_key": "review selection",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "same SEMANTIC_QA_RULES",
+    "user_prompt_template": "{editorial,target,before[3],after[3],current_vi_subtitle,current_vi_dubbing,attempt,previous_issues}",
+    "dynamic_context_fields": [
+      {
+        "field": "target/current VI",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "previous issues",
+        "classification": "REQUIRED after failure"
+      }
+    ],
+    "media": "none",
+    "expected_response": "id/status/issues/corrected_vi_subtitle/reason",
+    "consumed_response_fields": [
+      "id",
+      "status",
+      "issues",
+      "corrected_vi_subtitle",
+      "reason"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/manual_translation_qa/{source}; force=true",
+    "retry": "up to two manual attempts",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "keep correction/reason",
+      "cap issue detail length",
+      "use lean editorial"
+    ]
+  },
+  {
+    "task": "dubbing_optimization",
+    "feature": "Selected/bulk dubbing optimization",
+    "file": "src/cartoon_sub/translation/dubbing_service.py",
+    "function": "DubbingService.optimize",
+    "model_key": "DUBBING_OPTIMIZE",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "dubbing_system meaning-preserving dubbing contract",
+    "user_prompt_template": "{task,editorial,modes,budget_settings,reference_before,reference_after,targets}",
+    "dynamic_context_fields": [
+      {
+        "field": "Chinese/current dubbing/subtitle/budget",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "voice/rate broad fields",
+        "classification": "QUESTIONABLE if duplicated"
+      },
+      {
+        "field": "editorial",
+        "classification": "USEFUL but broad"
+      }
+    ],
+    "media": "none",
+    "expected_response": "translation schema",
+    "consumed_response_fields": [
+      "vi",
+      "compressed",
+      "meaning_preservation",
+      "review_note"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/dubbing plus segment fingerprint",
+    "retry": "shared retry plus up to two shortening passes",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "retain semantic safeguards",
+      "reduce duplicated row/editorial fields",
+      "review unused confidence"
+    ]
+  },
+  {
+    "task": "duration_fit_rewrite",
+    "feature": "TTS duration-fit rewrite",
+    "file": "src/cartoon_sub/translation/dubbing_service.py",
+    "function": "DubbingService.rewrite_duration_failures",
+    "model_key": "DUBBING_DURATION_REWRITE",
+    "endpoint": "POST /api/v1/chat/completions",
+    "input_modality": "text",
+    "system_prompt": "same dubbing_system",
+    "user_prompt_template": "Chinese/subtitle/current dubbing/voice/duration/reduction/rewrite attempt + 3 neighbours",
+    "dynamic_context_fields": [
+      {
+        "field": "duration/current dubbing",
+        "classification": "REQUIRED"
+      },
+      {
+        "field": "neighbours",
+        "classification": "USEFUL"
+      },
+      {
+        "field": "editorial",
+        "classification": "USEFUL but broad"
+      }
+    ],
+    "media": "none",
+    "expected_response": "translation schema",
+    "consumed_response_fields": [
+      "vi",
+      "review_note",
+      "meaning_preservation",
+      "compressed"
+    ],
+    "temperature": "0.3 if supported",
+    "max_tokens": "not set",
+    "cache": "cache/dubbing_duration",
+    "retry": "shared retry plus bounded semantic rewrite count",
+    "input_cost_risk": "MEDIUM",
+    "output_cost_risk": "MEDIUM",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "MEDIUM",
+    "recommendations": [
+      "preserve real duration constraints",
+      "reduce duplicated editorial"
+    ]
+  },
+  {
+    "task": "openrouter_connection_validation",
+    "feature": "Settings connection test (non-inference)",
+    "file": "src/cartoon_sub/app/controller.py; src/cartoon_sub/ai/openrouter_client.py",
+    "function": "Controller.test_connection/test_translation_connection; OpenRouterClient.test_connection",
+    "model_key": "none",
+    "endpoint": "GET authenticated OpenRouter key endpoint",
+    "input_modality": "no model input",
+    "system_prompt": "none",
+    "user_prompt_template": "none",
+    "dynamic_context_fields": [],
+    "media": "none",
+    "expected_response": "HTTP success only",
+    "consumed_response_fields": [
+      "HTTP success"
+    ],
+    "temperature": "not applicable",
+    "max_tokens": "not applicable",
+    "cache": "none",
+    "retry": "key-pool behavior only",
+    "input_cost_risk": "LOW",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "LOW",
+    "recommendations": [
+      "keep separate from inference accounting"
+    ]
+  },
+  {
+    "task": "openrouter_catalog_refresh",
+    "feature": "Model catalog refresh (non-inference)",
+    "file": "src/cartoon_sub/ai/openrouter_client.py",
+    "function": "OpenRouterClient.get_models",
+    "model_key": "none",
+    "endpoint": "GET /api/v1/models",
+    "input_modality": "no model input",
+    "system_prompt": "none",
+    "user_prompt_template": "none",
+    "dynamic_context_fields": [],
+    "media": "none",
+    "expected_response": "model catalog JSON",
+    "consumed_response_fields": [
+      "model metadata"
+    ],
+    "temperature": "not applicable",
+    "max_tokens": "not applicable",
+    "cache": "catalog cache managed by catalog service",
+    "retry": "key-pool behavior only",
+    "input_cost_risk": "LOW",
+    "output_cost_risk": "LOW",
+    "media_cost_risk": "LOW",
+    "overall_cost_risk": "LOW",
+    "recommendations": [
+      "keep separate from inference accounting"
+    ]
+  }
 ]

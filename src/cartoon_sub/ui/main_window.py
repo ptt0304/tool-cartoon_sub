@@ -13,10 +13,6 @@ from cartoon_sub.app.controller import Controller
 from cartoon_sub.ui.worker import Worker
 from cartoon_sub.ui.no_wheel import GlobalWheelGuard
 from cartoon_sub.ui.settings_dialog import SettingsDialog
-from cartoon_sub.ui.context_dialog import ContextDialog
-from cartoon_sub.translation.context_service import source_fingerprint, context_config_fingerprint
-from cartoon_sub.translation.context_export import build_context_ai_diagnostic
-from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.ui.dubbing_settings_dialog import DubbingSettingsDialog
 from cartoon_sub.ui.utterance_dialog import UtteranceDialog
 from cartoon_sub.ui.docs_dialog import DocsWindow
@@ -136,8 +132,6 @@ class MainWindow(QMainWindow):
         self.pages[2].retranslate_selected_button.clicked.connect(self.retranslate_selected)
         self.pages[2].qa_button.clicked.connect(self.qa_translation)
         self.pages[2].import_vi_button.clicked.connect(self.import_vi_srt)
-        self.pages[2].analyze_button.clicked.connect(self.analyze_context)
-        self.pages[2].proposal_button.clicked.connect(lambda: self.edit_context(True))
         self.pages[2].view.currentIndexChanged.connect(self.refresh_timeline_table)
         self.pages[2].edit_button.clicked.connect(self.edit_utterance)
         self.pages[2].optimize_button.clicked.connect(self.optimize_dubbing)
@@ -1245,49 +1239,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error(exc)
 
-    def analyze_context(self):
-        try:
-            self.sync_options()
-            self.controller.save()
-            self.start_job(self.controller.analyze_context, self.accept_project)
-        except Exception as exc:
-            self.error(exc)
-
-    def edit_context(self, proposal):
-        try:
-            # Opening Context Review (including export-only failed state) is
-            # read-only. Translation options are synchronized by analyze/run,
-            # not merely by inspecting or exporting diagnostics.
-            before=self._project_state()
-            project = self.controller.project
-            if (proposal and project.context_proposal
-                    and (project.context_proposal_hash != source_fingerprint(project)
-                         or project.context_proposal_config_hash != context_config_fingerprint(project))):
-                raise ValueError("Transcript hoặc cấu hình đã đổi; hãy phân tích lại ngữ cảnh")
-            if proposal and project.context_proposal and project.visual_context_status == "proposal_ready":
-                from cartoon_sub.translation.visual_context import visual_source_signature
-                if project.visual_context_signature != visual_source_signature(project):
-                    raise ValueError("Video hoặc timeline đã đổi; hãy phân tích lại visual context")
-            context = ((project.context_proposal or StoryContext().to_dict())
-                       if proposal else project.story_context)
-            required_status = "proposal_ready" if proposal else "applied"
-            diagnostic = build_context_ai_diagnostic(
-                project, self.controller.directory,
-                self.controller.context_service.last_visual_request_plan,
-            )
-            dialog = ContextDialog(
-                context, {s.id for s in project.segments}, self, proposal,
-                visual_ready=project.visual_context_status == required_status,
-                diagnostic_payload=diagnostic,
-                export_directory=self.controller.directory,
-            )
-            if dialog.exec() == dialog.DialogCode.Accepted:
-                self.controller.apply_context(dialog.result_context)
-                self._record_project_edit(before,"Edit story context")
-                self.refresh()
-        except Exception as exc:
-            self.error(exc)
-
     def refresh(self):
         self.refresh_ai_model_selectors()
         project = self.controller.project
@@ -1327,8 +1278,6 @@ class MainWindow(QMainWindow):
         ready, readiness_message = translation_readiness(project)
         page.translate_button.setEnabled(available and ready)
         page.qa_button.setEnabled(any(segment.vi_subtitle.strip() for segment in project.segments))
-        page.analyze_button.setEnabled(False)
-        page.proposal_button.setEnabled(False)
         status = readiness_message
         states = {"completed": "Hoàn tất", "not_started": "Chưa dịch", "stale": "Cần dịch cập nhật — cấu hình/nguồn đã đổi",
                   "running": "Đang dịch", "in_progress": "Đang dịch",

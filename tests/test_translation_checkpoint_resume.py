@@ -261,13 +261,14 @@ class TranslationCheckpointResumeTests(unittest.TestCase):
 
     def test_each_semantic_setting_and_model_change_invalidates_translation(self):
         variants = (
-            lambda project, store: project.translation_genres.append("ancient"),
-            lambda project, store: setattr(project, "translation_preset", "Light Classical"),
-            lambda project, store: project.glossary.update({"小白": "Tiểu Bạch"}),
-            lambda project, store: setattr(project, "translation_prompt", "Dùng cách gọi cô chủ."),
-            lambda project, store: setattr(store.settings, "default_ai_model", "vendor/new-model"),
+            (lambda project, store: project.translation_genres.append("ancient"), [1, 2, 3]),
+            (lambda project, store: setattr(project, "translation_preset", "Light Classical"), [1, 2, 3]),
+            # A glossary mapping absent from this source batch is intentionally omitted.
+            (lambda project, store: project.glossary.update({"小白": "Tiểu Bạch"}), []),
+            (lambda project, store: setattr(project, "translation_prompt", "Dùng cách gọi cô chủ."), [1, 2, 3]),
+            (lambda project, store: setattr(store.settings, "default_ai_model", "vendor/new-model"), [1, 2, 3]),
         )
-        for mutate in variants:
+        for mutate, expected_calls in variants:
             with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as temp:
                 first_store = Store()
                 done, _ = pipeline(first_store, Client()).run(make_project(3), temp)
@@ -275,7 +276,7 @@ class TranslationCheckpointResumeTests(unittest.TestCase):
                 mutate(done, next_store)
                 client = Client()
                 pipeline(next_store, client).run(done, temp)
-                self.assertEqual(client.calls, [1, 2, 3])
+                self.assertEqual(client.calls, expected_calls)
                 self.assertEqual(done.transcription_status, "completed")
 
     def test_translation_complete_is_reused_when_qa_fails(self):

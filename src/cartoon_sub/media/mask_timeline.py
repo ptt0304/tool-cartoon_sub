@@ -42,19 +42,23 @@ def _text_extent(text, style):
     return width + extra, height + extra
 
 
-def event_geometry(text, project):
-    """Return a text-sized rectangle clamped inside the persisted Mask ROI."""
-    mask, style = project.mask, project.subtitle_style
-    if mask.geometry_mode == "roi_full":
-        return mask.x, mask.y, mask.width, mask.height
+def text_mask_geometry(text, mask, style, video_width, video_height):
+    """Fit the mask to rendered text and center the complete block on the ROI."""
     text_width, text_height = _text_extent(text, style)
-    width = min(mask.width, max(1, text_width + 2 * mask.padding_x))
-    height = min(mask.height, max(1, text_height + 2 * mask.padding_y))
+    frame_width, frame_height = max(1, int(video_width)), max(1, int(video_height))
+    width = min(frame_width, max(1, text_width + 2 * mask.padding_x))
+    height = min(frame_height, max(1, text_height + 2 * mask.padding_y))
     center_x = mask.x + mask.width / 2
     center_y = mask.y + mask.height / 2
-    x = max(mask.x, min(mask.x + mask.width - width, round(center_x - width / 2)))
-    y = max(mask.y, min(mask.y + mask.height - height, round(center_y - height / 2)))
+    x = max(0, min(frame_width - width, round(center_x - width / 2)))
+    y = max(0, min(frame_height - height, round(center_y - height / 2)))
     return x, y, width, height
+
+
+def event_geometry(text, project):
+    """Return the text-sized Mask rectangle for a rendered subtitle event."""
+    return text_mask_geometry(text, project.mask, project.subtitle_style,
+                              project.metadata.get("width", 0), project.metadata.get("height", 0))
 
 
 def mask_events_from_ass(path, project):

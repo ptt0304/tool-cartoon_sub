@@ -42,7 +42,7 @@ class FakeAIClient:
     def __init__(self, credential):
         pass
 
-    def generate_json(self, system, prompt, schema, model, cancel=None):
+    def generate_json(self, system, prompt, schema, model, cancel=None, **_kwargs):
         target = json.loads(prompt)["target"]
         return {"translations": [{
             "id": target["id"], "vi": "Hắn giữ pháp khí Lưu Vân Lạp.",

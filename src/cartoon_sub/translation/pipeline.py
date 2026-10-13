@@ -170,7 +170,7 @@ class TranslationPipeline:
         checkpoints = TranslationCheckpointStore(cache_directory)
         factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(self.store, cache_directory, model,
-            settings.retry_count, cancel, progress, factory, "openrouter")
+            settings.retry_count, cancel, progress, factory, "openrouter", task="TRANSLATION")
         translated = []
         by_id = {s.id: s for s in project.segments}
         def apply_row(row):
@@ -334,7 +334,7 @@ class TranslationPipeline:
         factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
             self.store, Path(directory) / "cache" / "translation" / "retranslate",
-            model, settings.retry_count, cancel, progress, factory, "openrouter")
+            model, settings.retry_count, cancel, progress, factory, "openrouter", task="TRANSLATION")
         rows = source_rows(project.segments)
         position = {row["id"]: index for index, row in enumerate(rows)}
         manager = ProjectManager()

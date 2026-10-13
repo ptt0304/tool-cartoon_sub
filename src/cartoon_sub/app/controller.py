@@ -21,13 +21,9 @@ from cartoon_sub.transcription.video.pipeline import VideoTranscriptionPipeline
 from cartoon_sub.transcription.video.qaqc import VideoTranscriptQaqcService
 from cartoon_sub.ai.openrouter_client import OpenRouterClient
 from cartoon_sub.ai.model_resolver import AIModelResolver
-from cartoon_sub.translation.context_service import (
-    ContextService, enforce_context_language_contract, source_fingerprint,
-)
 from cartoon_sub.translation.pipeline import TranslationPipeline, mark_stale
 from cartoon_sub.translation.source_modes import TranslationSourceService
 from cartoon_sub.translation.qa_service import TranslationQAService
-from cartoon_sub.translation.context_models import StoryContext
 from cartoon_sub.translation.artifacts import save_translation_artifacts
 from cartoon_sub.translation.glossary import parse_glossary
 from cartoon_sub.translation.dubbing_service import DubbingService
@@ -46,7 +42,6 @@ class Controller:
         self.pipeline = TranscriptionPipeline(self.settings_store)
         self.video_pipeline = VideoTranscriptionPipeline(self.settings_store)
         self.video_qaqc_service = VideoTranscriptQaqcService()
-        self.context_service = ContextService(self.settings_store)
         self.translation_pipeline = TranslationPipeline(self.settings_store)
         self.translation_source_service = TranslationSourceService()
         self.translation_qa_service = TranslationQAService(self.settings_store)
@@ -70,11 +65,6 @@ class Controller:
 
     def accept(self, result):
         self.project, self.directory = result
-        force_candidate_upgrade = enforce_context_language_contract(self.project)
-        restored_candidate = self.context_service.restore_cached_candidate(
-            self.project, self.directory, force=force_candidate_upgrade)
-        if force_candidate_upgrade or restored_candidate:
-            self.manager.save(self.project, self.directory)
         mark_stale(self.project, self.settings_store.load())
 
     def save(self):
@@ -179,13 +169,6 @@ class Controller:
         self.project.translation_notes = {}
         self.project.translation_qa = {}
         self.project.segmentation_cache = {}
-        self.project.context_proposal = {}
-        self.project.context_proposal_hash = ""
-        self.project.context_proposal_config_hash = ""
-        self.project.context_status = "stale" if self.project.context_source_hash else "not_started"
-        self.project.visual_context_status = "stale" if self.project.context_source_hash else "not_started"
-        self.project.visual_context_signature = ""
-        self.project.visual_context_error = ""
         self.project.final_audio_status = "stale"
         self.project.final_audio_fingerprint = ""
         self.project.cache_hashes.pop("translation", None)
@@ -271,54 +254,6 @@ class Controller:
             self.project.translation_qa = {}
             self.project.translation_continuity_memory = []
         mark_stale(self.project, self.settings_store.load())
-
-    def analyze_context(self, **job):
-        settings = self.settings_store.load()
-        capability = "vision_video" if settings.vision_input_mode == "video" else "vision_frames"
-        resolved = self.ai_model_resolver.resolve("CONTEXT_ANALYSIS", "translate", (capability,))
-        return self.context_service.analyze(self.project, self.directory,
-            model=resolved.model_id, selection_source=resolved.source, **job)
-
-    def apply_context(self, context):
-        from cartoon_sub.translation.context_service import context_config_fingerprint
-        valid_ids = {s.id for s in self.project.segments}
-        approved = StoryContext.from_dict(context, valid_ids).to_dict()
-        visual_ids = {row["id"] for row in approved.get("visual_contexts", [])}
-        if visual_ids != valid_ids:
-            raise ValueError("Không thể lưu: Visual Context chưa đầy đủ cho mọi ID transcript.")
-        if self.project.visual_context_status not in {"proposal_ready", "applied"}:
-            raise ValueError("Không thể lưu: Visual Context chưa được phân tích thành công từ video.")
-        previous = self.project.story_context
-        changed = previous != approved
-        self.project.story_context = approved
-        self.project.context_source_hash = source_fingerprint(self.project)
-        self.project.context_approved_config_hash = context_config_fingerprint(self.project)
-        self.project.context_status = "applied"
-        self.project.visual_context_status = (
-            "applied" if self.project.story_context.get("visual_contexts")
-            else "VISUAL_CONTEXT_FAILED"
-        )
-        if self.project.story_context.get("visual_contexts"):
-            from cartoon_sub.translation.visual_context import visual_source_signature
-            try:
-                self.project.visual_context_signature = visual_source_signature(self.project)
-            except (OSError, ValueError):
-                self.project.visual_context_status = "VISUAL_CONTEXT_FAILED"
-                self.project.visual_context_signature = ""
-        self.project.visual_context_error = ""
-        if changed:
-            if self.project.translation_status != "not_started":
-                self.project.translation_status = "stale"
-            self.project.translation_qa = {}
-            for row in self.project.utterances:
-                if row.dubbing_optimized or row.dubbing_status not in {"not_started", "stale"}:
-                    row.dubbing_status = "stale"
-                if row.tts_generation_status in {"generated", "cached"}:
-                    row.tts_generation_status = "stale"
-                    row.tts_error = ""
-            self.project.final_audio_status = "stale"
-            self.project.final_audio_fingerprint = ""
-        self.save()
 
     def translate(self, **job):
         settings = self.settings_store.load()

@@ -391,7 +391,7 @@ class TranscriptAIRepairService:
         try:
             if payload is None:
                 check_cancel(cancel); client = self.client_factory(self.store.openrouter_key_pool()); requests = 1
-                payload = client.generate_json(SYSTEM, prompt, SCHEMA, model, cancel=cancel)
+                payload = client.generate_json(SYSTEM, prompt, SCHEMA, model, cancel=cancel, task="TRANSCRIPT_REPAIR")
                 atomic_json(path, {"status": "completed", "response": payload})
             items = self._proposal_items(payload)
             by_region = {}

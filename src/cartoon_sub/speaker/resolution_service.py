@@ -109,28 +109,8 @@ class SpeakerResolutionService:
 
     @staticmethod
     def evidence_from_context(context):
-        evidence = []
-        for item in context.get("visual_contexts", []) if isinstance(context, dict) else []:
-            speaker = item.get("speaker", {}) if isinstance(item, dict) else {}
-            speaker_id = normalize_speaker_hint(speaker.get("spk_id"))
-            confidence = normalize_confidence(speaker.get("confidence", item.get("confidence")))
-            evidence.append(SpeakerEvidence(
-                utterance_id=item.get("id"), speaker_id=speaker_id,
-                confidence=confidence, source=SpeakerEvidenceSource.VISUAL,
-                notes=str(item.get("notes", "")),
-            ))
-        # StoryContext mappings are dialogue-level continuity evidence. They
-        # remain SPK proposals; character_id is never used as speaker identity.
-        for mapping in context.get("speaker_character_mappings", []) if isinstance(context, dict) else []:
-            for utterance_id in mapping.get("evidence_ids", []):
-                evidence.append(SpeakerEvidence(
-                    utterance_id=utterance_id,
-                    speaker_id=normalize_speaker_hint(mapping.get("spk_id")),
-                    confidence=normalize_confidence(mapping.get("confidence")),
-                    source=SpeakerEvidenceSource.DIALOGUE_CONTEXT,
-                    notes=str(mapping.get("notes", "")),
-                ))
-        return evidence
+        del context
+        return []
 
     def apply_evidence(self, project, evidence):
         """Apply only high-confidence proposals; confirmed assignments are immutable."""

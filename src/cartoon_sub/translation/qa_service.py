@@ -43,9 +43,9 @@ SEMANTIC_QA_SCHEMA = {
     "properties": {
         "id": {"type": "INTEGER"},
         "status": {"type": "STRING", "enum": ["PASS", "FAIL"]},
-        "issues": {"type": "ARRAY", "items": {
+        "issues": {"type": "ARRAY", "maxItems": 6, "items": {
             "type": "OBJECT",
-            "properties": {"type": {"type": "STRING"}, "detail": {"type": "STRING"}},
+            "properties": {"type": {"type": "STRING", "maxLength": 80}, "detail": {"type": "STRING", "maxLength": 500}},
             "required": ["type", "detail"],
         }},
     },
@@ -57,13 +57,13 @@ MANUAL_QA_SCHEMA = {
     "properties": {
         "id": {"type": "INTEGER"},
         "status": {"type": "STRING", "enum": ["PASS", "FAIL"]},
-        "issues": {"type": "ARRAY", "items": {
+        "issues": {"type": "ARRAY", "maxItems": 6, "items": {
             "type": "OBJECT",
-            "properties": {"type": {"type": "STRING"}, "detail": {"type": "STRING"}},
+            "properties": {"type": {"type": "STRING", "maxLength": 80}, "detail": {"type": "STRING", "maxLength": 500}},
             "required": ["type", "detail"],
         }},
-        "corrected_vi_subtitle": {"type": "STRING"},
-        "reason": {"type": "STRING"},
+        "corrected_vi_subtitle": {"type": "STRING", "maxLength": 1200},
+        "reason": {"type": "STRING", "maxLength": 500},
     },
     "required": ["id", "status", "issues", "corrected_vi_subtitle", "reason"],
 }
@@ -75,12 +75,13 @@ def validate_semantic_qa(payload, expected_id):
         raise TranslationValidationError("QA response thiếu/sai trường")
     if data["id"] != expected_id or data["status"] not in {"PASS", "FAIL"}:
         raise TranslationValidationError("QA response sai ID/status")
-    if not isinstance(data["issues"], list):
-        raise TranslationValidationError("QA issues phải là mảng")
+    if not isinstance(data["issues"], list) or len(data["issues"]) > 6:
+        raise TranslationValidationError("QA issues phải là mảng giới hạn")
     issues = []
     for issue in data["issues"]:
         if (not isinstance(issue, dict) or set(issue) != {"type", "detail"}
-                or not all(isinstance(issue[key], str) and issue[key].strip() for key in ("type", "detail"))):
+                or not all(isinstance(issue[key], str) and issue[key].strip() for key in ("type", "detail"))
+                or len(issue["type"]) > 80 or len(issue["detail"]) > 500):
             raise TranslationValidationError("QA issue không đúng schema")
         issues.append({"type": issue["type"].strip(), "detail": issue["detail"].strip(), "severity": "FAIL"})
     if data["status"] == "FAIL" and not issues:
@@ -97,18 +98,20 @@ def validate_manual_qa(payload, expected_id):
         raise TranslationValidationError("Manual QA response thiếu/sai trường")
     if data["id"] != expected_id or data["status"] not in {"PASS", "FAIL"}:
         raise TranslationValidationError("Manual QA response sai ID/status")
-    if not isinstance(data["issues"], list) or not isinstance(data["reason"], str):
+    if (not isinstance(data["issues"], list) or len(data["issues"]) > 6
+            or not isinstance(data["reason"], str) or len(data["reason"]) > 500):
         raise TranslationValidationError("Manual QA issues/reason sai kiểu")
     issues = []
     for issue in data["issues"]:
         if (not isinstance(issue, dict) or set(issue) != {"type", "detail"}
                 or not all(isinstance(issue[key], str) and issue[key].strip()
-                           for key in ("type", "detail"))):
+                           for key in ("type", "detail"))
+                or len(issue["type"]) > 80 or len(issue["detail"]) > 500):
             raise TranslationValidationError("Manual QA issue không đúng schema")
         issues.append({"type": issue["type"].strip(), "detail": issue["detail"].strip(),
                        "severity": "FAIL"})
     corrected = data["corrected_vi_subtitle"]
-    if not isinstance(corrected, str):
+    if not isinstance(corrected, str) or len(corrected) > 1200:
         raise TranslationValidationError("Manual QA corrected_vi_subtitle sai kiểu")
     if data["status"] == "PASS" and (issues or corrected.strip()):
         raise TranslationValidationError("Manual QA PASS không được rewrite")
@@ -151,7 +154,7 @@ class TranslationQAService:
         factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
             self.store, Path(directory) / "cache" / "translation_qa" / getattr(project, "translate_source", "audio"), review_model,
-            settings.retry_count, cancel, progress, factory, "openrouter",
+            settings.retry_count, cancel, progress, factory, "openrouter", task="TRANSLATION_QA",
         )
         rows = source_rows(project.segments)
         vi_by_id = {row.id: row.vi_subtitle for row in project.segments}
@@ -253,7 +256,7 @@ class TranslationQAService:
         requests = CachedRequests(
             self.store, Path(directory) / "cache" / "manual_translation_qa" / getattr(project, "translate_source", "audio"),
             review_model, 0, cancel, progress, factory,
-            "openrouter",
+            "openrouter", task="MANUAL_QA",
         )
         rows = source_rows(project.segments)
         indexes = {row["id"]: index for index, row in enumerate(rows)}

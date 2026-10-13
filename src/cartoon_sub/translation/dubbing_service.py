@@ -167,7 +167,7 @@ class DubbingService:
         self._apply_voice_budgets(project, directory, chosen, budget, progress)
         factory=self.factory or text_client_factory("openrouter")
         requests=CachedRequests(self.store,Path(directory)/"cache"/"dubbing",model,
-            settings.retry_count,cancel,progress,factory,"openrouter")
+            settings.retry_count,cancel,progress,factory,"openrouter", task="DUBBING_OPTIMIZE")
         all_rows=source_rows(project.segments)
         by_id={s.id:s for s in project.segments}
         def fingerprint(segment):
@@ -280,7 +280,7 @@ class DubbingService:
         factory = self.factory or text_client_factory("openrouter")
         requests = CachedRequests(
             self.store, Path(directory) / "cache" / "dubbing_duration", model,
-            settings.retry_count, cancel, progress, factory, "openrouter",
+            settings.retry_count, cancel, progress, factory, "openrouter", task="DUBBING_DURATION_REWRITE",
         )
         ordered = sorted(project.utterances, key=lambda row: (row.start, row.end, row.id))
         changed = []
@@ -296,7 +296,6 @@ class DubbingService:
                     "chinese_source": row.zh,
                     "full_vi_subtitle": row.vi_subtitle,
                     "current_vi_dubbing": row.vi_dubbing,
-                    "voice_id": row.dubbing_voice_id or getattr(project.audio_settings, "tts_voice_id", None),
                     "available_duration": round(allowed, 3),
                     "actual_tts_duration": round(float(row.tts_duration or 0), 3),
                     "required_reduction_percent": round(max(0.0, 1.0 - allowed / float(row.tts_duration or allowed)) * 100, 1),

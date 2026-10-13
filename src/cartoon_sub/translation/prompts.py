@@ -3,7 +3,7 @@ from cartoon_sub.ai.language_contract import USER_FACING_AI_INSTRUCTION
 from .presets import STYLES
 from .context_profiles import PROFILES
 from cartoon_sub.prompts import read
-PROMPT_VERSION = "multimodal-conversation-translation-v1"
+PROMPT_VERSION = "multimodal-conversation-translation-v2"
 
 BASE_TRANSLATION_INSTRUCTION = (
     "Dịch theo nghĩa và ngữ cảnh, không dịch từng chữ hoặc bê cấu trúc tiếng Trung. "
@@ -103,34 +103,97 @@ def build_context_instruction(project):
     return "\n".join(lines)
 
 
-def editorial(project, utterance_ids=None):
-    del utterance_ids
+def _mapping_value(value):
+    if isinstance(value, dict):
+        return str(value.get("value", value.get("target", ""))).strip()
+    return str(value or "").strip()
+
+
+def _is_global_mapping(key, value):
+    return (isinstance(value, dict) and bool(value.get("global") or value.get("mandatory"))) or \
+        str(key).casefold().startswith("global:")
+
+
+def _relevance_text(rows, continuity):
+    row_text = " ".join(str(row.get("zh", "")) for row in rows or [] if isinstance(row, dict))
+    memory_text = " ".join(str(item.get("key", "")) + " " + str(item.get("value", ""))
+                           for item in continuity if isinstance(item, dict))
+    return row_text + " " + memory_text
+
+
+def relevant_glossary(project, rows=None):
+    """Project only mappings named by the current dialogue, plus explicit globals."""
+    corpus = _relevance_text(rows, [])
+    selected = {}
+    for key, value in getattr(project, "glossary", {}).items():
+        mapped = _mapping_value(value)
+        if not mapped:
+            continue
+        if _is_global_mapping(key, value) or str(key) in corpus or mapped in corpus:
+            selected[str(key)] = mapped
+    return selected
+
+
+def relevant_continuity(project, rows=None, glossary=None, limit=12):
+    glossary = glossary or relevant_glossary(project, rows)
+    corpus = _relevance_text(rows, [])
+    terms = tuple(key for key in glossary if key and not key.casefold().startswith("global:"))
+    selected = []
+    for item in reversed(getattr(project, "translation_continuity_memory", [])):
+        if not isinstance(item, dict):
+            continue
+        key, value = str(item.get("key", "")), str(item.get("value", ""))
+        combined = key + " " + value
+        relevant = any(term in combined and term in corpus for term in terms)
+        unresolved = str(item.get("status", "")).casefold() in {"unresolved", "pending"}
+        if relevant or (unresolved and any(term in combined for term in terms)):
+            selected.append({field: item[field] for field in ("key", "value", "confidence", "status") if field in item})
+        if len(selected) >= limit:
+            break
+    return list(reversed(selected))
+
+
+def dialogue_rows(rows):
+    """Dialogue references never need TTS voice/rate/budget fields."""
+    return [{"id": row["id"], "zh": row["zh"]} for row in rows]
+
+
+def editorial(project, rows=None, *, purpose="translation"):
     custom_rules = effective_custom_rules(project)
     style = (custom_rules["style"] if project.translation_preset == "Custom"
              else STYLES.get(project.translation_preset, STYLES["Natural Vietnamese"])[1])
-    return {"context_instruction": build_context_instruction(project),
-            "style": style,
-            "active_custom_rules": custom_rules,
-            "style_safety": "Văn phong không được thay đổi nghĩa, sự kiện, quan hệ, tên riêng hoặc thuật ngữ bắt buộc.",
-            "user_defined_context": project.translation_prompt.strip(),
-            "proper_name_rules": dict(project.glossary),
-            "continuity_memory": list(project.translation_continuity_memory[-64:]),
-            "context_priority": ["user_defined_context", "user_mappings",
-                                 "stable_continuity", "current_audiovisual_evidence",
-                                 "neighbor_dialogue", "genre", "style", "fallback"]}
+    glossary = relevant_glossary(project, rows)
+    name_rule = custom_rules["name_rule"] or PROPER_NAME_INSTRUCTIONS.get(
+        project.proper_name_mode, PROPER_NAME_INSTRUCTIONS["sino_vietnamese"])
+    genres = [profile.display_name + ": " + profile.prompt_instruction
+              for key in project.translation_genres if key in PROFILES
+              for profile in [PROFILES[key]]]
+    if "custom" in project.translation_genres and custom_rules["genre"]:
+        genres.append("Custom: " + custom_rules["genre"])
+    return {
+        "purpose": purpose,
+        "style": style,
+        "genre_instructions": genres,
+        "user_rules": project.translation_prompt.strip(),
+        "glossary": glossary,
+        "proper_name_rule": name_rule,
+        "continuity_memory": relevant_continuity(project, rows, glossary),
+        "style_safety": "Văn phong không được thay đổi nghĩa, sự kiện, quan hệ, tên riêng hoặc thuật ngữ bắt buộc.",
+    }
 
 
 def translation_prompt(project, targets, before, after, previous_vi, evidence=None):
-    ids = [row["id"] for row in [*before, *targets, *after]]
-    payload = {"editorial": editorial(project, ids), "reference_before": before, "reference_after": after,
-               "previous_translation": previous_vi, "targets": targets,
+    rows = [*before, *targets, *after]
+    payload = {"editorial": editorial(project, rows, purpose="translation"),
+               "reference_before": dialogue_rows(before), "reference_after": dialogue_rows(after),
+               "previous_translation": previous_vi, "targets": dialogue_rows(targets),
                "audiovisual_evidence": evidence or {"mode": "text_only"}}
     return ("Dịch bản VI SUBTITLE tự nhiên và đầy đủ nghĩa; đây chưa phải bước tối ưu VI DUBBING. "
             "Không rút gọn nghĩa để ép ngân sách dubbing. Quan sát/nghe bằng chứng media của đúng cửa sổ hội thoại "
             "để xử lý người nói, người nghe, quan hệ, cảm xúc và xưng hô khi bằng chứng đủ rõ. "
             "Dùng reference trước/sau để giữ hội thoại liền mạch; chỉ dịch targets, không dịch lại reference. "
             "không tự gán lại người nói. Dịch CHỈ targets, mỗi ID đúng một lần; không trả ID tham chiếu, không thêm timestamp. "
-            "Trả translations gồm id, vi, confidence, review_note, meaning_preservation (high/medium/low/unknown), compressed (boolean); "
+            "Trả translations gồm id, vi, review_note, meaning_preservation (high/medium/low/unknown), compressed (boolean); "
             "continuity_updates chỉ gồm quy ước dịch ngắn, ổn định và uncertainties ghi điều chưa chắc. review_note rỗng nếu không có nghi vấn; "
             "nghi vấn phải cụ thể (tên ASR, người nói, đa nghĩa), không tự chấm điểm chắc chắn.\n"
             "Chinese source, ID, timestamp và thứ tự canonical là bất biến. Không sửa, gộp, tách hay đánh số lại. "
@@ -142,13 +205,13 @@ def translation_retry_prompt(project, target, before, after, rejected_translatio
     payload = {
         # Neighbor rows are text-only references. Visual evidence is limited to
         # the failed target so retry QA does not upload unrelated frame analysis.
-        "editorial": editorial(project, [target["id"]]),
+        "editorial": editorial(project, [*before, target, *after], purpose="translation_qa"),
         "qa_retry_attempt": attempt,
         "previous_qa_issues": issues,
-        "reference_before": before,
-        "reference_after": after,
+        "reference_before": dialogue_rows(before),
+        "reference_after": dialogue_rows(after),
         "rejected_translation": rejected_translation,
-        "targets": [target],
+        "targets": dialogue_rows([target]),
     }
     return (
         "Bản dịch trước đã FAIL QA/QC. Dịch lại hoàn chỉnh từ Chinese source trong targets, không vá hoặc dùng "
@@ -161,10 +224,10 @@ def translation_retry_prompt(project, target, before, after, rejected_translatio
 
 def semantic_qa_prompt(project, target, current_vi, before, after):
     payload = {
-        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
-        "reference_before": before,
-        "reference_after": after,
-        "target": target,
+        "editorial": editorial(project, [*before, target, *after], purpose="translation_qa"),
+        "reference_before": dialogue_rows(before),
+        "reference_after": dialogue_rows(after),
+        "target": dialogue_rows([target])[0],
         "current_vietnamese": current_vi,
     }
     return (
@@ -183,13 +246,13 @@ def semantic_qa_prompt(project, target, current_vi, before, after):
 def manual_translation_qa_prompt(project, target, before, after, current_subtitle,
                                  current_dubbing, attempt, previous_issues=None):
     payload = {
-        "editorial": editorial(project, [target["id"]]),
+        "editorial": editorial(project, [*before, target, *after], purpose="manual_qa"),
         "qa_attempt": attempt,
-        "previous_issues": list(previous_issues or []),
-        "reference_before": before,
-        "reference_after": after,
+        "previous_issues": [str(item)[:300] for item in list(previous_issues or [])][:8],
+        "reference_before": dialogue_rows(before),
+        "reference_after": dialogue_rows(after),
         "target": {
-            **target,
+            **dialogue_rows([target])[0],
             "current_vi_subtitle": current_subtitle,
             "current_vi_dubbing": current_dubbing,
         },
@@ -221,8 +284,8 @@ def dubbing_prompt(project, targets, before, after):
         "the shortest faithful version instead. Never output or change VI Subtitle, Chinese source, IDs, speakers, "
         "timestamps, targets, or modes."
     ),
-        "editorial":editorial(project, [row["id"] for row in [*before, *targets, *after]]),"modes":modes,"budget_settings":project.dubbing_settings,
-        "reference_before":before,"reference_after":after,"targets":targets},ensure_ascii=False)
+        "editorial":editorial(project, [*before, *targets, *after], purpose="dubbing"),"modes":modes,"budget_settings":project.dubbing_settings,
+        "reference_before":dialogue_rows(before),"reference_after":dialogue_rows(after),"targets":targets},ensure_ascii=False)
 
 def dubbing_system():
     return EDITORIAL_RULES.replace("Không sáng tác nội dung, không thêm hook, không rút gọn thành tóm tắt, không sửa cốt truyện.",
@@ -244,8 +307,8 @@ def duration_rewrite_prompt(project, target, before, after):
             "remove only optional fillers or context that is already unambiguous. Never change subtitle text, ID, speaker, "
             "or canonical timestamps."
         ),
-        "editorial": editorial(project, [row["id"] for row in [*before, target, *after]]),
-        "reference_before": before,
-        "reference_after": after,
-        "target": target,
+        "editorial": editorial(project, [*before, target, *after], purpose="translation_qa"),
+        "reference_before": dialogue_rows(before),
+        "reference_after": dialogue_rows(after),
+        "target": dialogue_rows([target])[0],
     }, ensure_ascii=False)

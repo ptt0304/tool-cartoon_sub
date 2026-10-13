@@ -1,5 +1,6 @@
 """A lazy client and durable request cache shared by context analysis and translation."""
 import json
+import logging
 from pathlib import Path
 from threading import Event
 from cartoon_sub.ai.provider_errors import AIProviderError as GeminiError
@@ -7,6 +8,8 @@ from cartoon_sub.ai.language_contract import USER_FACING_AI_CORRECTION, UserFaci
 from cartoon_sub.project.cache import atomic_json, content_hash, check_cancel
 from .gemini_translator import TranslationValidationError
 from .prompts import PROMPT_VERSION
+
+log = logging.getLogger(__name__)
 
 
 def _safe_error_record(exc, attempt, evidence_fingerprint=None):
@@ -28,9 +31,9 @@ def _safe_error_record(exc, attempt, evidence_fingerprint=None):
 
 
 class CachedRequests:
-    def __init__(self, store, directory, model, retries, cancel=None, progress=None, client_factory=None, provider="openrouter"):
+    def __init__(self, store, directory, model, retries, cancel=None, progress=None, client_factory=None, provider="openrouter", task="TRANSLATION"):
         self.store, self.directory, self.model = store, Path(directory), model
-        self.retries, self.cancel = retries, cancel or Event()
+        self.retries, self.cancel, self.task = retries, cancel or Event(), task
         from cartoon_sub.ai.text_client import text_client_factory
         self.report, self.factory, self.provider = progress or (lambda text: None), (client_factory or text_client_factory("openrouter")), "openrouter"
         self.client = None
@@ -38,6 +41,17 @@ class CachedRequests:
     def close(self):
         if self.client:
             self.client.close()
+
+    def _log_metrics(self, *, cache_hit, attempt, prompt, payload=None, media_count=0):
+        usage = getattr(self.client, "last_usage", None) if self.client is not None else None
+        usage = usage if isinstance(usage, dict) else {}
+        log.info("[AI REQUEST METRICS] task=%s model=%s cache_hit=%s attempt=%s batch_rows=%s "
+                 "input_chars=%s output_chars=%s media_count=%s input_tokens=%r output_tokens=%r cost=%r",
+                 self.task, self.model, cache_hit, attempt, prompt.count('"id"'), len(prompt),
+                 len(json.dumps(payload, ensure_ascii=False)) if payload is not None else None, media_count,
+                 usage.get("prompt_tokens", usage.get("input_tokens")),
+                 usage.get("completion_tokens", usage.get("output_tokens")), usage.get("cost"))
+
 
     def _ensure_client(self):
         if self.client is None:
@@ -54,7 +68,7 @@ class CachedRequests:
 
     def request(self, system, prompt, schema, validate, label, *, force=False):
         check_cancel(self.cancel)
-        key = content_hash({"version": PROMPT_VERSION, "provider": self.provider, "model": self.model, "system": system,
+        key = content_hash({"version": PROMPT_VERSION, "provider": self.provider, "model": self.model, "task": self.task, "system": system,
                             "prompt": prompt, "schema": schema})
         path = self.directory / f"{key}.json"
         if path.exists() and not force:
@@ -63,6 +77,7 @@ class CachedRequests:
                 if data.get("status") == "completed":
                     value = validate(data["response"])
                     self.report(f"{label}: dùng cache")
+                    self._log_metrics(cache_hit=True, attempt=0, prompt=prompt)
                     return value, key
             except (ValueError, TypeError, KeyError, AttributeError, GeminiError):
                 pass
@@ -74,9 +89,10 @@ class CachedRequests:
             self.report(f"{label}: gọi AI, lần {attempt + 1}/{self.retries + 1}")
             atomic_json(path, {"status": "running", "attempt": attempt + 1})
             try:
-                payload = self.client.generate_json(system, prompt + correction, schema, self.model, cancel=self.cancel)
+                payload = self.client.generate_json(system, prompt + correction, schema, self.model, cancel=self.cancel, task=self.task)
                 check_cancel(self.cancel)
                 value = validate(payload)
+                self._log_metrics(cache_hit=False, attempt=attempt + 1, prompt=prompt + correction, payload=payload)
                 atomic_json(path, {"status": "completed", "response": payload})
                 return value, key
             except GeminiError as exc:
@@ -102,7 +118,7 @@ class CachedRequests:
         check_cancel(self.cancel)
         key = content_hash({
             "version": PROMPT_VERSION, "provider": self.provider, "model": self.model,
-            "system": system, "prompt": prompt, "schema": schema,
+            "task": self.task, "system": system, "prompt": prompt, "schema": schema,
             "evidence": evidence_fingerprint,
         })
         path = self.directory / f"{key}.json"
@@ -112,6 +128,7 @@ class CachedRequests:
                 if data.get("status") == "completed":
                     value = validate(data["response"])
                     self.report(f"{label}: dùng cache audiovisual")
+                    self._log_metrics(cache_hit=True, attempt=0, prompt=prompt, media_count=len(media))
                     return value, key
             except (ValueError, TypeError, KeyError, AttributeError, GeminiError):
                 pass
@@ -128,10 +145,12 @@ class CachedRequests:
             try:
                 payload = client.generate_multimodal_json(
                     system, prompt + correction, media, schema, self.model,
-                    cancel=self.cancel, progress=self.report,
+                    cancel=self.cancel, progress=self.report, task=self.task,
                 )
                 check_cancel(self.cancel)
                 value = validate(payload)
+                self._log_metrics(cache_hit=False, attempt=attempt + 1, prompt=prompt + correction,
+                                  payload=payload, media_count=len(media))
                 atomic_json(path, {"status": "completed", "response": payload,
                                    "evidence": evidence_fingerprint})
                 return value, key

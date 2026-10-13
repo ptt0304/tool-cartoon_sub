@@ -17,6 +17,8 @@ from cartoon_sub.transcription.video.ocr_workload import OcrWorkloadProgress, OC
 
 
 OCR_PROMPT_VERSION = "video-subtitle-ocr-v1"
+OCR_MAX_CROP_DIMENSION = 1440
+OCR_PREPROCESSING_VERSION = "ffmpeg-png-fit-1440-v1"
 OCR_SYSTEM = "Bạn là OCR phụ đề. Chỉ đọc chữ Trung Quốc đang nhìn thấy trong ảnh crop phụ đề."
 OCR_PROMPT = (
     "Đọc CHỈ phụ đề tiếng Trung nhìn thấy. Giữ dấu câu và thứ tự dòng. Không dịch, "
@@ -74,6 +76,21 @@ def _usage_cost(usage):
     return None
 
 
+def ocr_crop_dimensions(crop, *, maximum=OCR_MAX_CROP_DIMENSION):
+    """Return the native or proportionally reduced PNG dimensions for Vision OCR."""
+    width, height = int(crop["width"]), int(crop["height"])
+    if width <= 0 or height <= 0:
+        raise ValueError("OCR crop phải có chiều rộng và chiều cao dương")
+    if max(width, height) <= maximum:
+        return width, height
+    scale = maximum / max(width, height)
+    # PNG's even dimensions avoid chroma-alignment surprises in FFmpeg while
+    # retaining enough pixels for small Chinese glyphs.
+    resized_width = max(2, 2 * round((width * scale) / 2))
+    resized_height = max(2, 2 * round((height * scale) / 2))
+    return resized_width, resized_height
+
+
 class VideoSubtitleOcrService:
     def __init__(self, settings_store, *, resolver=None, client_factory=None, cropper=None):
         self.settings_store = settings_store
@@ -84,9 +101,13 @@ class VideoSubtitleOcrService:
     @staticmethod
     def _extract_crop(project, crop, moment, target, *, cancel=None):
         target.parent.mkdir(parents=True, exist_ok=True)
+        width, height = ocr_crop_dimensions(crop)
+        filters = f"crop={crop['width']}:{crop['height']}:{crop['x']}:{crop['y']}"
+        if (width, height) != (int(crop["width"]), int(crop["height"])):
+            filters += f",scale={width}:{height}:flags=lanczos"
         run_process([
             "ffmpeg", "-nostdin", "-v", "error", "-ss", f"{float(moment):.6f}", "-i", project.source_video_path,
-            "-vf", f"crop={crop['width']}:{crop['height']}:{crop['x']}:{crop['y']}", "-frames:v", "1", str(target),
+            "-vf", filters, "-frames:v", "1", str(target),
         ], cancel)
         if not target.is_file():
             raise ValueError("Không thể lấy crop phụ đề Video cho OCR")
@@ -95,7 +116,9 @@ class VideoSubtitleOcrService:
     def _cache_identity(self, source_hash, project, event, crop, model):
         crop_identity = content_hash({
             "source": source_hash, "region_id": event.get("region_id"), "crop": crop,
-            "representative_time": event["representative_time"], "crop_version": "ffmpeg-png-v1",
+            "representative_time": event["representative_time"],
+            "preprocessing_version": OCR_PREPROCESSING_VERSION,
+            "output_dimensions": ocr_crop_dimensions(crop),
         })
         return content_hash({
             "source": source_hash, "region_id": event.get("region_id"),
@@ -222,7 +245,7 @@ class VideoSubtitleOcrService:
                 try:
                     payload = client.generate_multimodal_json(
                         OCR_SYSTEM, OCR_PROMPT + reason, [("image/png", image)], OCR_SCHEMA, model,
-                        cancel=cancel, progress=progress)
+                        cancel=cancel, progress=progress, task="VIDEO_SUBTITLE_OCR")
                     parsed = validate_ocr_payload(payload)
                     retry_reason = ""
                     if not parsed["has_subtitle"] and float(event.get("visual_score", 0)) >= .05:

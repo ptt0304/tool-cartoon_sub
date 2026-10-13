@@ -6,10 +6,11 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from cartoon_sub.project.project_manager import ProjectManager
-from cartoon_sub.subtitle.models import Mask, Project
+from cartoon_sub.subtitle.models import Mask, Project, Utterance
+from cartoon_sub.subtitle.renderer import save_ass
 from cartoon_sub.transcription.video.roi import DEFAULT_VIDEO_SUBTITLE_ROI, image_rect, normalized_to_display
 from cartoon_sub.subtitle.mask_roi import DEFAULT_MASK_ROI, sync_mask_geometry
 from cartoon_sub.ui.tabs.mask_style_tab import MaskStylePage
@@ -93,6 +94,36 @@ class MaskRoiEditorTests(unittest.TestCase):
     def test_mask_default_is_independent_value_not_transcript_object(self):
         self.assertEqual(DEFAULT_MASK_ROI, DEFAULT_VIDEO_SUBTITLE_ROI)
         self.assertIsNot(DEFAULT_MASK_ROI, DEFAULT_VIDEO_SUBTITLE_ROI)
+
+    def test_mask_ui_has_no_geometry_selector_and_keeps_margin_labels(self):
+        page = MaskStylePage()
+        self.assertFalse(hasattr(page, "geometry_mode"))
+        labels = [label.text() for label in page.options_scroll.widget().findChildren(QLabel)]
+        self.assertIn("Kích thước lề ngang", labels)
+        self.assertIn("Kích thước lề dọc", labels)
+        page.close()
+
+    def test_mask_roi_crosshair_is_centered_and_editor_only(self):
+        preview = QPixmap(640, 360)
+        dialog = MaskRoiDialog(preview, {"x_pct": .2, "y_pct": .6, "w_pct": .4, "h_pct": .2})
+        self.assertTrue(dialog.canvas.show_center_crosshair)
+        first = dialog.canvas._rect().center()
+        dialog.canvas.set_roi({"x_pct": .3, "y_pct": .6, "w_pct": .4, "h_pct": .2})
+        second = dialog.canvas._rect().center()
+        self.assertGreater(second.x(), first.x())
+        self.assertEqual(second.y(), first.y())
+        resized = dialog.canvas._apply_drag(dialog.canvas.roi, "right", .1, 0)
+        dialog.canvas.set_roi(resized)
+        third = dialog.canvas._rect().center()
+        self.assertGreater(third.x(), second.x())
+        self.assertEqual(third.y(), second.y())
+        with tempfile.TemporaryDirectory() as folder:
+            project = Project("mask", "video.mp4", metadata={"width": 640, "height": 360},
+                              segments=[Utterance(1, 0, 1, "一", vi="Một")],
+                              mask=Mask(True, "solid", 64, 252, 512, 79))
+            output = Path(folder) / "subtitle.ass"; save_ass(project, output)
+            self.assertNotIn("crosshair", output.read_text(encoding="utf-8").lower())
+        dialog.close()
 
 
 if __name__ == "__main__":

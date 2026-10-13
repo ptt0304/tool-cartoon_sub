@@ -210,18 +210,8 @@ class ProjectStageResetService:
 
     def _clear_context_state(self, remove_approved):
         project = self.project
-        project.context_proposal = {}
-        project.context_proposal_hash = ""
-        project.context_proposal_config_hash = ""
-        project.visual_context_status = "not_started"
-        project.visual_context_signature = ""
-        project.visual_context_error = ""
-        project.cache_hashes.pop("context_review_candidate_version", None)
         if remove_approved:
             project.story_context = StoryContext().to_dict()
-            project.context_source_hash = ""
-            project.context_approved_config_hash = ""
-            project.context_status = "not_started"
 
     def _clear_translation_rows(self):
         for row in self.project.utterances:
@@ -320,14 +310,6 @@ class ProjectStageResetService:
 
     def _remove_context_response_cache(self, result):
         errors = []
-        cache = self._safe_path("cache/visual_context")
-        if cache.is_dir():
-            for path in cache.glob("*.json"):
-                try:
-                    path.unlink()
-                    result.removed.append(path.relative_to(self.root).as_posix())
-                except OSError as exc:
-                    errors.append(f"{path.name}: {exc}")
         try:
             fusion = self._safe_path("cache/speaker_fusion")
             if fusion.is_dir():

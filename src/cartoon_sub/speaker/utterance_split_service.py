@@ -31,13 +31,6 @@ def _new_child(parent, *, utterance_id, start, end, text, speaker_id, speaker_na
 def _invalidate_split_dependents(project):
     """Invalidate timeline-derived state without touching media or raw STT cache."""
     project.speaker_review_hash = ""
-    project.context_proposal = {}
-    project.context_proposal_hash = ""
-    project.context_proposal_config_hash = ""
-    project.context_status = "stale" if project.context_source_hash else "not_started"
-    project.visual_context_status = "stale" if project.context_source_hash else "not_started"
-    project.visual_context_signature = ""
-    project.visual_context_error = ""
     project.speaker_evidence = []
     project.speaker_proposals = {}
     if project.translation_status != "not_started":
@@ -47,7 +40,6 @@ def _invalidate_split_dependents(project):
     project.segmentation_cache = {}
     project.cache_hashes.pop("translation", None)
     project.cache_hashes.pop("translation_run", None)
-    project.cache_hashes.pop("context_review_candidate_version", None)
     project.chunk_states.pop("translation", None)
     project.chunk_states.pop("dubbing", None)
     for row in project.utterances:

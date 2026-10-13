@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 from cartoon_sub.subtitle.models import Project
 from cartoon_sub.transcription.video.ocr_service import (
-    VideoSubtitleOcrService, language_status, normalize_ocr_text, validate_ocr_payload,
+    OCR_SCHEMA, VideoSubtitleOcrService, language_status, normalize_ocr_text,
+    ocr_crop_dimensions, validate_ocr_payload,
 )
 
 
@@ -76,6 +77,13 @@ class VideoSubtitleOcrTests(unittest.TestCase):
         self.assertEqual(validate_ocr_payload({"has_subtitle": True, "text": "你好"})["normalized_text"], "你好")
         self.assertEqual(validate_ocr_payload({"has_subtitle": False, "text": ""})["normalized_text"], "")
 
+    def test_small_crop_stays_native_and_oversized_crop_downscales_proportionally(self):
+        self.assertEqual(ocr_crop_dimensions({"width": 1247, "height": 72}), (1247, 72))
+        resized = ocr_crop_dimensions({"width": 3840, "height": 2160})
+        self.assertEqual(resized, (1440, 810))
+        self.assertLessEqual(max(resized), 1440)
+        self.assertAlmostEqual(resized[0] / resized[1], 3840 / 2160, places=3)
+
     def test_malformed_and_true_empty_are_rejected(self):
         for payload in ({}, {"has_subtitle": True, "text": ""}, {"has_subtitle": False, "text": "x"}):
             with self.assertRaises(ValueError): validate_ocr_payload(payload)
@@ -94,6 +102,30 @@ class VideoSubtitleOcrTests(unittest.TestCase):
             self.assertEqual(row["retry_count"], 1)
             self.assertEqual((row["refined_start"], row["refined_end"]),
                              (original["refined_start"], original["refined_end"]))
+
+    def test_one_png_image_and_minimal_schema_are_sent_per_event(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.service([{"has_subtitle": True, "text": "你好"}]).run(self.project_and_manifest(folder), folder)
+            media, schema = self.client.calls[0][2:4]
+            self.assertEqual(media, [("image/png", b"png")])
+            self.assertEqual(schema, OCR_SCHEMA)
+            self.assertEqual(set(schema["properties"]), {"has_subtitle", "text"})
+
+    def test_cache_identity_changes_with_preprocessing_contract(self):
+        with tempfile.TemporaryDirectory() as folder:
+            project = self.project_and_manifest(folder)
+            service = self.service([])
+            crop = {"width": 3840, "height": 2160, "x": 0, "y": 0}
+            row = event()
+            import cartoon_sub.transcription.video.ocr_service as module
+            original = module.OCR_PREPROCESSING_VERSION
+            before = service._cache_identity("source", project, row, crop, "vision/model")
+            try:
+                module.OCR_PREPROCESSING_VERSION = "test-new-preprocessing"
+                after = service._cache_identity("source", project, row, crop, "vision/model")
+            finally:
+                module.OCR_PREPROCESSING_VERSION = original
+            self.assertNotEqual(before, after)
 
     def test_cache_hit_avoids_second_api_call(self):
         with tempfile.TemporaryDirectory() as folder:

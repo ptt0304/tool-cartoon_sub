@@ -85,26 +85,6 @@ class UnifiedAIModelRoutingTests(unittest.TestCase):
             store.set_tab_model_override("translate", "")
             self.assertEqual(store.load().tab_model_overrides, {})
 
-    def test_context_controller_passes_exact_resolved_model(self):
-        settings = AISettings(default_ai_model="vendor/vision", vision_input_mode="frames")
-        controller = Controller.__new__(Controller)
-        controller.settings_store = FakeStore(settings)
-        controller.ai_model_resolver = AIModelResolver(controller.settings_store)
-        controller.project = object(); controller.directory = Path("project")
-        captured = {}
-        controller.context_service = SimpleNamespace(analyze=lambda project, directory, **kwargs:
-            captured.update(kwargs) or (project, directory))
-        Controller.analyze_context(controller)
-        self.assertEqual(captured["model"], "vendor/vision")
-        self.assertEqual(captured["selection_source"], "GLOBAL_DEFAULT")
-        settings.tab_model_overrides = {"translate": "vendor/vision-b"}
-        Controller.analyze_context(controller)
-        self.assertEqual(captured["model"], "vendor/vision-b")
-        self.assertEqual(captured["selection_source"], "TAB_OVERRIDE")
-        settings.tab_model_overrides = {"translate": "vendor/text-a"}
-        with self.assertRaisesRegex(ValueError, "không hỗ trợ hình ảnh"):
-            Controller.analyze_context(controller)
-
 
 if __name__ == "__main__":
     unittest.main()

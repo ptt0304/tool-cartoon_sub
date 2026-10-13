@@ -258,8 +258,6 @@ def _validated_speaker_state(project, speakers, assignments, require_complete):
 def _invalidate_speaker_dependents(project, assignment_changed, registry_changed):
     if not assignment_changed and not registry_changed:
         return
-    if project.context_source_hash:
-        project.context_status = "stale"
     if project.translation_status != "not_started":
         project.translation_status = "stale"
     project.translation_qa = {}

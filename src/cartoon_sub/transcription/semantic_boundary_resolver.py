@@ -13,7 +13,7 @@ from cartoon_sub.transcription.segmentation_normalizer import TranscriptSegmenta
 
 
 SEMANTIC_BOUNDARY_VERSION = 1
-SEMANTIC_PROMPT_VERSION = "zh-semantic-boundaries-v1"
+SEMANTIC_PROMPT_VERSION = "zh-semantic-boundaries-v2"
 MIN_CONFIDENCE = 0.75
 SYSTEM = """You identify boundaries in recognized Mandarin speech.
 Return JSON only. Never rewrite, correct, punctuate, translate, or repeat source text.
@@ -32,10 +32,9 @@ SCHEMA = {
                 "properties": {
                     "after_index": {"type": "integer"},
                     "action": {"type": "string", "enum": ["KEEP", "REMOVE", "ADD"]},
-                    "type": {"type": "string", "enum": ["SENTENCE", "CLAUSE", "LIKELY_DIALOGUE_TURN"]},
                     "confidence": {"type": "number"},
                 },
-                "required": ["after_index", "action", "type", "confidence"],
+                "required": ["after_index", "action", "confidence"],
                 "additionalProperties": False,
             }},
         },
@@ -163,8 +162,9 @@ class ChineseSemanticBoundaryResolver:
             seen = []
             decisions = []
             for decision in row["boundaries"]:
-                required = {"after_index", "action", "type", "confidence"}
-                if not isinstance(decision, dict) or set(decision) != required:
+                required = {"after_index", "action", "confidence"}
+                legacy_required = required | {"type"}
+                if not isinstance(decision, dict) or set(decision) != required and set(decision) != legacy_required:
                     raise ValueError("Semantic response may contain positions only")
                 boundary = decision["after_index"]
                 if type(boundary) is not int or boundary < 0 or boundary >= len(target["source"]) - 1:
@@ -178,8 +178,6 @@ class ChineseSemanticBoundaryResolver:
                     raise ValueError("KEEP/REMOVE must reference an existing boundary")
                 if decision["action"] == "ADD" and boundary in existing:
                     raise ValueError("ADD must reference a missing boundary")
-                if decision["type"] not in {"SENTENCE", "CLAUSE", "LIKELY_DIALOGUE_TURN"}:
-                    raise ValueError("Invalid semantic boundary type")
                 confidence = decision["confidence"]
                 if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
                     raise ValueError("Invalid semantic boundary confidence")
@@ -285,7 +283,7 @@ class ChineseSemanticBoundaryResolver:
                 requests += 1
                 atomic_json(path, {"status": "running", "attempt": attempt + 1})
                 try:
-                    payload = client.generate_json(SYSTEM, prompt, SCHEMA, model, cancel=cancel)
+                    payload = client.generate_json(SYSTEM, prompt, SCHEMA, model, cancel=cancel, task="SEMANTIC_BOUNDARY")
                     decisions = self._validate(payload, targets)
                     output, added, removed = self._apply(raw_segments, deterministic, targets, decisions)
                     atomic_json(path, {"status": "completed", "response": payload})

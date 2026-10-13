@@ -295,13 +295,6 @@ class SettingsDialog(QDialog):
             "Được sử dụng cho mọi chức năng AI nếu tab tương ứng không chọn model riêng.")
         default_help.setWordWrap(True); content.addWidget(default_help)
 
-        vision_box = QGroupBox("Visual Input"); vision_layout = QVBoxLayout(vision_box)
-        visual_row = QHBoxLayout(); visual_row.addWidget(QLabel("Visual Input:"))
-        self.frames_mode = QRadioButton("Extracted Frames"); self.video_mode = QRadioButton("Direct Video")
-        visual_row.addWidget(self.frames_mode); visual_row.addWidget(self.video_mode); visual_row.addStretch(1)
-        vision_layout.addLayout(visual_row)
-        content.addWidget(vision_box)
-
         self.advanced_toggle = QToolButton(); self.advanced_toggle.setText("Advanced ▸")
         self.advanced_toggle.setCheckable(True); self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         content.addWidget(self.advanced_toggle)
@@ -324,14 +317,10 @@ class SettingsDialog(QDialog):
         self.test_connection_button.clicked.connect(self.test_connection)
         self.author_search.textChanged.connect(self._populate_authors)
         self.author.currentIndexChanged.connect(self._author_changed)
-        self.frames_mode.toggled.connect(self._vision_mode_changed)
         self.advanced_toggle.toggled.connect(self._toggle_advanced)
 
-        self.frames_mode.setChecked(self.saved_settings.vision_input_mode != "video")
-        self.video_mode.setChecked(self.saved_settings.vision_input_mode == "video")
         self._update_keys_summary()
         self._reload_catalogs(initial=True)
-        self._vision_mode_changed()
 
         self.catalog_timer = QTimer(self); self.catalog_timer.setInterval(500)
         self.catalog_timer.timeout.connect(self._poll_catalog_sync)
@@ -443,9 +432,6 @@ class SettingsDialog(QDialog):
         for selector in (self.transcription_selector, self.default_selector):
             selector.set_author(author)
 
-    def _vision_mode_changed(self, *_args):
-        pass
-
     def _test_operation(self, *, cancel=None, progress=None):
         keys = list(self.pending_keys) if self.keys_edited else self.controller.settings_store.get_openrouter_keys()
         if not keys:
@@ -510,7 +496,7 @@ class SettingsDialog(QDialog):
             translation_model=self.saved_settings.translation_model,
             translation_provider=default_selection.provider,
             vision_speaker_model=self.saved_settings.vision_speaker_model,
-            vision_input_mode="frames" if self.frames_mode.isChecked() else "video",
+            vision_input_mode=self.saved_settings.vision_input_mode,
             review_model_mode=self.saved_settings.review_model_mode,
             review_model=self.saved_settings.review_model,
             review_provider=self.saved_settings.review_provider,

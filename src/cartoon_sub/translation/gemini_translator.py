@@ -35,7 +35,7 @@ def validate_translation_response(payload, ids):
         raise TranslationValidationError("Continuity/uncertainties sai kiểu")
     result = {}
     for row in data["segments"]:
-        if not isinstance(row, dict) or set(row) - {"id", "vi", "confidence", "review_note", "meaning_preservation", "compressed"}:
+        if not isinstance(row, dict) or set(row) - {"id", "vi", "review_note", "meaning_preservation", "compressed", "confidence"}:
             raise TranslationValidationError("Bản dịch có trường không cho phép; chỉ trả id, vi, review_note")
         sid = row.get("id")
         if type(sid) is not int or sid not in ids or sid in result:
@@ -51,8 +51,7 @@ def validate_translation_response(payload, ids):
         if type(confidence) not in (int, float) or not 0 <= float(confidence) <= 1:
             raise TranslationValidationError(f"ID {sid}: confidence không hợp lệ")
         result[sid] = {"id": sid, "vi": text.strip(), "review_note": note.strip(),
-                       "meaning_preservation":meaning,"compressed":compressed,
-                       "confidence": float(confidence)}
+                       "meaning_preservation":meaning,"compressed":compressed}
     if set(result) != set(ids):
         missing = sorted(set(ids) - set(result))
         raise TranslationValidationError(f"Thiếu bản dịch cho ID {missing[:10]}")
@@ -83,7 +82,7 @@ def validate_context(payload, ids):
 
 TRANSLATION_SCHEMA = {"type": "OBJECT", "properties": {"translations": {"type": "ARRAY", "items": {
     "type": "OBJECT", "properties": {"id": {"type": "INTEGER"}, "vi": {"type": "STRING"},
-    "confidence": {"type": "NUMBER"}, "review_note": {"type": "STRING"},
+    "review_note": {"type": "STRING"},
     "meaning_preservation":{"type":"STRING","enum":["high","medium","low","unknown"]},
     "compressed":{"type":"BOOLEAN"}}, "required": ["id", "vi"]}},
     "continuity_updates": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {

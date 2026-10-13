@@ -18,8 +18,8 @@ def sync_mask_geometry(mask, video_width, video_height):
     projects use ``mask.roi`` as the resolution-independent source of truth.
     """
     width, height = max(2, int(video_width)), max(2, int(video_height))
-    if getattr(mask, "roi", None):
-        roi = normalize_mask_roi(mask.roi)
+    if getattr(mask, "roi", None) or int(getattr(mask, "width", 0)) < 2 or int(getattr(mask, "height", 0)) < 2:
+        roi = normalize_mask_roi(mask.roi or DEFAULT_MASK_ROI)
         mask.roi = dict(roi)
         mask.x = max(0, min(width - 1, round(roi["x_pct"] * width)))
         mask.y = max(0, min(height - 1, round(roi["y_pct"] * height)))

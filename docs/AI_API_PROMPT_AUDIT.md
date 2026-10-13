@@ -4,7 +4,7 @@
 
 Scope: production Python paths that can invoke OpenRouter. This audit made no network request and did not read or emit key material. All calls are stateless: no previous provider conversation/history is sent. The shared client uses `POST https://openrouter.ai/api/v1/chat/completions` for JSON/text/vision and `POST https://openrouter.ai/api/v1/audio/transcriptions` for STT.
 
-**Inventory:** 13 distinct AI tasks. Model IDs are resolved by `AIModelResolver` from the relevant tab override/default; every production client is OpenRouter. Current text default in `AISettings` is `google/gemini-2.5-flash`; exact resolved models can differ by saved tab override.
+**Inventory:** 12 distinct AI tasks. Model IDs are resolved by `AIModelResolver` from the relevant tab override/default; every production client is OpenRouter. Current text default in `AISettings` is `google/gemini-2.5-flash`; exact resolved models can differ by saved tab override.
 
 Shared findings:
 
@@ -20,7 +20,6 @@ Shared findings:
 |---|---|---|---|---|
 | Video OCR | Video Transcript OCR | `VIDEO_SUBTITLE_OCR` | chat/completions, one PNG ROI | HIGH |
 | Translation batch | Translate | `TRANSLATION` | chat/completions, text/evidence | HIGH |
-| Visual Context (hidden compatibility path) | visual analysis | context resolver | chat/completions, frames/video | HIGH |
 | Audio STT | Run Chinese Transcript | configured STT | audio/transcriptions, WAV | MEDIUM |
 | STT timing retry | weak acoustic timing | retry model | audio/transcriptions, WAV | MEDIUM |
 | STT language retry | foreign-script region | configured STT | audio/transcriptions, WAV | MEDIUM |
@@ -38,13 +37,13 @@ Shared findings:
 
 Chat requests use `messages=[system,user]`. The user content is given the fixed suffix: `Chỉ trả về một JSON object hợp lệ, không markdown. JSON phải tuân theo schema sau: {schema}`. If structured outputs are supported, the same schema is also sent as strict `response_format`.
 
-`CachedRequests` uses `AISettings.retry_count` (0–5), retryable provider errors, backoff capped at 30 seconds, and at most one language-contract correction. A retry resends the whole payload; this matters most for Translation and Visual Context. No chat history is retained or resent.
+`CachedRequests` uses `AISettings.retry_count` (0–5), retryable provider errors, backoff capped at 30 seconds, and at most one language-contract correction. A retry resends the whole payload; this matters most for Translation. No chat history is retained or resent.
 
 **Safe shared recommendation:** retain strict JSON, but omit the textual schema suffix when strict `response_format.json_schema` is active; measure real outputs and set conservative task-specific output caps. This audit does not implement either change.
 
 ### Non-inference OpenRouter operations
 
-Two production OpenRouter calls are operational rather than AI tasks and therefore have no prompt/schema/media cost: `OpenRouterClient.get_models` requests `GET /api/v1/models` for catalog refresh, and `OpenRouterClient.test_connection` (called by `Controller.test_connection` and `test_translation_connection`) requests the authenticated key endpoint. They send authorization only, do not invoke a model, have no response schema/prompt, and are excluded from the 13-task inference count. They should still be regarded as network operations when the user presses refresh/test.
+Two production OpenRouter calls are operational rather than AI tasks and therefore have no prompt/schema/media cost: `OpenRouterClient.get_models` requests `GET /api/v1/models` for catalog refresh, and `OpenRouterClient.test_connection` (called by `Controller.test_connection` and `test_translation_connection`) requests the authenticated key endpoint. They send authorization only, do not invoke a model, have no response schema/prompt, and are excluded from the 12-task inference count. They should still be regarded as network operations when the user presses refresh/test.
 
 ## Task details
 
@@ -174,16 +173,6 @@ One selected row per call, two attempts maximum. User template is `{editorial,ta
 
 One utterance per request only after local TTS fit requires a rewrite. Prompt target contains Chinese, full subtitle, current dubbing, voice, available/actual duration, reduction percentage and rewrite attempt, plus three neighbours each side. The translation schema output is applied to dubbing after validation. Cache is `cache/dubbing_duration`; shared retries plus bounded semantic rewrite count apply. Input MEDIUM, output MEDIUM, retry MEDIUM/HIGH, overall MEDIUM. Preserve actual-duration/reduction fields; reduce duplicated editorial context.
 
-### Visual Context — hidden compatibility path
-
-**Source:** `src/cartoon_sub/translation/visual_context.py`, `VisualContextAnalyzer.analyze` / `_request`. Translate UI controls are hidden compatibility controls, but the callable service remains production code and is included.
-
-**Input:** chat/completions with adaptive JPEG frames (480px high, quality 4; bounded/adaptive frame set) or one proxy MP4. Prompt includes analysis pass, language contract, video range, target IDs, canonical character registry, contracts, target/neighbour rows, user requirements, glossary, approved context and sampling.
-
-**Schema/consumption:** broad `CONTEXT_SCHEMA` StoryContext. Its setting/summary/narration/character/term/address-rule/uncertainty/profile/visual-context/registry fields are used in validation and merge; broad output follows the broad context-analysis feature rather than accidental prose.
-
-**Cache/risk:** `cache/visual_context/{hash}` and registry cache, keyed by video/targets/references/window/model/mode/registry/prompt version. Input HIGH, output MEDIUM/HIGH, media HIGH, overall HIGH. Keep hidden unless needed; future safe optimization is target-relevant registry/context and an explicit frame cap.
-
 ## Conclusions
 
 **Top context cost:** Translation, QA and dubbing use `editorial(project)` repeatedly. Its user instructions and glossary/proper-name mappings are duplicated; continuity memory can contain 64 records. This is the first source-level optimization target.
@@ -198,7 +187,6 @@ One utterance per request only after local TTS fit requires a rewrite. Prompt ta
 2. Shared client: avoid textual-schema duplication when strict structured outputs are active; add measured caps.
 3. Video OCR: preserve one crop/event; downscale only excessive crops.
 4. STT: reconcile local prompt expectations with the actual transcription payload before changing quality logic.
-5. Visual Context: reduce broad registry/context/frame payload before enabling broadly.
 
 ## Audit limits
 

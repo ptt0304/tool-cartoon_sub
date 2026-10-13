@@ -36,7 +36,7 @@ class TranslateCustomRulesUITests(unittest.TestCase):
         project.translation_custom_name_rule = "Giữ pinyin"
         rendered = editorial(project)
         self.assertEqual(rendered["style"], "Thoại rất ngắn")
-        self.assertIn("Giữ pinyin", rendered["context_instruction"])
+        self.assertEqual(rendered["proper_name_rule"], "Giữ pinyin")
         self.assertNotEqual(translation_fingerprint(project, AISettings()), first)
 
     def test_legacy_name_mode_migrates_to_custom(self):

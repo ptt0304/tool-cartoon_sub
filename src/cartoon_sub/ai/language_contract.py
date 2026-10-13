@@ -89,12 +89,4 @@ def story_context_user_facing_values(context):
         values.extend(row.get(key, "") for key in ("target", "notes"))
     for row in context.get("address_rules", []):
         values.extend(row.get(key, "") for key in ("self_term", "address_term", "condition"))
-    for row in context.get("character_profiles", []):
-        values.extend((row.get("role", ""), row.get("visual_description", "")))
-        values.extend(row.get("relationships", []))
-    for row in context.get("speaker_character_mappings", []):
-        values.append(row.get("notes", ""))
-    for row in context.get("visual_contexts", []):
-        values.append(row.get("notes", ""))
-        values.extend(item.get("description", "") for item in row.get("visible_objects", []))
     return values

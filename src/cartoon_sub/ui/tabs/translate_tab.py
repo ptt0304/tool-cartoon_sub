@@ -110,11 +110,6 @@ def build():
     widget.context_descriptions.setMaximumHeight(240)
     widget.selected_contexts.hide(); widget.context_descriptions.hide()
 
-    # Legacy actions stay as hidden compatibility attributes for old projects
-    # and controller wiring; they are no longer part of the normal workflow.
-    widget.analyze_button = QPushButton("Phân tích ngữ cảnh AI")
-    widget.proposal_button = QPushButton("Duyệt & lưu ngữ cảnh AI")
-    widget.analyze_button.hide(); widget.proposal_button.hide()
     widget.summary = QLabel()
     widget.summary.setTextFormat(Qt.TextFormat.PlainText)
     widget.summary.setWordWrap(True)

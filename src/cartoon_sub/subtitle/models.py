@@ -334,8 +334,8 @@ class Mask:
     # Resolution-independent editor state. x/y/width/height remain the legacy
     # render contract and are synchronized from this ROI when the user edits it.
     roi: dict = field(default_factory=dict)
-    # ``auto_fit`` is the new-project default.  ``roi_full`` is assigned while
-    # reading legacy project files so their rendered appearance is preserved.
+    # Compatibility-only legacy field. Rendering always auto-fits to the text
+    # around the ROI center anchor.
     geometry_mode: str = "auto_fit"
     padding_x: int = 18
     padding_y: int = 8
@@ -457,15 +457,6 @@ class Project:
     translation_genres: list[str] = field(default_factory=list)
     proper_name_mode: str = "sino_vietnamese"
     story_context: dict = field(default_factory=lambda: StoryContext().to_dict())
-    context_proposal: dict = field(default_factory=dict)
-    context_source_hash: str = ""
-    context_proposal_hash: str = ""
-    context_approved_config_hash: str = ""
-    context_proposal_config_hash: str = ""
-    context_status: str = "not_started"
-    visual_context_status: str = "not_started"
-    visual_context_signature: str = ""
-    visual_context_error: str = ""
     translation_status: str = "not_started"
     # Translate owns these source snapshots.  Transcript continues to own the
     # active canonical timeline and is never switched by this configuration.
@@ -534,13 +525,14 @@ class Project:
             style_data.setdefault("text_color", "#000000")
         elif mask_data.get("kind") in ("blur", "pixelate", "frosted"):
             mask_data["kind"] = "gaussian"
-        if "geometry_mode" not in mask_data:
-            mask_data["geometry_mode"] = "roi_full"
+        # Older projects stored a selectable geometry mode. The ROI now only
+        # anchors the subtitle center, so every legacy value migrates to the
+        # single auto-fit behavior while preserving the ROI itself.
+        mask_data.pop("mask_geometry", None)
+        mask_data["geometry_mode"] = "auto_fit"
         mask_data.setdefault("padding_x", 18)
         mask_data.setdefault("padding_y", 8)
         data["mask"] = Mask(**mask_data)
-        if data["mask"].geometry_mode not in ("auto_fit", "roi_full"):
-            data["mask"].geometry_mode = "roi_full"
         if not isinstance(data["mask"].padding_x, int) or not 0 <= data["mask"].padding_x <= 500:
             data["mask"].padding_x = 18
         if not isinstance(data["mask"].padding_y, int) or not 0 <= data["mask"].padding_y <= 500:
@@ -559,8 +551,11 @@ class Project:
         data["logos"] = logo_rows
         data["watermark"] = WatermarkStyle(**data.get("watermark", {}))
         data["story_context"] = StoryContext.from_dict(data.get("story_context", {})).to_dict()
-        if data.get("context_proposal"):
-            data["context_proposal"] = StoryContext.from_dict(data["context_proposal"]).to_dict()
+        for key in (
+                "context_proposal", "context_source_hash", "context_proposal_hash",
+                "context_approved_config_hash", "context_proposal_config_hash", "context_status",
+                "visual_context_status", "visual_context_signature", "visual_context_error"):
+            data.pop(key, None)
         from cartoon_sub.translation.context_profiles import normalize_context_ids
         legacy_context = data.pop("translation_context", "")
         raw_contexts = data.get("translation_genres", [])

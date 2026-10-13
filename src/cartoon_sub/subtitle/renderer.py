@@ -22,8 +22,6 @@ def validate_visuals(project):
     sync_mask_geometry(m, width, height)
     if m.kind not in ('solid', 'gaussian', 'none'):
         raise ValueError('Kiểu mask không hợp lệ')
-    if getattr(m, 'geometry_mode', 'roi_full') not in ('auto_fit', 'roi_full'):
-        raise ValueError('Mask geometry không hợp lệ')
     if any(type(value) is not int or not 0 <= value <= 500
            for value in (getattr(m, 'padding_x', 18), getattr(m, 'padding_y', 8))):
         raise ValueError('Mask padding phải từ 0 đến 500')

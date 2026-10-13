@@ -31,6 +31,19 @@ OPENROUTER_TRANSCRIPTION_URL = f"{OPENROUTER_BASE_URL}/audio/transcriptions"
 OPENROUTER_KEY_URL = f"{OPENROUTER_BASE_URL}/key"
 log = logging.getLogger(__name__)
 
+# Conservative ceilings protect each structured task from runaway prose. They are
+# applied only where the selected OpenRouter catalog explicitly supports a cap.
+TASK_OUTPUT_CAPS = {
+    "VIDEO_SUBTITLE_OCR": 256,
+    "SEMANTIC_BOUNDARY": 2048,
+    "TRANSCRIPT_REPAIR": 4096,
+    "TRANSLATION": 16384,
+    "TRANSLATION_QA": 4096,
+    "MANUAL_QA": 4096,
+    "DUBBING_OPTIMIZE": 2048,
+    "DUBBING_DURATION_REWRITE": 2048,
+}
+
 
 def parse_openrouter_api_keys(text):
     """Return unique non-empty keys in first-seen order; never log this value."""
@@ -626,13 +639,18 @@ class OpenRouterClient:
         check_cancel(cancel)
         return "✓ Connected — API key valid"
 
-    def _json_body(self, system, user_content, schema, model):
+    def _json_body(self, system, user_content, schema, model, *, task=None):
         if not isinstance(model, str) or not model.strip() or "/" not in model:
             raise AIProviderError("Select a valid OpenRouter model in Settings > AI.",
                                   ProviderErrorCategory.MODEL_ERROR)
         schema = _openrouter_json_schema(schema)
-        contract = ("\nChỉ trả về một JSON object hợp lệ, không markdown. JSON phải tuân theo schema sau: "
-                    + json.dumps(schema, ensure_ascii=False))
+        supported = set(self.models.get(model, {}).get("supported_parameters", []))
+        structured_output = "response_format" in supported or "structured_outputs" in supported
+        if structured_output:
+            contract = "\nChỉ trả về dữ liệu theo JSON schema đã cung cấp."
+        else:
+            contract = ("\nChỉ trả về một JSON object hợp lệ, không markdown. JSON phải tuân theo schema sau: "
+                        + json.dumps(schema, ensure_ascii=False))
         if isinstance(user_content, str):
             user_content += contract
         else:
@@ -643,13 +661,21 @@ class OpenRouterClient:
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ]}
-        supported = set(self.models.get(model, {}).get("supported_parameters", []))
         if "temperature" in supported:
             body["temperature"] = 0.3
-        if "response_format" in supported or "structured_outputs" in supported:
+        if structured_output:
             body["response_format"] = {"type": "json_schema", "json_schema": {
                 "name": "cartoon_sub_response", "strict": True, "schema": schema,
             }}
+        cap = TASK_OUTPUT_CAPS.get(str(task or ""))
+        cap_parameter = ("max_tokens" if "max_tokens" in supported else
+                         "max_completion_tokens" if "max_completion_tokens" in supported else None)
+        if cap is not None and cap_parameter is not None:
+            body[cap_parameter] = cap
+        log.info("[OPENROUTER JSON] task=%s model=%s structured_output=%s "
+                 "textual_schema_fallback=%s configured_output_cap=%s",
+                 task or "UNSPECIFIED", model, structured_output, not structured_output,
+                 cap if cap_parameter is not None else None)
         return body
 
     def _post_json(self, body, cancel=None, progress=None):
@@ -687,15 +713,15 @@ class OpenRouterClient:
         check_cancel(cancel)
         return payload
 
-    def generate_json(self, system, prompt, schema, model, cancel=None):
+    def generate_json(self, system, prompt, schema, model, cancel=None, *, task=None):
         check_cancel(cancel)
         from cartoon_sub.ai.runtime_debug import ai_debug
         ai_debug("OpenRouterClient.generate_json", provider="openrouter", model_id=model,
                  client_class=type(self).__name__)
-        return self._post_json(self._json_body(system, prompt, schema, model), cancel=cancel)
+        return self._post_json(self._json_body(system, prompt, schema, model, task=task), cancel=cancel)
 
     def generate_multimodal_json(self, system, prompt, media, schema, model,
-                                 cancel=None, progress=None):
+                                 cancel=None, progress=None, *, task=None):
         """Send bounded image/video evidence through the shared rotating key pool."""
         check_cancel(cancel)
         content = [{"type": "text", "text": prompt}]
@@ -711,7 +737,7 @@ class OpenRouterClient:
                 }})
             else:
                 raise ValueError(f"Unsupported visual media type: {mime_type}")
-        body = self._json_body(system, content, schema, model)
+        body = self._json_body(system, content, schema, model, task=task)
         return self._post_json(body, cancel=cancel, progress=progress)
 
 

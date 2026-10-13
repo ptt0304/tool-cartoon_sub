@@ -51,13 +51,6 @@ def transcript_timeline_signature(rows):
 
 def invalidate_transcript_dependents(project):
     """Invalidate only derived state; source media and raw STT cache stay valid."""
-    project.context_proposal = {}
-    project.context_proposal_hash = ""
-    project.context_proposal_config_hash = ""
-    project.context_status = "stale" if project.context_source_hash else "not_started"
-    project.visual_context_status = "stale" if project.context_source_hash else "not_started"
-    project.visual_context_signature = ""
-    project.visual_context_error = ""
     if project.translation_status != "not_started":
         project.translation_status = "stale"
     project.translation_notes = {}
