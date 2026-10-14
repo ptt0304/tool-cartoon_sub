@@ -1,6 +1,7 @@
 import unittest
 
 from cartoon_sub.transcription.timing_quality import evaluate_timing, TRUSTED, SUSPICIOUS, INVALID
+from cartoon_sub.subtitle.models import Utterance
 
 
 class TranscriptTimingQualityTests(unittest.TestCase):
@@ -20,6 +21,12 @@ class TranscriptTimingQualityTests(unittest.TestCase):
         segments = [{"start": 0, "end": 2, "zh": "你好。"}]
         words = [{"word": "你", "start": .8, "end": 1.2}, {"word": "好", "start": .5, "end": 1.0}]
         self.assertEqual(evaluate_timing(segments, words, 0, 2).status, SUSPICIOUS)
+
+    def test_canonical_utterance_segment_timestamps_do_not_require_dict_access(self):
+        rows = [Utterance(1, 0, 1.2, "你好。")]
+        quality = evaluate_timing(rows, [], 0, 1.5)
+        self.assertEqual(quality.status, TRUSTED)
+        self.assertEqual(quality.timestamp_capability, "SEGMENT")
 
 
 if __name__ == "__main__":

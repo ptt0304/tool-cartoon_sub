@@ -12,6 +12,11 @@ SUSPICIOUS = "SUSPICIOUS"
 INVALID = "INVALID"
 
 
+def _field(row, name, default=None):
+    """Read raw provider dictionaries and canonical transcript objects alike."""
+    return row.get(name, default) if isinstance(row, dict) else getattr(row, name, default)
+
+
 @dataclass(frozen=True)
 class TimingQuality:
     status: str
@@ -29,9 +34,9 @@ def evaluate_timing(segments, words, coarse_start, coarse_end):
     if not rows:
         return TimingQuality(INVALID, capability, 0.0, 0.0, ("no timestamps",))
     valid, reasons, previous_end = [], [], None
-    for row in sorted(rows, key=lambda item: (float(item.get("start", -1)), float(item.get("end", -1)))):
+    for row in sorted(rows, key=lambda item: (float(_field(item, "start", -1)), float(_field(item, "end", -1)))):
         try:
-            start, end = float(row["start"]), float(row["end"])
+            start, end = float(_field(row, "start")), float(_field(row, "end"))
         except (KeyError, TypeError, ValueError):
             reasons.append("malformed timestamp"); continue
         if not (0 <= start < end <= window + .05):
@@ -43,8 +48,7 @@ def evaluate_timing(segments, words, coarse_start, coarse_end):
     if not valid:
         return TimingQuality(INVALID, capability, ratio, 0.0, tuple(dict.fromkeys(reasons)))
     span = valid[-1][1] - valid[0][0]
-    text = "".join(str(item.get("zh", item.get("text", item.get("word", "")))
-                       if isinstance(item, dict) else getattr(item, "zh", ""))
+    text = "".join(str(_field(item, "zh", _field(item, "text", _field(item, "word", ""))))
                    for item in segments or [])
     content = sum(ch.isalnum() or "\u3400" <= ch <= "\u9fff" for ch in text)
     if content <= 4 and span > 8:

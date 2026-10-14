@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cartoon_sub.media.mask_timeline import event_geometry, mask_events_from_ass, mask_filter_chain
+from cartoon_sub.media.mask_timeline import MaskEvent, event_geometry, mask_events_from_ass, mask_filter_chain
 from cartoon_sub.subtitle.models import Mask, Project, SubtitleStyle, Utterance
 from cartoon_sub.subtitle.renderer import save_ass
 
@@ -54,9 +54,35 @@ class MaskTimelineAutofitTests(unittest.TestCase):
         self.assertNotEqual((event.width, event.height), (project.mask.width, project.mask.height))
         self.assertIn('drawbox=', mask_filter_chain(project, [event]))
         project.mask.kind = 'gaussian'
-        self.assertIn('gblur=', mask_filter_chain(project, [event]))
+        gaussian = mask_filter_chain(project, [event])
+        self.assertIn('gblur=', gaussian)
+        self.assertIn("gblur=sigma=28.8:steps=2:enable='between(t,0.000,1.999)'", gaussian)
         project.mask.kind = 'none'
         self.assertEqual(mask_filter_chain(project, [event]), '[0:v]null[masked];')
+
+    def test_non_overlapping_equal_geometry_reuses_one_gaussian_branch(self):
+        project = self.project([])
+        project.mask.kind = 'gaussian'
+        events = [
+            MaskEvent(0, 2, 'Một', 20, 200, 100, 40),
+            MaskEvent(3, 5, 'Hai', 20, 200, 100, 40),
+        ]
+        chain = mask_filter_chain(project, events)
+        self.assertEqual(chain.count('gblur='), 1)
+        self.assertEqual(chain.count('crop='), 1)
+        self.assertEqual(chain.count('overlay='), 1)
+        self.assertIn("between(t,0.000,1.999)+between(t,3.000,4.999)", chain)
+
+    def test_overlapping_events_keep_separate_gaussian_branches(self):
+        project = self.project([])
+        project.mask.kind = 'gaussian'
+        events = [
+            MaskEvent(0, 3, 'Một', 20, 200, 100, 40),
+            MaskEvent(2, 4, 'Hai', 20, 200, 100, 40),
+        ]
+        chain = mask_filter_chain(project, events)
+        self.assertEqual(chain.count('gblur='), 2)
+        self.assertEqual(chain.count('overlay='), 2)
 
     def test_same_center_different_roi_sizes_have_identical_geometry(self):
         project = self.project([])

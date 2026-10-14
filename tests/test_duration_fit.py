@@ -71,6 +71,9 @@ class FakeStore:
     def get_key(self, provider):
         return "test"
 
+    def openrouter_key_pool(self):
+        return "test"
+
 
 def project(rows, duration=20.0):
     speakers = {

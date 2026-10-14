@@ -36,4 +36,33 @@ class TranslationProviderRoutingTests(unittest.TestCase):
     def test_controller_always_uses_openrouter_resolver(self):
         store=Store(); controller=Controller.__new__(Controller); controller.settings_store=store; controller.ai_model_resolver=Mock(); controller.ai_model_resolver.resolve.return_value=AIModelResolution("google/gemini-2.5-flash","TAB_OVERRIDE","TRANSLATION","translate",("text",)); controller.translation_pipeline=Mock(); controller.project,controller.directory=object(),"project"
         controller.translate(); controller.ai_model_resolver.resolve.assert_called_once(); self.assertEqual(controller.translation_pipeline.run.call_args.kwargs["model"],"google/gemini-2.5-flash")
+
+    def test_dubbing_features_share_the_effective_translate_selection(self):
+        store = Store()
+        resolver = AIModelResolver(store)
+        expected = "google/gemini-2.5-flash"
+        self.assertEqual(resolver.resolve("TRANSLATION", "translate", ("text",)).model_id, expected)
+        self.assertEqual(resolver.resolve("DUBBING_OPTIMIZE", "translate", ("text",)).model_id, expected)
+        self.assertEqual(resolver.resolve("DUBBING_DURATION_REWRITE", "translate", ("text",)).model_id, expected)
+
+        store.settings.tab_model_overrides["dubbing_optimize"] = {
+            "provider": "openrouter", "model_id": "different/legacy-dubbing-model",
+        }
+        self.assertEqual(resolver.resolve("DUBBING_OPTIMIZE", "translate", ("text",)).model_id, expected)
+        self.assertEqual(resolver.resolve("DUBBING_DURATION_REWRITE", "translate", ("text",)).model_id, expected)
+
+    def test_changing_translate_override_changes_all_dubbing_resolutions(self):
+        store = Store()
+        store.settings.tab_model_overrides["translate"] = {
+            "provider": "openrouter", "model_id": "google/gemini-2.5-flash-lite",
+        }
+        store.openrouter_catalog_cache = lambda: {"models": [
+            {"id": "google/gemini-2.5-flash-lite",
+             "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}},
+        ]}
+        resolver = AIModelResolver(store)
+        expected = "google/gemini-2.5-flash-lite"
+        self.assertEqual(resolver.resolve("TRANSLATION", "translate", ("text",)).model_id, expected)
+        self.assertEqual(resolver.resolve("DUBBING_OPTIMIZE", "translate", ("text",)).model_id, expected)
+        self.assertEqual(resolver.resolve("DUBBING_DURATION_REWRITE", "translate", ("text",)).model_id, expected)
 if __name__=="__main__": unittest.main()

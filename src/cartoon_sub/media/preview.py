@@ -2,12 +2,29 @@
 import wave
 import os
 import shutil
+import logging
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 from cartoon_sub.media.process import run_process
 from cartoon_sub.subtitle.renderer import save_ass, validate_visuals
 from cartoon_sub.media.mask_timeline import mask_events_from_ass, mask_filter_chain
 from cartoon_sub.project.cache import atomic_json, check_cancel
+
+
+log = logging.getLogger(__name__)
+
+
+def _argv_length(args):
+    """Measure the Windows command line that subprocess will pass to CreateProcess."""
+    return len(subprocess.list2cmdline([str(value) for value in args]))
+
+
+def _write_filter_script(folder, chain):
+    """Keep a generated filter graph out of the Windows process command line."""
+    path = Path(folder) / "fc.txt"
+    path.write_text(chain, encoding="utf-8", newline="\n")
+    return path
 
 
 def validate_final_audio(project, directory) -> Path:
@@ -63,6 +80,7 @@ class VideoRenderer:
         target = folder / ('preview.mp4' if preview else ('test_30s.mp4' if duration is not None else 'final.mp4'))
         destination = root / export_name if export_job else target
         temporary = folder / 'rendering.mp4'
+        filter_script = None
 
         if duration is not None:
             calc_duration = max(0.0, min(float(duration), float(project.metadata['duration']) - float(start)))
@@ -77,7 +95,8 @@ class VideoRenderer:
         try:
             ass_path = folder / 'subtitle.ass'
             save_ass(project, ass_path, start if is_partial else 0, calc_duration)
-            chain = mask_filter_chain(project, mask_events_from_ass(ass_path, project))
+            mask_events = mask_events_from_ass(ass_path, project)
+            chain = mask_filter_chain(project, mask_events)
             source = '[masked]'
             extra_inputs = []
             for index, logo in enumerate(project.logos, 1):
@@ -88,6 +107,7 @@ class VideoRenderer:
                     f'{source}[{label}]overlay={logo.x}:{logo.y}:format=auto[base{index}];')
                 source = f'[base{index}]'; extra_inputs += ['-loop','1','-i',str(Path(logo.path).resolve())]
             chain += f"{source}ass=filename=subtitle.ass,pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1[v]"
+            filter_script = _write_filter_script(folder, chain)
 
             args = ['ffmpeg','-nostdin','-n']
             if is_partial: args += ['-ss',str(start)]
@@ -104,11 +124,20 @@ class VideoRenderer:
             else:
                 audio_map = '0:a:0?'
 
-            args += ['-filter_complex',chain,'-map','[v]','-map',audio_map,
+            args += ['-filter_complex_script',str(filter_script),'-map','[v]','-map',audio_map,
                      '-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p',
                      '-c:a','aac','-b:a','192k','-movflags','+faststart']
             if project.logos: args += ['-shortest']
             args += [str(temporary)]
+            log.info(
+                "[RENDER] mode=%s test_start=%s test_duration=%s source_video=%s output=%s "
+                "subtitle_total=%d subtitle_selected=%d mask_events=%d filter_script_path=%s "
+                "filter_script_chars=%d filter_script_bytes=%d argv_length=%d",
+                "preview" if preview else ("test30" if duration is not None else "full"),
+                start if is_partial else 0, calc_duration, project.source_video_path, destination,
+                len(project.utterances), len(mask_events), len(mask_events), filter_script, len(chain),
+                filter_script.stat().st_size, _argv_length(args),
+            )
             if progress:
                 if preview:
                     progress('FFmpeg đang render preview 10 giây…')
@@ -117,6 +146,7 @@ class VideoRenderer:
                 else:
                     progress('FFmpeg đang render toàn bộ video…')
             run_process(args,cancel,progress,cwd=folder)
+            log.info("[RENDER] ffmpeg_started=true ffmpeg_exit_code=0")
             check_cancel(cancel)
             if not temporary.is_file() or temporary.stat().st_size <= 0:
                 raise RuntimeError('FFmpeg không tạo video export hợp lệ')
@@ -124,6 +154,7 @@ class VideoRenderer:
             if not export_job:
                 state.update(status='completed',output=str(destination))
                 atomic_json(folder/'render.json',state)
+                filter_script.unlink(missing_ok=True)
             return destination
         except Exception:
             temporary.unlink(missing_ok=True)

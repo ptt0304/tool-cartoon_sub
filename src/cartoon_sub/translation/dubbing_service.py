@@ -293,6 +293,7 @@ class DubbingService:
                 allowed = (row.allowed_audio_end or row.end) - (row.allowed_audio_start if row.allowed_audio_start is not None else row.start)
                 target = {
                     "id": row.id,
+                    "zh": row.zh,
                     "chinese_source": row.zh,
                     "full_vi_subtitle": row.vi_subtitle,
                     "current_vi_dubbing": row.vi_dubbing,

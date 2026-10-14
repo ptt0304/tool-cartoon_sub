@@ -79,6 +79,37 @@ def _enable(event):
     return f"between(t,{event.start:.3f},{max(event.start, event.end - .001):.3f})"
 
 
+def _has_overlaps(events):
+    """Keep the original ordered composition for timelines with overlap."""
+    latest_end = float("-inf")
+    for event in sorted(events, key=lambda row: (row.start, row.end)):
+        if event.start < latest_end:
+            return True
+        latest_end = max(latest_end, event.end)
+    return False
+
+
+def _mask_groups(events):
+    """Reuse a blur branch for equal geometry when events never overlap.
+
+    A Gaussian event samples the original input and then overlays that ROI.  If
+    events do not overlap, the order of those inactive overlays is immaterial,
+    so equal rectangles can share one crop/blur/overlay branch.  Overlapping
+    timelines retain one branch per event to preserve their legacy ordering.
+    """
+    if _has_overlaps(events):
+        return [[event] for event in events]
+    groups = {}
+    for event in events:
+        geometry = (event.x, event.y, event.width, event.height)
+        groups.setdefault(geometry, []).append(event)
+    return list(groups.values())
+
+
+def _enable_group(events):
+    return "+".join(_enable(event) for event in events)
+
+
 def mask_filter_chain(project, events):
     """FFmpeg chain that has no active Mask during subtitle gaps."""
     mask = project.mask
@@ -91,13 +122,20 @@ def mask_filter_chain(project, events):
         return filters + "[masked];"
     if mask.kind != "gaussian":
         raise ValueError("Kiểu mask không hợp lệ")
-    inputs = "[0:v]split=" + str(len(events) + 1) + "[base]" + "".join(f"[source{i}]" for i in range(len(events))) + ";"
+    groups = _mask_groups(events)
+    inputs = "[0:v]split=" + str(len(groups) + 1) + "[base]" + "".join(f"[source{i}]" for i in range(len(groups))) + ";"
     parts = [inputs]
-    for index, row in enumerate(events):
-        parts.append(f"[source{index}]crop={row.width}:{row.height}:{row.x}:{row.y}:exact=1,format=yuv444p,gblur=sigma={mask.strength * 2.4:.1f}:steps=2[blur{index}];")
+    for index, group in enumerate(groups):
+        row = group[0]
+        # Overlay already has this time gate.  Gate the expensive ROI blur as
+        # well: inactive branches are never composited, so bypassing their
+        # blur preserves the rendered frame while avoiding per-event work.
+        enable = _enable_group(group)
+        parts.append(f"[source{index}]crop={row.width}:{row.height}:{row.x}:{row.y}:exact=1,format=yuv444p,gblur=sigma={mask.strength * 2.4:.1f}:steps=2:enable='{enable}'[blur{index}];")
     current = "base"
-    for index, row in enumerate(events):
-        target = "masked" if index == len(events) - 1 else f"mask{index}"
-        parts.append(f"[{current}][blur{index}]overlay={row.x}:{row.y}:format=auto:enable='{_enable(row)}'[{target}];")
+    for index, group in enumerate(groups):
+        row = group[0]
+        target = "masked" if index == len(groups) - 1 else f"mask{index}"
+        parts.append(f"[{current}][blur{index}]overlay={row.x}:{row.y}:format=auto:enable='{_enable_group(group)}'[{target}];")
         current = target
     return "".join(parts)
